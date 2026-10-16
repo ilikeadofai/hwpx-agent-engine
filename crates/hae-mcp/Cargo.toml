@@ -1,0 +1,28 @@
+[package]
+name = "hae-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "hae_mcp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hae-mcp"
+path = "src/main.rs"
+
+[dependencies]
+hae-diag = { workspace = true }
+hae-exec = { workspace = true }
+hae-jsonl = { path = "../hae-jsonl" }
+clap = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+hae-zip = { workspace = true }
+hae-package = { workspace = true }
+
+[lints]
+workspace = true

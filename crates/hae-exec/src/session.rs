@@ -13,6 +13,7 @@ use hae_edit::{Alignment, Applied, EditOp, ImageBytes, LineSpacing};
 use hae_model::{query::Query, Document, Kind};
 use hae_package::{sha256_hex, PackageState, NS_HH};
 use hae_project::{IoRoots, ProjectBinding};
+use hae_render_rhwp::{AdapterConfig, RhwpAdapter};
 use hae_verify::{
     verify_archive, verify_candidate, Alignment as VerifyAlignment,
     LineSpacing as VerifyLineSpacing, LineSpacingKind as VerifyLineSpacingKind, VerifyOperation,
@@ -115,6 +116,8 @@ pub struct SessionExecutor {
     limits: Limits,
     writers: HashMap<String, WriterRecord>,
     open_doc: Option<OpenDocSession>,
+    /// rhwp preview adapter; `None` keeps `document.preview` at RENDERER_UNAVAILABLE.
+    renderer: Option<Arc<RhwpAdapter>>,
 }
 
 fn canonical_json(v: &Value) -> Value {
@@ -236,7 +239,26 @@ impl SessionExecutor {
             limits,
             writers,
             open_doc: None,
+            renderer: None,
         })
+    }
+
+    /// Enable `document.preview` with the given adapter.
+    pub fn set_renderer(&mut self, adapter: Arc<RhwpAdapter>) {
+        self.renderer = Some(adapter);
+    }
+
+    /// Enable `document.preview` from `HAE_RHWP` (+ `HAE_BWRAP`, `HAE_FONT_DIR`).
+    /// Returns whether an adapter was configured; unset means unconfigured.
+    pub fn configure_renderer_from_env(&mut self) -> bool {
+        match AdapterConfig::from_env() {
+            Some(mut cfg) => {
+                cfg.limits = self.limits;
+                self.renderer = Some(Arc::new(RhwpAdapter::new(cfg)));
+                true
+            }
+            None => false,
+        }
     }
 
     pub fn session_id(&self) -> &str {
@@ -796,19 +818,38 @@ impl SessionExecutor {
                 ))
             }
             ParsedCommand::DocumentDiff(p) => self.handle_diff(req, &p),
-            ParsedCommand::DocumentPreview(DocumentPreviewParams { pages }) => {
-                let _s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
-                let _ = pages;
-                Err(EngineError::new(
-                    Code::RendererUnavailable,
-                    Stage::Render,
-                    "rhwp preview adapter is not enabled in Stage 1 core",
-                )
-                .with_reason("stage1_renderer_unavailable"))
-            }
+            ParsedCommand::DocumentPreview(p) => self.handle_preview(req, &p),
             ParsedCommand::ProjectSave(p) => self.handle_project_save(req, &p),
             ParsedCommand::DocumentExport(p) => self.handle_document_export(req, &p),
         }
+    }
+
+    /// document.preview: read-only. The snapshot is the current committed
+    /// state; a rendering failure returns an error and changes nothing.
+    fn handle_preview(
+        &mut self,
+        req: &RequestEnvelope,
+        p: &DocumentPreviewParams,
+    ) -> Result<(Value, Vec<Diagnostic>)> {
+        let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+        if let Some(ev) = req.expected_version {
+            if ev != s.revision {
+                return Err(EngineError::new(
+                    Code::VersionConflict,
+                    Stage::Render,
+                    "expectedVersion mismatch on document.preview",
+                ));
+            }
+        }
+        let Some(adapter) = self.renderer.clone() else {
+            return Err(EngineError::new(
+                Code::RendererUnavailable,
+                Stage::Render,
+                "no rhwp preview adapter is configured",
+            )
+            .with_reason("renderer_not_configured"));
+        };
+        crate::preview::render(&adapter, &s.current.doc, s.revision, p, &self.limits)
     }
 
     fn read_para_format_props(

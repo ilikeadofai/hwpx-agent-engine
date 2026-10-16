@@ -13,6 +13,7 @@ hae-model = { workspace = true }
 hae-edit = { workspace = true }
 hae-verify = { workspace = true }
 hae-project = { workspace = true }
+hae-render-rhwp = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = { workspace = true }

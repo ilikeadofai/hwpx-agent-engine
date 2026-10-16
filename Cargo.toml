@@ -25,6 +25,7 @@ zune-jpeg = "=0.5.15"
 rustix = { version = "=1.1.4", features = ["fs"] }
 thiserror = "=2.0.20"
 clap = { version = "=4.6.6", features = ["derive"] }
+resvg = { version = "=0.45.1", default-features = false, features = ["text", "raster-images", "memmap-fonts"] }
 hae-diag = { path = "crates/hae-diag" }
 hae-zip = { path = "crates/hae-zip" }
 hae-xml = { path = "crates/hae-xml" }
@@ -34,6 +35,7 @@ hae-edit = { path = "crates/hae-edit" }
 hae-verify = { path = "crates/hae-verify" }
 hae-project = { path = "crates/hae-project" }
 hae-exec = { path = "crates/hae-exec" }
+hae-render-rhwp = { path = "crates/hae-render-rhwp" }
 hae-cli = { path = "crates/hae-cli" }
 
 [workspace.lints.rust]

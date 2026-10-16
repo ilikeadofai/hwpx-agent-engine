@@ -1,0 +1,23 @@
+[package]
+name = "hae-jsonl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "hae_jsonl"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hae-jsonl"
+path = "src/main.rs"
+
+[dependencies]
+hae-diag = { workspace = true }
+hae-exec = { workspace = true }
+clap = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

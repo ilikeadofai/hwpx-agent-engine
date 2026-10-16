@@ -27,6 +27,7 @@
 | 안전한 파일 I/O | `rustix` | `=1.1.4` | `fs` | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | Linux `openat`, `O_NOFOLLOW`, `flock`, `fsync`, `renameat_with(NOREPLACE)` |
 | 오류 정의 | `thiserror` | `=2.0.20` | 기본 | MIT OR Apache-2.0 | `hae-diag::EngineError` |
 | CLI 인자 파싱 | `clap` | `=4.6.6` | `derive` | MIT OR Apache-2.0 | `hae-cli` 스크립트·단발 실행 모드 |
+| SVG 래스터화 | `resvg` | `=0.45.1` | `default-features = false`, `text`, `raster-images`, `memmap-fonts` | MPL-2.0 | `hae-render-rhwp::png`: 검사한 SVG를 PNG로 변환(작업 3-4). rhwp 저장소 Cargo.lock이 쓰는 0.45.1과 같은 버전이며 Rust 1.93.1에서 빌드됨. 순수 Rust(usvg·tiny-skia·rustybuzz·fontdb 포함). 시스템 글꼴(`system-fonts`)과 fontconfig는 끄고 설정한 폰트 폴더만 읽는다. |
 
 ## 3. RustSec 및 안전성 점검
 
@@ -36,3 +37,11 @@
    - `png 0.18.1`: 기본 옵션이 보조 청크 CRC 오류와 zlib Adler-32 체크섬을 무시할 수 있음을 확인하고, `DecodeOptions`에서 `set_ignore_adler32(false)`, `set_ignore_crc(false)`, `set_skip_ancillary_crc_failures(false)`, `set_ignore_text_chunk(true)`, `set_ignore_iccp_chunk(true)`를 명시적으로 설정했다.
    - `zune-jpeg 0.5.15`: strict 모드에서도 EOI 도달 시 부족한 비트를 0으로 채우는 동작을 확인하고, `hae-edit` 안에 독립 허프만 스캔 검증(`jpeg_safety::validate`)을 추가해 잘린 스캔을 거절한다.
    - `ZIP`: 외부 `zip` crate를 쓰지 않고 `hae-zip`에서 중앙/로컬 헤더 일치, 구간 비중첩, 스트리밍 해제 한도(항목·누적 128 MiB), 원시 압축 데이터 및 로컬 헤더 바이트 보존을 직접 구현했다.
+
+## 4. 프리뷰 어댑터의 resvg 사용 규칙 (작업 3-4)
+
+- 래스터화 입력은 `svg_safety::check_svg`를 통과한 바이트(`CheckedSvg`)뿐이다. 타입으로 강제한다.
+- `usvg::Options::image_href_resolver`를 교체해 외부 참조를 끈다. `<image>`는 `data:` 래스터(PNG·JPEG·GIF·WebP)만 풀고, 파일 경로·URL·`data:image/svg+xml`(검사하지 않은 중첩 SVG)은 아무것도 불러오지 않는다.
+- 글꼴은 설정한 폴더의 파일만 `fontdb`에 올린다. 일반 글꼴군(serif·sans-serif·monospace·cursive·fantasy)은 그 폴더의 첫 글꼴군으로 연결해, 문서가 없는 글꼴 이름만 쓸 때 글자가 통째로 사라지지 않게 한다(대체는 FONT_UNAVAILABLE 진단으로 알린다).
+- 출력 화소 수는 `Limits::max_image_pixels`(40,960,000)로 막는다. PNG 인코딩은 resvg가 다시 내보내는 `tiny-skia`의 `encode_png`(내부 `png 0.17.16`)를 쓴다. 워크스페이스의 `png 0.18.1`은 검증 용도라 섞이지 않는다.
+- 새로 들어오는 전이 의존성(usvg 0.45.1, tiny-skia 0.11.4, fontdb 0.23.0, rustybuzz 0.20.1, ttf-parser 0.25.1, memmap2 0.9.11, gif 0.13.3, image-webp 0.2.4, zune-jpeg 0.4.21 등)은 Cargo.lock으로 고정된다. `memmap2`는 내부에 `unsafe`가 있으나 우리 crate는 `unsafe_code = "forbid"`를 유지한다.

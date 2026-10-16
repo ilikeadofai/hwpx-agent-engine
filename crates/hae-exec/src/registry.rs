@@ -171,8 +171,15 @@ pub struct DocumentDiffParams {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DocumentPreviewParams {
+    /// 1-based pages to return inline; default `[1]`.
     #[serde(default)]
     pub pages: Option<Vec<u32>>,
+    /// Include each returned page's PNG as base64 (default true).
+    #[serde(default)]
+    pub include_png: Option<bool>,
+    /// Include each returned page's checked SVG text (default false).
+    #[serde(default)]
+    pub include_svg: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
