@@ -1,0 +1,17 @@
+{
+  "requested_model": "anthropic/claude-sonnet-5-5",
+  "response_model": "anthropic/claude-sonnet-5-5",
+  "finish_reason": "stop",
+  "seconds": 37.9,
+  "usage": {
+    "prompt_tokens": 8436,
+    "completion_tokens": 4316,
+    "total_tokens": 12752,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}

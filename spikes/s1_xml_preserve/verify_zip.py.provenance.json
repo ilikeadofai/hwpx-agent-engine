@@ -1,0 +1,8 @@
+{
+  "requested_model": "openrouter/~deepseek/deepseek-flash-latest",
+  "response_model": "deepseek/deepseek-v4.1-flash",
+  "finish_reason": "stop",
+  "seconds": 13.5,
+  "prompt_sha256": "0bf630812fc5b86db96044e7693d5109e5a8ca84c4a383348f07524b714267c6",
+  "output_sha256": "93a70b0043a4c09c31dbcc27baec19eff3e71751563714090dc27a2b1a9117c8"
+}

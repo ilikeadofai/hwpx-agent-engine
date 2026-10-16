@@ -1,0 +1,17 @@
+{
+  "requested_model": "google-antigravity/gemini-3.8-flash",
+  "response_model": "google-antigravity/gemini-3.8-flash",
+  "finish_reason": "stop",
+  "seconds": 56.8,
+  "usage": {
+    "prompt_tokens": 5202,
+    "completion_tokens": 836,
+    "total_tokens": 6038,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 5881
+    }
+  }
+}

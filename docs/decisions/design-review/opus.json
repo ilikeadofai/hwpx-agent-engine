@@ -1,0 +1,17 @@
+{
+  "requested_model": "anthropic/claude-opus-5-5",
+  "response_model": "anthropic/claude-opus-5-5",
+  "finish_reason": "stop",
+  "seconds": 114.7,
+  "usage": {
+    "prompt_tokens": 8432,
+    "completion_tokens": 10710,
+    "total_tokens": 19142,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 3661
+    }
+  }
+}

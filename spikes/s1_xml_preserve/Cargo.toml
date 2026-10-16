@@ -1,0 +1,14 @@
+[package]
+name = "s1-xml-preserve"
+version = "0.0.0"
+edition = "2021"
+publish = false
+# 단계 0 버리는 시험 코드. 제품 crate로 옮기지 않는다.
+
+[dependencies]
+quick-xml = "=0.39.2"
+flate2 = "=1.1.9"
+crc32fast = "=1.5.0"
+
+[workspace]
+
