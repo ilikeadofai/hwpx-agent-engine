@@ -130,3 +130,25 @@ The review harness did not deliver visible pixels to Gemini. Consequently plan 3
 ## Round 3: native workspace image transport attempt (2026-10-17)
 
 Gemini used native `view_file` / `client_view_file` on exact-hash workspace-local PNG copies. These tools returned binary text rather than decoded image pixels. Six focused calls ended with **UNVERIFIED** and no visual observations. The provider also denied writing the engine report outside its permitted workspace, so the parent appended this terminal result. No ASCII, DOM, hash or numeric-matrix substitute is accepted as a visual check. Korean legibility, clipping, collisions and blank-page appearance remain unverified. Existing deterministic hashes and Undo checks remain separate evidence.
+
+## 2026-10-17 재시도: 첨부 전달로 실제 픽셀 판독 (Gemini 3.8 Flash High)
+
+이전 시도는 파일 읽기 도구가 픽셀 대신 바이너리 텍스트를 돌려줘 UNVERIFIED였다. 이번에는 총괄(계획 담당 Opus)이 PNG 5장을 T3 첨부 업로드로 자식 스레드에 직접 전달했다(antigravity/gemini-3.8-flash-high, 도구 사용 금지). 모델이 제목·본문 문장을 그대로 인용해 실제로 픽셀을 본 것을 확인했다.
+
+| 사례 | 이미지 | 판독 | 편집 반영 | 결함 | 판정 |
+|---|---|---|---|---|---|
+| A 편집 전후 | stage3-final-visual-2026-10-16/before.png, after.png | 가능(제목·보도시점·본문 문장 인용) | 머리 제목 "보도자료" → "수정 확인"만 바뀜 | 없음 | **PASS** |
+| A Undo | before.png, restored.png | 가능 | 해당 없음(원상 복구) | 없음 | **PASS** |
+| B MCP 시나리오 | windows-handoff-20261017/linux_reference_png/before.png, after.png | 일부 | 가운데 정렬은 보임. 셀 "바뀐셀"은 위쪽이 잘림 | **편집 전부터** 내용이 쪽 맨 위(y=0)에 붙어 잘리고 겹침, 쪽 대부분 공백 | **FAIL** |
+
+B는 편집 전 이미지부터 같은 결함이 있어 편집 기능이 아니라 입력 문서(합성 자료의 쪽 설정) 또는 렌더링 경로 문제로 보인다. 원인 조사와 수정은 Sonnet 5.5에 배정했다(docs/decisions/stage3-setb-clipping.md 예정). 한컴과의 비교는 여전히 not_checked다.
+
+### 세트 B 재확인 (입력 문서 수정 뒤)
+
+원인은 합성 입력 문서에 쪽 설정(secPr·여백)과 표·셀 크기가 없던 것이었다(docs/decisions/stage3-setb-clipping.md). 엔진·렌더링 경로는 원인이 아니었다. 평가 스크립트의 입력을 실제 서식 기반으로 고친 뒤 새 미리보기(spikes/work/stage4-linux/2026-10-17-setb-fix/artifacts/preview-{before,after}-page1.png)를 같은 방식(첨부 전달)으로 다시 판독했다.
+
+| 사례 | 판독 | 편집 반영 | 결함 | 판정 |
+|---|---|---|---|---|
+| B 편집 전후(수정 입력) | 가능("평가 문단 하나", "셀가"/"바뀐셀", "셀나" 인용) | 셀 "바뀐셀" 완전 표시, 문단 가운데 정렬·간격 증가, 그림 교체 | 없음(여백 안 배치, 표 테두리 온전, 겹침·잘림·두부 글자 없음) | **PASS** |
+
+결론: 계획 3-6 시각 판정은 세트 A·B 모두 PASS다. 이 판정은 Linux rhwp 미리보기의 표시 품질에 대한 것이며 한컴 조판과의 일치(nativeComparison)는 여전히 not_checked다.

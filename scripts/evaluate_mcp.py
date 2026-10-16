@@ -29,6 +29,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import select
 import shutil
 import struct
@@ -68,6 +69,12 @@ HEADER = DECL + (
     'xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph" '
     'xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" version="1.2" secCnt="1">'
     '<hh:refList>'
+    # 표 테두리(실선)용 borderFill. 표·셀의 borderFillIDRef 가 이 id 를 가리킨다.
+    '<hh:borderFills itemCnt="1"><hh:borderFill id="1" threeD="0" shadow="0" centerLine="NONE" breakCellSeparateLine="0">'
+    '<hh:slash type="NONE" Crooked="0" isCounter="0"/><hh:backSlash type="NONE" Crooked="0" isCounter="0"/>'
+    '<hh:leftBorder type="SOLID" width="0.12 mm" color="#000000"/><hh:rightBorder type="SOLID" width="0.12 mm" color="#000000"/>'
+    '<hh:topBorder type="SOLID" width="0.12 mm" color="#000000"/><hh:bottomBorder type="SOLID" width="0.12 mm" color="#000000"/>'
+    "</hh:borderFill></hh:borderFills>"
     '<hh:paraProperties itemCnt="1"><hh:paraPr id="0">'
     '<hh:align horizontal="LEFT" vertical="BASELINE"/>'
     '<hh:lineSpacing type="PERCENT" value="160"/>'
@@ -77,25 +84,61 @@ HEADER = DECL + (
 )
 
 
+# 쪽 설정(secPr/pagePr)은 코퍼스 문서 tests/fixtures/corpus/ilban-gian.hwpx 의 A4 세로·여백 값을
+# 그대로 쓴다. 이 값이 없으면 rhwp 는 여백 0·표/그림 크기 0 으로 조판해 첫 쪽 상단 약 15px 에
+# 내용이 몰리고 글자가 y=0 에 닿는다(docs/decisions/stage3-setb-clipping.md).
+SEC_PR = (
+    '<hp:secPr id="" textDirection="HORIZONTAL" spaceColumns="0" tabStop="8000" tabStopVal="4000" '
+    'tabStopUnit="HWPUNIT" outlineShapeIDRef="0" memoShapeIDRef="0" textVerticalWidthHead="0" masterPageCnt="0">'
+    '<hp:grid lineGrid="0" charGrid="0" wonggojiFormat="0"/>'
+    '<hp:startNum pageStartsOn="BOTH" page="0" pic="0" tbl="0" equation="0"/>'
+    '<hp:visibility hideFirstHeader="0" hideFirstFooter="0" hideFirstMasterPage="0" border="SHOW_ALL" '
+    'fill="SHOW_ALL" hideFirstPageNum="0" hideFirstEmptyLine="0" showLineNumber="0"/>'
+    '<hp:lineNumberShape restartType="0" countBy="0" distance="0" startNumber="0"/>'
+    '<hp:pagePr landscape="WIDELY" width="59528" height="84188" gutterType="LEFT_ONLY">'
+    '<hp:margin header="4252" footer="4252" gutter="0" left="8504" right="8504" top="5669" bottom="4252"/>'
+    "</hp:pagePr>"
+    "</hp:secPr>"
+    '<hp:ctrl><hp:colPr id="" type="NEWSPAPER" layout="LEFT" colCount="1" sameSz="1" sameGap="0"/></hp:ctrl>'
+)
+
+
+def table_cell_xml(col: int, text: str) -> str:
+    return (
+        '<hp:tc name="" header="0" hasMargin="0" protect="0" editable="0" dirty="0" borderFillIDRef="1">'
+        '<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER" '
+        'linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">'
+        f'<hp:p paraPrIDRef="0"><hp:run charPrIDRef="0"><hp:t>{text}</hp:t></hp:run></hp:p></hp:subList>'
+        f'<hp:cellAddr rowAddr="0" colAddr="{col}"/><hp:cellSpan rowSpan="1" colSpan="1"/>'
+        '<hp:cellSz width="21000" height="2400"/>'
+        '<hp:cellMargin left="141" right="141" top="141" bottom="141"/></hp:tc>'
+    )
+
+
 def section_xml() -> str:
-    """문단 하나 + 편집 가능한 단일 문단 셀 2개 + 자르기·효과 없는 그림 하나."""
+    """쪽 설정 + 문단 하나 + 편집 가능한 단일 문단 셀 2개 + 자르기·효과 없는 그림 하나."""
     return DECL + (
         '<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" '
         'xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph" '
         'xmlns:hc="http://www.hancom.co.kr/hwpml/2011/core">'
+        # 쪽 설정을 담은 첫 문단(실제 한컴 문서와 같은 위치)
+        f'<hp:p paraPrIDRef="0"><hp:run charPrIDRef="0">{SEC_PR}</hp:run></hp:p>'
         # 문단 서식 대상
         '<hp:p paraPrIDRef="0"><hp:run charPrIDRef="0"><hp:t>평가 문단 하나</hp:t></hp:run></hp:p>'
-        # 표 셀 텍스트 대상: 1x2, 병합 없음, 셀마다 문단 하나
-        '<hp:p paraPrIDRef="0"><hp:run charPrIDRef="0"><hp:tbl rowCnt="1" colCnt="2"><hp:tr>'
-        '<hp:tc><hp:cellAddr rowAddr="0" colAddr="0"/><hp:cellSpan rowSpan="1" colSpan="1"/>'
-        '<hp:subList><hp:p paraPrIDRef="0"><hp:run charPrIDRef="0"><hp:t>셀가</hp:t></hp:run></hp:p></hp:subList></hp:tc>'
-        '<hp:tc><hp:cellAddr rowAddr="0" colAddr="1"/><hp:cellSpan rowSpan="1" colSpan="1"/>'
-        '<hp:subList><hp:p paraPrIDRef="0"><hp:run charPrIDRef="0"><hp:t>셀나</hp:t></hp:run></hp:p></hp:subList></hp:tc>'
-        "</hp:tr></hp:tbl></hp:run></hp:p>"
-        # 그림 교체 대상: 자르기(imgClip)·효과(effects) 없음
+        # 표 셀 텍스트 대상: 1x2, 병합 없음, 셀마다 문단 하나. 글자처럼 취급, 크기·안여백 명시
+        '<hp:p paraPrIDRef="0"><hp:run charPrIDRef="0"><hp:tbl rowCnt="1" colCnt="2" cellSpacing="0" '
+        'borderFillIDRef="1" noAdjust="0">'
+        '<hp:sz width="42000" widthRelTo="ABSOLUTE" height="2400" heightRelTo="ABSOLUTE" protect="0"/>'
+        '<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" '
+        'vertRelTo="PARA" horzRelTo="PARA" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
+        '<hp:outMargin left="283" right="283" top="283" bottom="283"/>'
+        '<hp:inMargin left="141" right="141" top="141" bottom="141"/>'
+        f'<hp:tr>{table_cell_xml(0, "셀가")}{table_cell_xml(1, "셀나")}</hp:tr>'
+        "</hp:tbl></hp:run></hp:p>"
+        # 그림 교체 대상: 자르기(imgClip)·효과(effects) 없음. 글자처럼 취급하는 실제 크기(약 51x25mm)
         '<hp:p paraPrIDRef="0"><hp:run charPrIDRef="0"><hp:pic id="1">'
-        '<hp:sz width="1440" height="720"/><hp:pos/>'
-        '<hp:imgDim dimwidth="1440" dimheight="720"/>'
+        '<hp:sz width="14400" height="7200"/><hp:pos treatAsChar="1"/>'
+        '<hp:imgDim dimwidth="14400" dimheight="7200"/>'
         '<hc:img binaryItemIDRef="image1"/>'
         "</hp:pic></hp:run></hp:p>"
         "</hs:sec>"
@@ -158,6 +201,58 @@ def payload_set(hwpx_bytes: bytes) -> dict:
         for info in z.infolist():
             out[info.filename] = sha256_bytes(z.read(info.filename))
     return out
+
+
+def png_ink_bbox(data: bytes):
+    """PNG(8비트, 비인터레이스) 의 비백색 픽셀 경계 상자와 잉크 비율. 표준 라이브러리만 쓴다.
+
+    반환: (width, height, (x0, y0, x1, y1) 또는 None, ink_ratio). 밝기 200 미만을 잉크로 본다.
+    """
+    pos, idat, width, height, ctype, depth, interlace = 8, b"", 0, 0, 0, 0, 0
+    while pos < len(data):
+        (n,) = struct.unpack(">I", data[pos : pos + 4])
+        tag, body = data[pos + 4 : pos + 8], data[pos + 8 : pos + 8 + n]
+        pos += 12 + n
+        if tag == b"IHDR":
+            width, height, depth, ctype, _, _, interlace = struct.unpack(">IIBBBBB", body)
+        elif tag == b"IDAT":
+            idat += body
+    if depth != 8 or interlace != 0 or ctype not in (0, 2, 4, 6):
+        raise ValueError(f"unsupported png: depth={depth} color={ctype} interlace={interlace}")
+    bpp = {0: 1, 2: 3, 4: 2, 6: 4}[ctype]
+    stride = width * bpp
+    raw, prev, i = zlib.decompress(idat), bytearray(stride), 0
+    x0 = y0 = None
+    x1 = y1 = -1
+    ink = 0
+    for y in range(height):
+        ft, line = raw[i], bytearray(raw[i + 1 : i + 1 + stride])
+        i += 1 + stride
+        for x in range(stride):
+            a = line[x - bpp] if x >= bpp else 0
+            b = prev[x]
+            c = prev[x - bpp] if x >= bpp else 0
+            if ft == 1:
+                line[x] = (line[x] + a) & 255
+            elif ft == 2:
+                line[x] = (line[x] + b) & 255
+            elif ft == 3:
+                line[x] = (line[x] + (a + b) // 2) & 255
+            elif ft == 4:
+                pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                line[x] = (line[x] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+        prev = line
+        color = 1 if ctype in (0, 4) else 3
+        for x in range(width):
+            px = line[x * bpp : x * bpp + color]
+            alpha = line[x * bpp + color] if ctype in (4, 6) else 255
+            if alpha > 0 and min(px) < 200:
+                ink += 1
+                x0 = x if x0 is None else min(x0, x)
+                x1, y1 = max(x1, x), y
+                y0 = y if y0 is None else y0
+    bbox = None if x0 is None else (x0, y0, x1, y1)
+    return width, height, bbox, ink / max(width * height, 1)
 
 
 class Fatal(Exception):
@@ -408,16 +503,21 @@ class Runner:
         def props(name):
             return sorted(tools[name]["inputSchema"].get("properties", {}).keys())
 
+        # documentId 는 열린 문서가 하나면 생략할 수 있어(선택 인자) required 가 아니라 properties 에서 확인한다.
+        has_doc_id = all("documentId" in props(n) for n in (
+            "command_batch", "cell_set_text", "paragraph_format", "image_replace",
+            "document_export", "snapshot_release"))
         schema_ok = (
             "path" in required("document_open")
-            and {"steps", "documentId", "expectedVersion"} <= set(required("command_batch"))
+            and has_doc_id
+            and {"steps", "expectedVersion"} <= set(required("command_batch"))
             and "dryRun" in props("command_batch")
-            and {"target", "text", "documentId", "expectedVersion"} <= set(required("cell_set_text"))
-            and {"target", "documentId", "expectedVersion"} <= set(required("paragraph_format"))
-            and {"target", "imagePath", "documentId", "expectedVersion"} <= set(required("image_replace"))
+            and {"target", "text", "expectedVersion"} <= set(required("cell_set_text"))
+            and {"target", "expectedVersion"} <= set(required("paragraph_format"))
+            and {"target", "imagePath", "expectedVersion"} <= set(required("image_replace"))
             and {"pages", "includePng", "includeSvg"} <= set(props("document_preview"))
-            and {"path", "documentId"} <= set(required("document_export"))
-            and {"snapshotId", "documentId"} <= set(required("snapshot_release"))
+            and {"path"} <= set(required("document_export"))
+            and {"snapshotId"} <= set(required("snapshot_release"))
         )
         self.check("tools_input_schemas", schema_ok,
                    {n: {"required": required(n), "properties": props(n)}
@@ -607,6 +707,28 @@ class Runner:
         self.artifacts["preview_before"] = before
         self.artifacts["preview_after"] = after
 
+    def layout_checks(self, tag, png_raw, svg) -> None:
+        """조판 회귀 방지: 쪽 설정이 있는 보통 문서는 첫 쪽 위·왼쪽 가장자리에 내용이 닿지 않는다.
+
+        쪽 설정(secPr/pagePr)이 빠진 합성 문서는 내용이 상단 약 15px 에 몰리고 글자가 y=0 에 닿았다.
+        """
+        width, height, bbox, ink = png_ink_bbox(png_raw)
+        self.note(f"preview_{tag}_layout", {"size": [width, height], "inkBBox": bbox, "inkRatio": round(ink, 5)})
+        self.check(f"preview_{tag}_png_has_ink", bbox is not None, None)
+        if bbox is None:
+            return
+        x0, y0, x1, y1 = bbox
+        margin = max(10, round(min(width, height) * 0.02))
+        self.check(f"preview_{tag}_png_content_off_edges",
+                   x0 >= margin and y0 >= margin and x1 <= width - 1 - margin and y1 <= height - 1 - margin,
+                   {"bbox": bbox, "size": [width, height], "minMargin": margin})
+        self.check(f"preview_{tag}_png_content_spans_page_body", y1 - y0 >= height * 0.1,
+                   {"inkHeight": y1 - y0, "pageHeight": height})
+        if svg:
+            m = re.match(r'<svg[^>]*\swidth="([\d.]+)"[^>]*\sheight="([\d.]+)"[^>]*\sviewBox="0 0 ([\d.]+) ([\d.]+)"', svg)
+            vb_ok = bool(m) and abs(float(m[1]) - float(m[3])) < 0.01 and abs(float(m[2]) - float(m[4])) < 0.01
+            self.check(f"preview_{tag}_svg_viewbox_equals_size", vb_ok, m.groups() if m else svg[:200])
+
     def preview(self, client, doc, revision, tag) -> dict:
         resp, err = client.call(
             "document_preview",
@@ -641,6 +763,7 @@ class Runner:
                 p = self.artifacts_dir / f"preview-{tag}-page1.png"
                 p.write_bytes(raw)
                 self.sha(p, f"preview_{tag}_png")
+                self.layout_checks(tag, raw, svg)
                 out["png"] = {"path": str(p), "bytes": len(raw), "sha256": sha256_bytes(raw)}
             if svg:
                 raw = svg.encode("utf-8")

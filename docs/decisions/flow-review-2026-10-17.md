@@ -72,3 +72,5 @@ Sol 검토 문서는 "단계 3 완료 조건 충족: 보강 검증 중"에서 �
 7. **2-6**: 로컬 구 S4 ZIP을 `_구판.zip`으로 바꾸고 점검표 첫 줄에 새 묶음 사용을 명시했다. Windows 안내에 약관 선행 확인·금지/불명확 시 공개 API 입출력 비교 한정 및 6) 추적 생략·글꼴 차이 선분리를 추가하고, 새 ZIP과 내부 `SHA256SUMS.txt`를 재생성했다. 빈 `return/` 하위 폴더도 ZIP에 보존했다. `spikes/work/` 인계 산출물은 기존 Git 무시 정책을 유지한다.
 
 검증: `bash scripts/check.sh` 종료 0(fmt·Clippy·래스터 작업자 빌드, Rust 244개·Python 도우미 30개 통과), `python3 -m unittest discover -s tests/oracle` 88개 통과. 로그: `/tmp/hae-flow-check.log`, `/tmp/hae-flow-oracle.log`. 인계 ZIP의 CRC·원본 파일 일치·해시 목록 22개·빈 반환 폴더 4개를 확인했다. 새 ZIP SHA-256: `79f8040ec4f102b321c038ccf8c604af8320fd15b922e707522ebb45c98be41b`.
+
+8. **2-1**: Gemini 3.8 Flash High가 T3 첨부의 실제 픽셀로 세트 A·B를 모두 PASS로 판정했다(세트 B는 [합성 fixture 수정](stage3-setb-clipping.md) 후 재확인). [시각 검토 기록](stage3-visual-check.md)을 따르며 한컴 비교는 `not_checked`다.
