@@ -43,4 +43,5 @@ Claude Fable 5.1은 Opus로도 결론이 안 나는 고난도 검토가 생길 �
 
 - 다른 공급자 모델은 T3의 opencode·codex·antigravity 공급자로 부른다. OpenCode 무료 등급은 OpenCode 앱 안에서만 허용되므로, T3의 opencode 공급자(앱을 직접 실행)로는 되지만 opencodex 프록시로 직접 부르면 403이다. 프록시의 opencode-go 경로도 작업공간 지역 설정 때문에 400으로 거절됐다.
 - **Claude Code의 ocx-* 하위 에이전트 유형은 쓰지 않는다.** 2026-10-16에 ocx-deepseek 유형으로 맡긴 작업이 실제로는 Haiku 5.5로 실행됐다(프록시 로그에 DeepSeek 호출 없음). 그 결과물은 채택하지 않고 spikes/work/discarded_haiku/에 두었다.
-- OpenRouter 경로(spikes/tools/ask_model.py)는 OpenCode 경로가 안 될 때만 쓴다.
+- **OpenRouter 경로는 쓰지 않는다**(사용자 지시, 2026-10-16). spikes/tools/ask_model.py는 단계 0 기록으로만 남긴다.
+- T3 delegate_task가 거절되면(예: parent_not_active) DeepSeek 몫은 미뤄 두었다가 경로가 살아나면 맡긴다. 급한 작업은 총괄이나 Sonnet(Claude 하위 에이전트)이 대신하고, 그 사실을 작업 기록에 남긴다.

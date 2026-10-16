@@ -1,0 +1,527 @@
+[
+  {
+    "file": "anchor_char_height.hwpx",
+    "sha256": "e33ebcbe83ac24768367d4e4ef3d1d06c9f315075283a87ecf2342f39bb7517e",
+    "bytes": 4686,
+    "source_repo": "edwardkim/rhwp",
+    "source_commit": "1a76570e833917d15817415a53c09ad61ab3203f",
+    "source_path": "samples/anchor_char_line_height/anchor_char_height.hwpx",
+    "license": "MIT",
+    "kind": "public-template",
+    "notes": "앵커 글자 줄 높이 재현 자료",
+    "observed": {
+      "zip_entries": 7,
+      "content_hpf": "Contents/content.hpf",
+      "spine_idrefs": [
+        "header",
+        "section0"
+      ],
+      "sections_in_spine_order": [
+        "Contents/section0.xml"
+      ],
+      "section_href_base": [
+        "package-root"
+      ],
+      "section_entries_all": [
+        "Contents/section0.xml"
+      ],
+      "has_tbl": true,
+      "has_pic": false,
+      "has_equation": false,
+      "signature_entries": [],
+      "encryption_entries": [],
+      "encrypted_flag_entries": [],
+      "compress_types": [
+        0,
+        8
+      ],
+      "data_descriptor_entries": 0,
+      "directory_entries": [],
+      "mimetype_first_stored": true,
+      "binary_entries": []
+    }
+  },
+  {
+    "file": "bodojaryo-reference.hwpx",
+    "sha256": "4339d2cca34fabdf36026301f45b3c1dfd64cd0d75cebf60a78e9175793c7df3",
+    "bytes": 326723,
+    "source_repo": "jkf87/hwpx-skill",
+    "source_commit": "ba90fc5ae15f4aead8dab4f9d69d4830b9569859",
+    "source_path": "assets/bodojaryo-reference.hwpx",
+    "license": "MIT",
+    "kind": "public-template",
+    "notes": "보도자료 참조 서식",
+    "observed": {
+      "zip_entries": 17,
+      "content_hpf": "Contents/content.hpf",
+      "spine_idrefs": [
+        "header",
+        "section0"
+      ],
+      "sections_in_spine_order": [
+        "Contents/section0.xml"
+      ],
+      "section_href_base": [
+        "package-root"
+      ],
+      "section_entries_all": [
+        "Contents/section0.xml"
+      ],
+      "has_tbl": true,
+      "has_pic": true,
+      "has_equation": false,
+      "signature_entries": [],
+      "encryption_entries": [],
+      "encrypted_flag_entries": [],
+      "compress_types": [
+        0,
+        8
+      ],
+      "data_descriptor_entries": 0,
+      "directory_entries": [],
+      "mimetype_first_stored": true,
+      "binary_entries": [
+        "BinData/image1.jpg",
+        "BinData/image2.png",
+        "BinData/image3.bmp",
+        "BinData/image4.jpg",
+        "BinData/image5.png",
+        "BinData/image6.jpg"
+      ]
+    }
+  },
+  {
+    "file": "gani-gian.hwpx",
+    "sha256": "2b58ef61f74a58126e125841d3850c5769bb642e29d3a2e9e3fb67cf5c58ee29",
+    "bytes": 7261,
+    "source_repo": "chrisryugj/kordoc",
+    "source_commit": "cd87f6e2ecc03d5ef773c8fc04be0b15d45da4a4",
+    "source_path": "templates/간이기안문_서식.hwpx",
+    "license": "MIT",
+    "kind": "public-template",
+    "notes": "간이기안문 서식",
+    "observed": {
+      "zip_entries": 11,
+      "content_hpf": "Contents/content.hpf",
+      "spine_idrefs": [
+        "header",
+        "section0"
+      ],
+      "sections_in_spine_order": [
+        "Contents/section0.xml"
+      ],
+      "section_href_base": [
+        "package-root"
+      ],
+      "section_entries_all": [
+        "Contents/section0.xml"
+      ],
+      "has_tbl": true,
+      "has_pic": false,
+      "has_equation": false,
+      "signature_entries": [],
+      "encryption_entries": [],
+      "encrypted_flag_entries": [],
+      "compress_types": [
+        0,
+        8
+      ],
+      "data_descriptor_entries": 0,
+      "directory_entries": [],
+      "mimetype_first_stored": true,
+      "binary_entries": []
+    }
+  },
+  {
+    "file": "gyehoek-reference.hwpx",
+    "sha256": "554470ecc730102bf6172774c2d80efa92b6ef21b714e8f55a63d78054199c6b",
+    "bytes": 1667365,
+    "source_repo": "jkf87/hwpx-skill",
+    "source_commit": "ba90fc5ae15f4aead8dab4f9d69d4830b9569859",
+    "source_path": "assets/gyehoek-reference.hwpx",
+    "license": "MIT",
+    "kind": "public-template",
+    "notes": "계획서 참조 서식",
+    "observed": {
+      "zip_entries": 14,
+      "content_hpf": "Contents/content.hpf",
+      "spine_idrefs": [
+        "header",
+        "section0"
+      ],
+      "sections_in_spine_order": [
+        "Contents/section0.xml"
+      ],
+      "section_href_base": [
+        "package-root"
+      ],
+      "section_entries_all": [
+        "Contents/section0.xml"
+      ],
+      "has_tbl": true,
+      "has_pic": true,
+      "has_equation": false,
+      "signature_entries": [],
+      "encryption_entries": [],
+      "encrypted_flag_entries": [],
+      "compress_types": [
+        0,
+        8
+      ],
+      "data_descriptor_entries": 0,
+      "directory_entries": [],
+      "mimetype_first_stored": true,
+      "binary_entries": [
+        "BinData/image1.png",
+        "BinData/image2.jpg",
+        "BinData/image3.jpg"
+      ]
+    }
+  },
+  {
+    "file": "ilban-gian.hwpx",
+    "sha256": "7d40e770a018ae571ab10b5745376b03fd5ffa65fceaf5cce0d87cd0e4d4f437",
+    "bytes": 6871,
+    "source_repo": "chrisryugj/kordoc",
+    "source_commit": "cd87f6e2ecc03d5ef773c8fc04be0b15d45da4a4",
+    "source_path": "templates/일반기안문_서식.hwpx",
+    "license": "MIT",
+    "kind": "public-template",
+    "notes": "일반기안문 서식",
+    "observed": {
+      "zip_entries": 11,
+      "content_hpf": "Contents/content.hpf",
+      "spine_idrefs": [
+        "header",
+        "section0"
+      ],
+      "sections_in_spine_order": [
+        "Contents/section0.xml"
+      ],
+      "section_href_base": [
+        "package-root"
+      ],
+      "section_entries_all": [
+        "Contents/section0.xml"
+      ],
+      "has_tbl": false,
+      "has_pic": false,
+      "has_equation": false,
+      "signature_entries": [],
+      "encryption_entries": [],
+      "encrypted_flag_entries": [],
+      "compress_types": [
+        0,
+        8
+      ],
+      "data_descriptor_entries": 0,
+      "directory_entries": [],
+      "mimetype_first_stored": true,
+      "binary_entries": []
+    }
+  },
+  {
+    "file": "irb-sample.hwpx",
+    "sha256": "3416a152923de7f1e82583907d9a6ac9f7a79371eeacb9efdf16df8339f43ba0",
+    "bytes": 2078,
+    "source_repo": "nathankim0/easy-hwp",
+    "source_commit": "039b7d0926b867b0a21ca7b3113666fef5c56897",
+    "source_path": "IRB서식_샘플.hwpx",
+    "license": "MIT",
+    "kind": "public-template",
+    "notes": "IRB 서식 샘플, 비한컴 생성물로 보임",
+    "observed": {
+      "zip_entries": 7,
+      "content_hpf": "Contents/content.hpf",
+      "spine_idrefs": [
+        "section0"
+      ],
+      "sections_in_spine_order": [
+        "Contents/section0.xml"
+      ],
+      "section_href_base": [
+        "hpf-dir"
+      ],
+      "section_entries_all": [
+        "Contents/section0.xml"
+      ],
+      "has_tbl": true,
+      "has_pic": false,
+      "has_equation": false,
+      "signature_entries": [],
+      "encryption_entries": [],
+      "encrypted_flag_entries": [],
+      "compress_types": [
+        0,
+        8
+      ],
+      "data_descriptor_entries": 0,
+      "directory_entries": [
+        "META-INF/",
+        "Contents/"
+      ],
+      "mimetype_first_stored": true,
+      "binary_entries": []
+    }
+  },
+  {
+    "file": "problem-answer-reference.hwpx",
+    "sha256": "4ac8157a366ecb733e919d7d154cece2ccad37f917616cc412fc4cfb9779e042",
+    "bytes": 168961,
+    "source_repo": "jkf87/hwpx-skill",
+    "source_commit": "ba90fc5ae15f4aead8dab4f9d69d4830b9569859",
+    "source_path": "assets/problem-answer-reference.hwpx",
+    "license": "MIT",
+    "kind": "public-template",
+    "notes": "문제·정답 참조 서식",
+    "observed": {
+      "zip_entries": 11,
+      "content_hpf": "Contents/content.hpf",
+      "spine_idrefs": [
+        "header",
+        "section0"
+      ],
+      "sections_in_spine_order": [
+        "Contents/section0.xml"
+      ],
+      "section_href_base": [
+        "package-root"
+      ],
+      "section_entries_all": [
+        "Contents/section0.xml"
+      ],
+      "has_tbl": true,
+      "has_pic": false,
+      "has_equation": false,
+      "signature_entries": [],
+      "encryption_entries": [],
+      "encrypted_flag_entries": [],
+      "compress_types": [
+        0,
+        8
+      ],
+      "data_descriptor_entries": 0,
+      "directory_entries": [],
+      "mimetype_first_stored": true,
+      "binary_entries": []
+    }
+  },
+  {
+    "file": "ref_empty.hwpx",
+    "sha256": "c58144645069f7d1258e91404730618ad568bc4d47680ad5f891d3050aa308c7",
+    "bytes": 12698,
+    "source_repo": "edwardkim/rhwp",
+    "source_commit": "1a76570e833917d15817415a53c09ad61ab3203f",
+    "source_path": "samples/hwpx/ref/ref_empty.hwpx",
+    "license": "MIT",
+    "kind": "public-template",
+    "notes": "빈 문서",
+    "observed": {
+      "zip_entries": 11,
+      "content_hpf": "Contents/content.hpf",
+      "spine_idrefs": [
+        "header",
+        "section0"
+      ],
+      "sections_in_spine_order": [
+        "Contents/section0.xml"
+      ],
+      "section_href_base": [
+        "package-root"
+      ],
+      "section_entries_all": [
+        "Contents/section0.xml"
+      ],
+      "has_tbl": false,
+      "has_pic": false,
+      "has_equation": false,
+      "signature_entries": [],
+      "encryption_entries": [],
+      "encrypted_flag_entries": [],
+      "compress_types": [
+        0,
+        8
+      ],
+      "data_descriptor_entries": 0,
+      "directory_entries": [],
+      "mimetype_first_stored": true,
+      "binary_entries": []
+    }
+  },
+  {
+    "file": "render-p35-font-native-bitmap.hwpx",
+    "sha256": "1c902d41d47e532f42d2b24a44058efd370ee6496927c32e76e955029a0b9eec",
+    "bytes": 8579,
+    "source_repo": "edwardkim/rhwp",
+    "source_commit": "1a76570e833917d15817415a53c09ad61ab3203f",
+    "source_path": "samples/render-p35-font-native-bitmap.hwpx",
+    "license": "MIT",
+    "kind": "public-template",
+    "notes": "글꼴 렌더 재현 자료",
+    "observed": {
+      "zip_entries": 12,
+      "content_hpf": "Contents/content.hpf",
+      "spine_idrefs": [
+        "header",
+        "section0"
+      ],
+      "sections_in_spine_order": [
+        "Contents/section0.xml"
+      ],
+      "section_href_base": [
+        "package-root"
+      ],
+      "section_entries_all": [
+        "Contents/section0.xml"
+      ],
+      "has_tbl": false,
+      "has_pic": false,
+      "has_equation": false,
+      "signature_entries": [],
+      "encryption_entries": [],
+      "encrypted_flag_entries": [],
+      "compress_types": [
+        0,
+        8
+      ],
+      "data_descriptor_entries": 0,
+      "directory_entries": [],
+      "mimetype_first_stored": true,
+      "binary_entries": [
+        "BinData/font-native-smoke.ttf"
+      ]
+    }
+  },
+  {
+    "file": "research-school-plan-reference.hwpx",
+    "sha256": "0b34ae667d371f0183cb6942e9b5c0cde4719f0b5dabe5a4736dbfbb09ac1f60",
+    "bytes": 1517201,
+    "source_repo": "jkf87/hwpx-skill",
+    "source_commit": "ba90fc5ae15f4aead8dab4f9d69d4830b9569859",
+    "source_path": "assets/research-school-plan-reference.hwpx",
+    "license": "MIT",
+    "kind": "public-template",
+    "notes": "연구학교 계획서 참조 서식, 다중 구역",
+    "observed": {
+      "zip_entries": 46,
+      "content_hpf": "Contents/content.hpf",
+      "spine_idrefs": [
+        "header",
+        "section0",
+        "section1",
+        "section2",
+        "section3",
+        "section4",
+        "section5",
+        "section6",
+        "section7",
+        "section8",
+        "section9",
+        "section10",
+        "section11",
+        "section12",
+        "section13",
+        "section14",
+        "section15",
+        "section16",
+        "section17",
+        "section18",
+        "section19",
+        "section20",
+        "section21",
+        "section22",
+        "section23",
+        "section24",
+        "section25",
+        "section26",
+        "section27"
+      ],
+      "sections_in_spine_order": [
+        "Contents/section0.xml",
+        "Contents/section1.xml",
+        "Contents/section2.xml",
+        "Contents/section3.xml",
+        "Contents/section4.xml",
+        "Contents/section5.xml",
+        "Contents/section6.xml",
+        "Contents/section7.xml",
+        "Contents/section8.xml",
+        "Contents/section9.xml",
+        "Contents/section10.xml",
+        "Contents/section11.xml",
+        "Contents/section12.xml",
+        "Contents/section13.xml",
+        "Contents/section14.xml",
+        "Contents/section15.xml",
+        "Contents/section16.xml",
+        "Contents/section17.xml",
+        "Contents/section18.xml",
+        "Contents/section19.xml",
+        "Contents/section20.xml",
+        "Contents/section21.xml",
+        "Contents/section22.xml",
+        "Contents/section23.xml",
+        "Contents/section24.xml",
+        "Contents/section25.xml",
+        "Contents/section26.xml",
+        "Contents/section27.xml"
+      ],
+      "section_href_base": [
+        "package-root"
+      ],
+      "section_entries_all": [
+        "Contents/section0.xml",
+        "Contents/section1.xml",
+        "Contents/section2.xml",
+        "Contents/section3.xml",
+        "Contents/section4.xml",
+        "Contents/section5.xml",
+        "Contents/section6.xml",
+        "Contents/section7.xml",
+        "Contents/section8.xml",
+        "Contents/section9.xml",
+        "Contents/section10.xml",
+        "Contents/section11.xml",
+        "Contents/section12.xml",
+        "Contents/section13.xml",
+        "Contents/section14.xml",
+        "Contents/section15.xml",
+        "Contents/section16.xml",
+        "Contents/section17.xml",
+        "Contents/section18.xml",
+        "Contents/section19.xml",
+        "Contents/section20.xml",
+        "Contents/section21.xml",
+        "Contents/section22.xml",
+        "Contents/section23.xml",
+        "Contents/section24.xml",
+        "Contents/section25.xml",
+        "Contents/section26.xml",
+        "Contents/section27.xml"
+      ],
+      "has_tbl": true,
+      "has_pic": true,
+      "has_equation": false,
+      "signature_entries": [],
+      "encryption_entries": [],
+      "encrypted_flag_entries": [],
+      "compress_types": [
+        0,
+        8
+      ],
+      "data_descriptor_entries": 0,
+      "directory_entries": [],
+      "mimetype_first_stored": true,
+      "binary_entries": [
+        "BinData/image1.png",
+        "BinData/image2.png",
+        "BinData/image3.jpeg",
+        "BinData/image4.jpeg",
+        "BinData/image5.png",
+        "BinData/image6.jpeg",
+        "BinData/image7.jpeg",
+        "BinData/image8.png"
+      ]
+    }
+  }
+]

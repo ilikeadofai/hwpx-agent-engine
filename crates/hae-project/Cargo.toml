@@ -1,0 +1,20 @@
+[package]
+name = "hae-project"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+hae-diag = { workspace = true }
+hae-zip = { workspace = true }
+hae-package = { workspace = true }
+hae-model = { workspace = true }
+hae-verify = { workspace = true }
+rustix = { workspace = true }
+sha2 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

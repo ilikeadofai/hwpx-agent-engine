@@ -1,0 +1,16 @@
+[package]
+name = "hae-verify"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+hae-diag = { workspace = true }
+hae-zip = { workspace = true }
+hae-xml = { workspace = true }
+hae-package = { workspace = true }
+sha2 = { workspace = true }
+
+[lints]
+workspace = true

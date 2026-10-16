@@ -2,3 +2,4 @@ spikes/vendor/
 spikes/**/target/
 target/
 spikes/work/
+/target/
