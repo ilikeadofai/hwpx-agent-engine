@@ -1,0 +1,1465 @@
+//! Session executor: envelope validation, writer/sequence table, transactions,
+//! batch, dryRun, 100-unit Undo/Redo history, snapshots, and resource budgets.
+
+use crate::registry::{
+    command_describe, command_list, BatchStepParam, CellSetTextParams, CommandBatchParams,
+    CommandDescriptor, DocumentDiffParams, DocumentExportParams, DocumentOpenParams,
+    DocumentPreviewParams, ImageReplaceParams, LineSpacingParam, ParagraphFormatParams,
+    ParsedCommand, ProjectSaveParams, SnapshotCreateParams, SnapshotReleaseParams,
+    TextReplaceParams,
+};
+use hae_diag::{Code, Diagnostic, EngineError, Limits, Result, Stage};
+use hae_edit::{Alignment, Applied, EditOp, ImageBytes, LineSpacing};
+use hae_model::{query::Query, Document, Kind};
+use hae_package::{sha256_hex, PackageState, NS_HH};
+use hae_project::{IoRoots, ProjectBinding};
+use hae_verify::{
+    verify_archive, verify_candidate, Alignment as VerifyAlignment,
+    LineSpacing as VerifyLineSpacing, LineSpacingKind as VerifyLineSpacingKind, VerifyOperation,
+};
+use hae_zip::Archive;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RequestEnvelope {
+    pub schema_version: u32,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub writer_id: Option<String>,
+    #[serde(default)]
+    pub request_sequence: Option<u64>,
+    #[serde(default)]
+    pub request_id: Option<String>,
+    #[serde(default)]
+    pub document_id: Option<String>,
+    #[serde(default)]
+    pub expected_version: Option<u64>,
+    pub command: String,
+    #[serde(default)]
+    pub dry_run: bool,
+    #[serde(default)]
+    pub params: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResponseEnvelope {
+    pub schema_version: u32,
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    pub command: String,
+    pub ok: bool,
+    #[serde(default)]
+    pub replayed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+#[derive(Clone)]
+struct VerifyStepRecord {
+    pre_state: PackageState,
+    ops: Vec<VerifyOperation>,
+}
+
+#[derive(Clone)]
+struct CommittedState {
+    doc: Document,
+    verify_steps: Arc<Vec<VerifyStepRecord>>,
+}
+
+#[derive(Clone)]
+struct HistoryUnit {
+    before: CommittedState,
+    after: CommittedState,
+    changed_ids: Vec<String>,
+    resource_changes: Vec<hae_edit::ResourceChange>,
+}
+
+#[derive(Clone)]
+struct ExplicitSnapshot {
+    doc: Document,
+}
+
+#[derive(Default)]
+struct WriterRecord {
+    last_seq: u64,
+    last_hash: Option<String>,
+    last_response: Option<ResponseEnvelope>,
+}
+
+struct OpenDocSession {
+    initial_doc: Document,
+    session_baseline: Arc<Archive>,
+    current: CommittedState,
+    revision: u64,
+    binding: Option<ProjectBinding>,
+    undo_stack: Vec<HistoryUnit>,
+    redo_stack: Vec<HistoryUnit>,
+    snapshots: BTreeMap<String, ExplicitSnapshot>,
+}
+
+pub struct SessionExecutor {
+    session_id: String,
+    default_writer_id: String,
+    default_next_seq: u64,
+    roots: IoRoots,
+    limits: Limits,
+    writers: HashMap<String, WriterRecord>,
+    open_doc: Option<OpenDocSession>,
+}
+
+fn canonical_json(v: &Value) -> Value {
+    match v {
+        Value::Object(map) => {
+            let mut sorted = serde_json::Map::new();
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            for k in keys {
+                sorted.insert(k.clone(), canonical_json(&map[k]));
+            }
+            Value::Object(sorted)
+        }
+        Value::Array(arr) => Value::Array(arr.iter().map(canonical_json).collect()),
+        other => other.clone(),
+    }
+}
+
+fn request_fingerprint(req: &RequestEnvelope) -> String {
+    let payload = json!({
+        "command": req.command,
+        "documentId": req.document_id,
+        "expectedVersion": req.expected_version,
+        "dryRun": req.dry_run,
+        "params": canonical_json(&req.params),
+    });
+    sha256_hex(&serde_json::to_vec(&payload).unwrap_or_default())
+}
+
+fn parse_kind(s: &str) -> Result<Kind> {
+    serde_json::from_value(Value::String(s.to_ascii_lowercase())).map_err(|_| {
+        EngineError::new(
+            Code::InvalidRequest,
+            Stage::Request,
+            format!("unknown element kind: {s}"),
+        )
+    })
+}
+
+fn parse_alignment(s: &str) -> Result<(Alignment, VerifyAlignment)> {
+    let up = s.to_ascii_uppercase();
+    let a: Alignment = serde_json::from_value(Value::String(up.clone())).map_err(|_| {
+        EngineError::new(
+            Code::InvalidRequest,
+            Stage::Validate,
+            format!("unsupported alignment: {s}"),
+        )
+    })?;
+    let va: VerifyAlignment = serde_json::from_value(Value::String(up)).map_err(|_| {
+        EngineError::new(
+            Code::InvalidRequest,
+            Stage::Validate,
+            format!("unsupported alignment: {s}"),
+        )
+    })?;
+    Ok((a, va))
+}
+
+fn parse_line_spacing(ls: LineSpacingParam) -> Result<(LineSpacing, VerifyLineSpacing)> {
+    if !ls.kind.eq_ignore_ascii_case("percent") {
+        return Err(EngineError::new(
+            Code::Unsupported,
+            Stage::Validate,
+            format!("unsupported lineSpacing kind: {}", ls.kind),
+        )
+        .with_reason("line_spacing_kind"));
+    }
+    let edit_ls: LineSpacing = serde_json::from_value(json!({
+        "kind": "percent",
+        "value": ls.value,
+    }))
+    .map_err(|e| EngineError::new(Code::InvalidRequest, Stage::Validate, e.to_string()))?;
+    Ok((
+        edit_ls,
+        VerifyLineSpacing {
+            kind: VerifyLineSpacingKind::Percent,
+            value: ls.value,
+        },
+    ))
+}
+
+fn add_arc_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, buf: &Arc<[u8]>) {
+    let key = (buf.as_ptr() as usize, buf.len());
+    if seen.insert(key) {
+        *total = total.saturating_add(buf.len() as u64);
+    }
+}
+
+fn add_doc_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, doc: &Document) {
+    let raw = doc.original.raw_bytes();
+    let raw_key = (raw.as_ptr() as usize, raw.len());
+    if seen.insert(raw_key) {
+        *total = total.saturating_add(raw.len() as u64);
+    }
+    for e in doc.original.entries() {
+        add_arc_bytes(seen, total, e.payload());
+    }
+    for e in &doc.state.entries {
+        add_arc_bytes(seen, total, &e.payload);
+    }
+}
+
+impl SessionExecutor {
+    pub fn new(
+        input_root: impl AsRef<Path>,
+        output_root: impl AsRef<Path>,
+        limits: Limits,
+    ) -> Result<Self> {
+        let roots = IoRoots::new(input_root, output_root, limits)?;
+        let session_id = hae_model::new_id("ses-")?;
+        let default_writer_id = hae_model::new_id("wrt-")?;
+        let mut writers = HashMap::new();
+        writers.insert(default_writer_id.clone(), WriterRecord::default());
+        Ok(Self {
+            session_id,
+            default_writer_id,
+            default_next_seq: 1,
+            roots,
+            limits,
+            writers,
+            open_doc: None,
+        })
+    }
+
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    pub fn default_writer_id(&self) -> &str {
+        &self.default_writer_id
+    }
+
+    pub fn issue_writer(&mut self) -> Result<String> {
+        let id = hae_model::new_id("wrt-")?;
+        self.writers.insert(id.clone(), WriterRecord::default());
+        Ok(id)
+    }
+
+    pub fn current_document_id(&self) -> Option<&str> {
+        self.open_doc
+            .as_ref()
+            .map(|d| d.current.doc.document_id.as_str())
+    }
+
+    pub fn current_revision(&self) -> Option<u64> {
+        self.open_doc.as_ref().map(|d| d.revision)
+    }
+
+    pub fn roots(&self) -> &IoRoots {
+        &self.roots
+    }
+
+    /// Unique session memory currently held across original, current state,
+    /// Undo/Redo history units, and explicit snapshots (shared buffers counted once).
+    pub fn memory_used_bytes(&self) -> u64 {
+        let Some(s) = &self.open_doc else {
+            return 0;
+        };
+        Self::compute_memory(s, None)
+    }
+
+    fn compute_memory(s: &OpenDocSession, candidate: Option<&Document>) -> u64 {
+        let mut seen = HashSet::new();
+        let mut total = 0u64;
+        add_doc_bytes(&mut seen, &mut total, &s.initial_doc);
+        add_doc_bytes(&mut seen, &mut total, &s.current.doc);
+        for u in &s.undo_stack {
+            add_doc_bytes(&mut seen, &mut total, &u.before.doc);
+            add_doc_bytes(&mut seen, &mut total, &u.after.doc);
+        }
+        for u in &s.redo_stack {
+            add_doc_bytes(&mut seen, &mut total, &u.before.doc);
+            add_doc_bytes(&mut seen, &mut total, &u.after.doc);
+        }
+        for snap in s.snapshots.values() {
+            add_doc_bytes(&mut seen, &mut total, &snap.doc);
+        }
+        if let Some(c) = candidate {
+            add_doc_bytes(&mut seen, &mut total, c);
+        }
+        total
+    }
+
+    /// Convenience in-process call for CLI script mode / adapter callers:
+    /// fills sessionId, default writerId, documentId, and requestSequence automatically.
+    pub fn call(
+        &mut self,
+        command: &str,
+        params: Value,
+        expected_version: Option<u64>,
+        dry_run: bool,
+    ) -> ResponseEnvelope {
+        let uses_seq = command_describe(command)
+            .map(|d| d.uses_request_sequence && !dry_run)
+            .unwrap_or(false);
+        let seq = if uses_seq {
+            let s = self.default_next_seq;
+            self.default_next_seq += 1;
+            Some(s)
+        } else {
+            None
+        };
+        let req = RequestEnvelope {
+            schema_version: 1,
+            session_id: Some(self.session_id.clone()),
+            writer_id: Some(self.default_writer_id.clone()),
+            request_sequence: seq,
+            request_id: None,
+            document_id: self.current_document_id().map(str::to_owned),
+            expected_version,
+            command: command.to_owned(),
+            dry_run,
+            params,
+        };
+        self.execute(req)
+    }
+
+    fn err_response(&self, req: &RequestEnvelope, err: EngineError) -> ResponseEnvelope {
+        ResponseEnvelope {
+            schema_version: 1,
+            session_id: self.session_id.clone(),
+            request_id: req.request_id.clone(),
+            command: req.command.clone(),
+            ok: false,
+            replayed: false,
+            result: None,
+            diagnostics: vec![err.diagnostic().clone()],
+        }
+    }
+
+    fn ok_response(
+        &self,
+        req: &RequestEnvelope,
+        result: Value,
+        diagnostics: Vec<Diagnostic>,
+    ) -> ResponseEnvelope {
+        ResponseEnvelope {
+            schema_version: 1,
+            session_id: self.session_id.clone(),
+            request_id: req.request_id.clone(),
+            command: req.command.clone(),
+            ok: true,
+            replayed: false,
+            result: Some(result),
+            diagnostics,
+        }
+    }
+
+    pub fn execute(&mut self, req: RequestEnvelope) -> ResponseEnvelope {
+        if req.schema_version != 1 {
+            return self.err_response(
+                &req,
+                EngineError::new(
+                    Code::InvalidRequest,
+                    Stage::Request,
+                    format!("unsupported schemaVersion {}", req.schema_version),
+                ),
+            );
+        }
+        if let Some(sid) = &req.session_id {
+            if sid != &self.session_id {
+                return self.err_response(
+                    &req,
+                    EngineError::new(
+                        Code::SessionMismatch,
+                        Stage::Request,
+                        "request sessionId does not match current session",
+                    ),
+                );
+            }
+        } else {
+            return self.err_response(
+                &req,
+                EngineError::new(
+                    Code::InvalidRequest,
+                    Stage::Request,
+                    "sessionId is required in RequestEnvelope",
+                ),
+            );
+        }
+
+        if let Some(wid) = &req.writer_id {
+            if !self.writers.contains_key(wid) {
+                return self.err_response(
+                    &req,
+                    EngineError::new(
+                        Code::UnknownWriter,
+                        Stage::Request,
+                        format!("writerId '{wid}' was not issued by this session"),
+                    ),
+                );
+            }
+        }
+
+        let desc = match command_describe(&req.command) {
+            Ok(d) => d,
+            Err(e) => return self.err_response(&req, e),
+        };
+
+        if req.dry_run && !desc.supports_dry_run {
+            return self.err_response(
+                &req,
+                EngineError::new(
+                    Code::InvalidRequest,
+                    Stage::Request,
+                    format!("command '{}' does not support dryRun", req.command),
+                ),
+            );
+        }
+
+        let track_seq = desc.uses_request_sequence && !req.dry_run;
+        let mut seq_ticket: Option<(String, u64, String)> = None;
+        if track_seq {
+            let Some(wid) = req.writer_id.clone() else {
+                return self.err_response(
+                    &req,
+                    EngineError::new(
+                        Code::InvalidRequest,
+                        Stage::Request,
+                        "writerId is required for sequence-tracked commands",
+                    ),
+                );
+            };
+            let Some(seq) = req.request_sequence else {
+                return self.err_response(
+                    &req,
+                    EngineError::new(
+                        Code::InvalidRequest,
+                        Stage::Request,
+                        "requestSequence is required for sequence-tracked commands",
+                    ),
+                );
+            };
+            let fp = request_fingerprint(&req);
+            let w = self.writers.get(&wid).unwrap();
+            if seq == 0 || seq < w.last_seq {
+                return self.err_response(
+                    &req,
+                    EngineError::new(
+                        Code::ReplayTooOld,
+                        Stage::Request,
+                        format!("requestSequence {seq} is older than {}", w.last_seq),
+                    ),
+                );
+            }
+            if seq == w.last_seq {
+                if w.last_hash.as_deref() == Some(fp.as_str()) {
+                    let mut saved = w.last_response.clone().unwrap();
+                    saved.replayed = true;
+                    saved.request_id = req.request_id.clone();
+                    return saved;
+                } else {
+                    return self.err_response(
+                        &req,
+                        EngineError::new(
+                            Code::RequestIdConflict,
+                            Stage::Request,
+                            format!(
+                                "requestSequence {seq} reused with different payload on writer '{wid}'"
+                            ),
+                        ),
+                    );
+                }
+            }
+            if seq > w.last_seq + 1 {
+                return self.err_response(
+                    &req,
+                    EngineError::new(
+                        Code::RequestOutOfOrder,
+                        Stage::Request,
+                        format!("expected requestSequence {}, got {seq}", w.last_seq + 1),
+                    ),
+                );
+            }
+            seq_ticket = Some((wid, seq, fp));
+        }
+
+        let resp = match self.dispatch(&req, &desc) {
+            Ok((val, diags)) => self.ok_response(&req, val, diags),
+            Err(e) => self.err_response(&req, e),
+        };
+
+        if let Some((wid, seq, fp)) = seq_ticket {
+            if let Some(w) = self.writers.get_mut(&wid) {
+                w.last_seq = seq;
+                w.last_hash = Some(fp);
+                w.last_response = Some(resp.clone());
+            }
+        }
+        resp
+    }
+
+    fn require_doc_mut<'a>(
+        open_doc: &'a mut Option<OpenDocSession>,
+        req_doc_id: Option<&str>,
+    ) -> Result<&'a mut OpenDocSession> {
+        let Some(s) = open_doc.as_mut() else {
+            return Err(EngineError::new(
+                Code::SessionRequired,
+                Stage::Request,
+                "no document is currently open in this session",
+            ));
+        };
+        if let Some(id) = req_doc_id {
+            if id != s.current.doc.document_id {
+                return Err(EngineError::new(
+                    Code::TargetNotFound,
+                    Stage::Request,
+                    format!("documentId '{id}' does not match open document"),
+                ));
+            }
+        }
+        Ok(s)
+    }
+
+    fn check_version(s: &OpenDocSession, expected: Option<u64>) -> Result<u64> {
+        let Some(v) = expected else {
+            return Err(EngineError::new(
+                Code::InvalidRequest,
+                Stage::Validate,
+                "expectedVersion is required for content mutations and Undo/Redo",
+            ));
+        };
+        if v != s.revision {
+            return Err(EngineError::new(
+                Code::VersionConflict,
+                Stage::Validate,
+                format!(
+                    "expectedVersion {v} does not match current revision {}",
+                    s.revision
+                ),
+            )
+            .with_detail(json!({
+                "expectedVersion": v,
+                "currentVersion": s.revision,
+            })));
+        }
+        Ok(s.revision)
+    }
+
+    fn dispatch(
+        &mut self,
+        req: &RequestEnvelope,
+        _desc: &CommandDescriptor,
+    ) -> Result<(Value, Vec<Diagnostic>)> {
+        let (parsed, _) = ParsedCommand::parse(&req.command, req.params.clone())?;
+        match parsed {
+            ParsedCommand::CommandList(_) => Ok((
+                json!({
+                    "commands": command_list(),
+                }),
+                Vec::new(),
+            )),
+            ParsedCommand::CommandDescribe(p) => {
+                let d = command_describe(&p.command)?;
+                Ok((serde_json::to_value(d).unwrap(), Vec::new()))
+            }
+            ParsedCommand::DocumentOpen(p) => self.handle_open(&p),
+            ParsedCommand::DocumentClose(_) => {
+                let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+                let doc_id = s.current.doc.document_id.clone();
+                self.open_doc = None;
+                Ok((json!({ "closedDocumentId": doc_id }), Vec::new()))
+            }
+            ParsedCommand::DocumentInspect(p) => {
+                let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+                if let Some(ev) = req.expected_version {
+                    if ev != s.revision {
+                        return Err(EngineError::new(
+                            Code::VersionConflict,
+                            Stage::Query,
+                            "expectedVersion mismatch on document.inspect",
+                        ));
+                    }
+                }
+                let offset = if let Some(c) = &p.cursor {
+                    let Some((rev_s, idx_s)) = c.split_once(':') else {
+                        return Err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Query,
+                            "invalid inspect cursor format",
+                        ));
+                    };
+                    let cursor_rev: u64 = rev_s.parse().map_err(|_| {
+                        EngineError::new(Code::InvalidRequest, Stage::Query, "invalid cursor rev")
+                    })?;
+                    if cursor_rev != s.revision {
+                        return Err(EngineError::new(
+                            Code::VersionConflict,
+                            Stage::Query,
+                            format!(
+                                "inspect cursor belongs to revision {cursor_rev}, current is {}",
+                                s.revision
+                            ),
+                        ));
+                    }
+                    idx_s.parse::<usize>().map_err(|_| {
+                        EngineError::new(Code::InvalidRequest, Stage::Query, "invalid cursor index")
+                    })?
+                } else {
+                    0
+                };
+                let limit = p.limit.unwrap_or(100).clamp(1, 500);
+                let (items, next) = s.current.doc.inspect(offset, limit);
+                let next_cursor = next.map(|n| format!("{}:{n}", s.revision));
+                Ok((
+                    json!({
+                        "documentId": s.current.doc.document_id,
+                        "revision": s.revision,
+                        "editable": s.current.doc.permissions.editable(),
+                        "readonlyReasons": s.current.doc.permissions.readonly_reasons,
+                        "items": items,
+                        "nextCursor": next_cursor,
+                    }),
+                    Vec::new(),
+                ))
+            }
+            ParsedCommand::ElementQuery(p) => {
+                let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+                let q = Query {
+                    kind: p.kind.as_deref().map(parse_kind).transpose()?,
+                    text_contains: p.text_contains,
+                    ancestor: p.ancestor,
+                    table: p.table,
+                    row: p.row,
+                    col: p.col,
+                };
+                let qr = s.current.doc.query(&q)?;
+                Ok((
+                    json!({
+                        "documentId": s.current.doc.document_id,
+                        "revision": s.revision,
+                        "matches": qr.matches,
+                        "unalignedMatches": qr.unaligned_matches,
+                    }),
+                    Vec::new(),
+                ))
+            }
+            ParsedCommand::ElementGet(p) => {
+                let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+                let doc = &s.current.doc;
+                let n = doc.require(&p.target, None)?;
+                let outline = doc.outline(n);
+                let text = doc.node_text(n);
+                let grapheme_count = if n.kind == Kind::Paragraph {
+                    Some(doc.para_text(n)?.grapheme_len())
+                } else {
+                    None
+                };
+                let (alignment, line_spacing_percent) = if n.kind == Kind::Paragraph {
+                    Self::read_para_format_props(doc, n)
+                } else {
+                    (None, None)
+                };
+                let children: Vec<String> = doc.children(&n.id).map(|c| c.id.clone()).collect();
+                Ok((
+                    json!({
+                        "documentId": doc.document_id,
+                        "revision": s.revision,
+                        "outline": outline,
+                        "text": text,
+                        "graphemeCount": grapheme_count,
+                        "alignment": alignment,
+                        "lineSpacingPercent": line_spacing_percent,
+                        "children": children,
+                    }),
+                    Vec::new(),
+                ))
+            }
+            ParsedCommand::TextReplace(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "text.replace".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
+            ParsedCommand::ParagraphFormat(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "paragraph.format".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
+            ParsedCommand::CellSetText(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "cell.setText".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
+            ParsedCommand::ImageReplace(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "image.replace".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
+            ParsedCommand::CommandBatch(CommandBatchParams { steps }) => {
+                if steps.is_empty() {
+                    return Err(EngineError::new(
+                        Code::InvalidRequest,
+                        Stage::Request,
+                        "command.batch requires at least one step",
+                    ));
+                }
+                self.handle_edit_steps(req, &steps)
+            }
+            ParsedCommand::HistoryUndo(_) => self.handle_undo(req),
+            ParsedCommand::HistoryRedo(_) => self.handle_redo(req),
+            ParsedCommand::HistoryClear(_) => {
+                if req.expected_version.is_some() {
+                    return Err(EngineError::new(
+                        Code::InvalidRequest,
+                        Stage::Request,
+                        "history.clear does not accept expectedVersion",
+                    ));
+                }
+                let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+                let had_history = !s.undo_stack.is_empty() || !s.redo_stack.is_empty();
+                s.undo_stack.clear();
+                s.redo_stack.clear();
+                Ok((
+                    json!({
+                        "controlChanged": had_history,
+                        "revision": s.revision,
+                    }),
+                    Vec::new(),
+                ))
+            }
+            ParsedCommand::DocumentSnapshot(SnapshotCreateParams { label }) => {
+                let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+                let id = hae_model::new_id("snap-")?;
+                s.snapshots.insert(
+                    id.clone(),
+                    ExplicitSnapshot {
+                        doc: s.current.doc.clone(),
+                    },
+                );
+                if Self::compute_memory(s, None) > self.limits.max_session_memory {
+                    s.snapshots.remove(&id);
+                    return Err(EngineError::new(
+                        Code::ResourceLimit,
+                        Stage::Validate,
+                        "session memory limit exceeded while creating snapshot",
+                    ));
+                }
+                Ok((
+                    json!({
+                        "snapshotId": id,
+                        "revision": s.revision,
+                        "label": label,
+                    }),
+                    Vec::new(),
+                ))
+            }
+            ParsedCommand::SnapshotRelease(SnapshotReleaseParams { snapshot_id }) => {
+                if req.expected_version.is_some() {
+                    return Err(EngineError::new(
+                        Code::InvalidRequest,
+                        Stage::Request,
+                        "snapshot.release does not accept expectedVersion",
+                    ));
+                }
+                let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+                if s.snapshots.remove(&snapshot_id).is_none() {
+                    return Err(EngineError::new(
+                        Code::SnapshotUnavailable,
+                        Stage::Validate,
+                        format!("snapshot '{snapshot_id}' is unavailable or already released"),
+                    ));
+                }
+                Ok((
+                    json!({
+                        "controlChanged": true,
+                        "snapshotId": snapshot_id,
+                        "revision": s.revision,
+                    }),
+                    Vec::new(),
+                ))
+            }
+            ParsedCommand::DocumentDiff(p) => self.handle_diff(req, &p),
+            ParsedCommand::DocumentPreview(DocumentPreviewParams { pages }) => {
+                let _s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+                let _ = pages;
+                Err(EngineError::new(
+                    Code::RendererUnavailable,
+                    Stage::Render,
+                    "rhwp preview adapter is not enabled in Stage 1 core",
+                )
+                .with_reason("stage1_renderer_unavailable"))
+            }
+            ParsedCommand::ProjectSave(p) => self.handle_project_save(req, &p),
+            ParsedCommand::DocumentExport(p) => self.handle_document_export(req, &p),
+        }
+    }
+
+    fn read_para_format_props(
+        doc: &Document,
+        n: &hae_model::Node,
+    ) -> (Option<String>, Option<u32>) {
+        let Some(pref) = doc.doc_of(n).el(n.el).attr_value("paraPrIDRef") else {
+            return (None, None);
+        };
+        let Some(header) = doc.header() else {
+            return (None, None);
+        };
+        let Some((p_el, _)) = header
+            .iter()
+            .find(|(_, e)| e.is(NS_HH, "paraPr") && e.attr_value("id") == Some(pref))
+        else {
+            return (None, None);
+        };
+        let mut align = None;
+        let mut spacing = None;
+        for d in header.descendants(p_el) {
+            let e = header.el(d);
+            if e.is(NS_HH, "align") {
+                align = e.attr_value("horizontal").map(str::to_owned);
+            }
+            if e.is(NS_HH, "lineSpacing") && e.attr_value("type") == Some("PERCENT") {
+                spacing = e.attr_value("value").and_then(|v| v.parse::<u32>().ok());
+            }
+        }
+        (align, spacing)
+    }
+
+    fn handle_open(&mut self, p: &DocumentOpenParams) -> Result<(Value, Vec<Diagnostic>)> {
+        let path = PathBuf::from(&p.path);
+        let is_project = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("hwpwork"));
+
+        let session = if is_project {
+            let opened = self.roots.open_project(&path)?;
+            let baseline = Arc::new(Archive::open(opened.current_hwpx.to_vec(), &self.limits)?);
+            let doc = opened.document;
+            OpenDocSession {
+                initial_doc: doc.clone(),
+                session_baseline: baseline,
+                current: CommittedState {
+                    doc,
+                    verify_steps: Arc::new(Vec::new()),
+                },
+                revision: opened.revision,
+                binding: Some(opened.binding),
+                undo_stack: Vec::new(),
+                redo_stack: Vec::new(),
+                snapshots: BTreeMap::new(),
+            }
+        } else {
+            let input = self.roots.read_input(&path)?;
+            let doc = Document::open(input.bytes, &self.limits)?;
+            let baseline = doc.original.clone();
+            OpenDocSession {
+                initial_doc: doc.clone(),
+                session_baseline: baseline,
+                current: CommittedState {
+                    doc,
+                    verify_steps: Arc::new(Vec::new()),
+                },
+                revision: 0,
+                binding: None,
+                undo_stack: Vec::new(),
+                redo_stack: Vec::new(),
+                snapshots: BTreeMap::new(),
+            }
+        };
+
+        if Self::compute_memory(&session, None) > self.limits.max_session_memory {
+            return Err(EngineError::new(
+                Code::ResourceLimit,
+                Stage::Open,
+                "opened document exceeds max_session_memory",
+            ));
+        }
+
+        let res = json!({
+            "documentId": session.current.doc.document_id,
+            "revision": session.revision,
+            "editable": session.current.doc.permissions.editable(),
+            "readonlyReasons": session.current.doc.permissions.readonly_reasons,
+            "nodeCount": session.current.doc.nodes.len(),
+            "boundProjectPath": session.binding.as_ref().map(|b| b.path()),
+        });
+        self.open_doc = Some(session);
+        Ok((res, Vec::new()))
+    }
+
+    fn build_step_ops(
+        roots: &IoRoots,
+        doc: &Document,
+        step_index: usize,
+        total_steps: usize,
+        step: &BatchStepParam,
+    ) -> Result<(EditOp, VerifyOperation)> {
+        let wrap_err = |e: EngineError| {
+            if total_steps > 1 {
+                e.with_detail(json!({ "failedStep": step_index }))
+            } else {
+                e
+            }
+        };
+        if step.params.get("expectedVersion").is_some()
+            || step.params.get("requestSequence").is_some()
+        {
+            return Err(wrap_err(EngineError::new(
+                Code::InvalidRequest,
+                Stage::Request,
+                "per-step expectedVersion or requestSequence is not allowed inside command.batch",
+            )));
+        }
+        match step.command.as_str() {
+            "text.replace" => {
+                let p: TextReplaceParams =
+                    serde_json::from_value(step.params.clone()).map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            format!("invalid text.replace params: {e}"),
+                        ))
+                    })?;
+                let (entry, path) = doc
+                    .node(&p.target)
+                    .map(|n| (n.entry.clone(), doc.doc_of(n).path(n.el)))
+                    .unwrap_or_default();
+                Ok((
+                    EditOp::TextReplace {
+                        target: p.target,
+                        range: p.range.start..p.range.end,
+                        text: p.text.clone(),
+                    },
+                    VerifyOperation::TextReplace {
+                        entry,
+                        path,
+                        range: p.range.start..p.range.end,
+                        replacement: p.text,
+                    },
+                ))
+            }
+            "paragraph.format" => {
+                let p: ParagraphFormatParams = serde_json::from_value(step.params.clone())
+                    .map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            format!("invalid paragraph.format params: {e}"),
+                        ))
+                    })?;
+                let (align, v_align) = match p.alignment.as_deref() {
+                    Some(a) => {
+                        let (x, y) = parse_alignment(a).map_err(&wrap_err)?;
+                        (Some(x), Some(y))
+                    }
+                    None => (None, None),
+                };
+                let (ls, v_ls) = match p.line_spacing {
+                    Some(l) => {
+                        let (x, y) = parse_line_spacing(l).map_err(&wrap_err)?;
+                        (Some(x), Some(y))
+                    }
+                    None => (None, None),
+                };
+                let (entry, path) = doc
+                    .node(&p.target)
+                    .map(|n| (n.entry.clone(), doc.doc_of(n).path(n.el)))
+                    .unwrap_or_default();
+                Ok((
+                    EditOp::ParagraphFormat {
+                        target: p.target,
+                        alignment: align,
+                        line_spacing: ls,
+                    },
+                    VerifyOperation::ParagraphFormat {
+                        entry,
+                        path,
+                        alignment: v_align,
+                        line_spacing: v_ls,
+                    },
+                ))
+            }
+            "cell.setText" => {
+                let p: CellSetTextParams =
+                    serde_json::from_value(step.params.clone()).map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            format!("invalid cell.setText params: {e}"),
+                        ))
+                    })?;
+                let (entry, path) = doc
+                    .node(&p.target)
+                    .map(|n| (n.entry.clone(), doc.doc_of(n).path(n.el)))
+                    .unwrap_or_default();
+                Ok((
+                    EditOp::CellSetText {
+                        target: p.target,
+                        text: p.text.clone(),
+                    },
+                    VerifyOperation::CellSetText {
+                        entry,
+                        path,
+                        text: p.text,
+                    },
+                ))
+            }
+            "image.replace" => {
+                let p: ImageReplaceParams =
+                    serde_json::from_value(step.params.clone()).map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            format!("invalid image.replace params: {e}"),
+                        ))
+                    })?;
+                let input = roots.read_input(&p.image_path).map_err(&wrap_err)?;
+                let image = ImageBytes::from_bytes(input.bytes.clone(), &doc.limits)
+                    .map_err(|e| wrap_err(e.with_target(&p.target)))?;
+                let (entry, path) = doc
+                    .node(&p.target)
+                    .map(|n| (n.entry.clone(), doc.doc_of(n).path(n.el)))
+                    .unwrap_or_default();
+                Ok((
+                    EditOp::ImageReplace {
+                        target: p.target,
+                        image,
+                    },
+                    VerifyOperation::ImageReplace {
+                        entry,
+                        path,
+                        bytes: input.bytes,
+                    },
+                ))
+            }
+            other => Err(wrap_err(EngineError::new(
+                Code::InvalidRequest,
+                Stage::Request,
+                format!("command '{other}' is not permitted inside an edit or command.batch"),
+            ))),
+        }
+    }
+
+    fn handle_edit_steps(
+        &mut self,
+        req: &RequestEnvelope,
+        steps: &[BatchStepParam],
+    ) -> Result<(Value, Vec<Diagnostic>)> {
+        let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+        let before_version = Self::check_version(s, req.expected_version)?;
+
+        let mut edit_ops = Vec::with_capacity(steps.len());
+        let mut verify_ops = Vec::with_capacity(steps.len());
+        for (i, step) in steps.iter().enumerate() {
+            let (eop, vop) =
+                Self::build_step_ops(&self.roots, &s.current.doc, i, steps.len(), step)?;
+            edit_ops.push(eop);
+            verify_ops.push(vop);
+        }
+
+        let applied: Applied = hae_edit::apply(&s.current.doc, &edit_ops)?;
+
+        let is_noop =
+            applied.doc.state.payload_set_sha256() == s.current.doc.state.payload_set_sha256();
+
+        if !is_noop {
+            // Independently verify candidate via hae-verify before committing
+            let candidate_bytes = applied.doc.to_hwpx()?;
+            let _ = verify_candidate(
+                &s.current.doc.state,
+                &candidate_bytes,
+                &verify_ops,
+                &self.limits,
+            )?;
+        }
+
+        if Self::compute_memory(s, Some(&applied.doc)) > self.limits.max_session_memory {
+            return Err(EngineError::new(
+                Code::ResourceLimit,
+                Stage::Validate,
+                "edit exceeds session memory limit (512 MiB)",
+            ));
+        }
+
+        let diags = applied.diagnostics.clone();
+        if req.dry_run {
+            let outcome = if is_noop { "noop" } else { "applied" };
+            return Ok((
+                json!({
+                    "outcome": outcome,
+                    "dryRun": true,
+                    "beforeVersion": before_version,
+                    "afterVersion": before_version,
+                    "predictedAfterVersion": if is_noop { before_version } else { before_version + 1 },
+                    "changedIds": applied.changed_ids,
+                    "resourceChanges": applied.resource_changes,
+                    "intents": applied.intents,
+                    "stale": applied.stale,
+                    "cacheRemovals": applied.cache_removals,
+                    "historyEvicted": false,
+                }),
+                diags,
+            ));
+        }
+
+        if is_noop {
+            return Ok((
+                json!({
+                    "outcome": "noop",
+                    "beforeVersion": before_version,
+                    "afterVersion": before_version,
+                    "changedIds": Vec::<String>::new(),
+                    "resourceChanges": Vec::<hae_edit::ResourceChange>::new(),
+                    "intents": Vec::<hae_edit::Intent>::new(),
+                    "stale": applied.stale,
+                    "cacheRemovals": applied.cache_removals,
+                    "historyEvicted": false,
+                }),
+                diags,
+            ));
+        }
+
+        let mut next_steps = (*s.current.verify_steps).clone();
+        next_steps.push(VerifyStepRecord {
+            pre_state: s.current.doc.state.clone(),
+            ops: verify_ops,
+        });
+        let next_state = CommittedState {
+            doc: applied.doc,
+            verify_steps: Arc::new(next_steps),
+        };
+
+        let mut history_evicted = false;
+        let max_units = self.limits.max_history_units as usize;
+        if max_units > 0 && s.undo_stack.len() >= max_units {
+            s.undo_stack.remove(0);
+            history_evicted = true;
+        }
+        s.redo_stack.clear();
+        s.undo_stack.push(HistoryUnit {
+            before: s.current.clone(),
+            after: next_state.clone(),
+            changed_ids: applied.changed_ids.clone(),
+            resource_changes: applied.resource_changes.clone(),
+        });
+        s.current = next_state;
+        s.revision += 1;
+
+        Ok((
+            json!({
+                "outcome": "applied",
+                "beforeVersion": before_version,
+                "afterVersion": s.revision,
+                "changedIds": applied.changed_ids,
+                "resourceChanges": applied.resource_changes,
+                "intents": applied.intents,
+                "stale": applied.stale,
+                "cacheRemovals": applied.cache_removals,
+                "historyEvicted": history_evicted,
+            }),
+            diags,
+        ))
+    }
+
+    fn handle_undo(&mut self, req: &RequestEnvelope) -> Result<(Value, Vec<Diagnostic>)> {
+        let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+        let before_version = Self::check_version(s, req.expected_version)?;
+        let Some(unit) = s.undo_stack.pop() else {
+            return Err(EngineError::new(
+                Code::HistoryEmpty,
+                Stage::Validate,
+                "undo history is empty",
+            ));
+        };
+        let changed_ids = unit.changed_ids.clone();
+        let resource_changes = unit.resource_changes.clone();
+        s.current = unit.before.clone();
+        s.redo_stack.push(unit);
+        s.revision += 1;
+        Ok((
+            json!({
+                "outcome": "applied",
+                "beforeVersion": before_version,
+                "afterVersion": s.revision,
+                "changedIds": changed_ids,
+                "resourceChanges": resource_changes,
+                "historyEvicted": false,
+            }),
+            Vec::new(),
+        ))
+    }
+
+    fn handle_redo(&mut self, req: &RequestEnvelope) -> Result<(Value, Vec<Diagnostic>)> {
+        let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+        let before_version = Self::check_version(s, req.expected_version)?;
+        let Some(unit) = s.redo_stack.pop() else {
+            return Err(EngineError::new(
+                Code::HistoryEmpty,
+                Stage::Validate,
+                "redo history is empty",
+            ));
+        };
+        let changed_ids = unit.changed_ids.clone();
+        let resource_changes = unit.resource_changes.clone();
+        s.current = unit.after.clone();
+        s.undo_stack.push(unit);
+        s.revision += 1;
+        Ok((
+            json!({
+                "outcome": "applied",
+                "beforeVersion": before_version,
+                "afterVersion": s.revision,
+                "changedIds": changed_ids,
+                "resourceChanges": resource_changes,
+                "historyEvicted": false,
+            }),
+            Vec::new(),
+        ))
+    }
+
+    fn handle_diff(
+        &mut self,
+        req: &RequestEnvelope,
+        p: &DocumentDiffParams,
+    ) -> Result<(Value, Vec<Diagnostic>)> {
+        let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+        let base_doc = match &p.base_snapshot_id {
+            None => &s.initial_doc,
+            Some(id) => {
+                &s.snapshots
+                    .get(id)
+                    .ok_or_else(|| {
+                        EngineError::new(
+                            Code::SnapshotUnavailable,
+                            Stage::Query,
+                            format!("base snapshot '{id}' is unavailable"),
+                        )
+                    })?
+                    .doc
+            }
+        };
+        let target_doc = match &p.target_snapshot_id {
+            None => &s.current.doc,
+            Some(id) => {
+                &s.snapshots
+                    .get(id)
+                    .ok_or_else(|| {
+                        EngineError::new(
+                            Code::SnapshotUnavailable,
+                            Stage::Query,
+                            format!("target snapshot '{id}' is unavailable"),
+                        )
+                    })?
+                    .doc
+            }
+        };
+
+        let mut changed_nodes = Vec::new();
+        for (a, b) in base_doc.nodes.iter().zip(&target_doc.nodes) {
+            let oa = base_doc.outline(a);
+            let ob = target_doc.outline(b);
+            let ta = base_doc.node_text(a);
+            let tb = target_doc.node_text(b);
+            if ta != tb || oa.media != ob.media {
+                changed_nodes.push(json!({
+                    "nodeId": b.id,
+                    "kind": b.kind,
+                    "beforeText": ta,
+                    "afterText": tb,
+                    "beforeMedia": oa.media,
+                    "afterMedia": ob.media,
+                }));
+            }
+        }
+        let mut changed_entries = Vec::new();
+        let mut media_changes = Vec::new();
+        for e in &target_doc.state.entries {
+            let old = base_doc.state.get(&e.name);
+            if old != Some(&e.payload) {
+                if e.name.starts_with("BinData/") {
+                    media_changes.push(e.name.clone());
+                } else {
+                    changed_entries.push(e.name.clone());
+                }
+            }
+        }
+        let identical =
+            base_doc.state.payload_set_sha256() == target_doc.state.payload_set_sha256();
+        Ok((
+            json!({
+                "identical": identical,
+                "changedNodes": changed_nodes,
+                "changedEntries": changed_entries,
+                "mediaChanges": media_changes,
+                "staleLayoutSections": target_doc.stale_layout,
+            }),
+            Vec::new(),
+        ))
+    }
+
+    fn verify_temporary_hwpx(
+        s: &OpenDocSession,
+        limits: &Limits,
+        candidate_bytes: &[u8],
+    ) -> Result<()> {
+        if s.current.verify_steps.is_empty() {
+            let _ = verify_archive(&s.session_baseline, candidate_bytes, &[], limits)?;
+            return Ok(());
+        }
+        if s.current.verify_steps.len() == 1 {
+            let step = &s.current.verify_steps[0];
+            if step.pre_state.payload_set_sha256()
+                == PackageState::from_archive(&s.session_baseline).payload_set_sha256()
+            {
+                let _ = verify_archive(&s.session_baseline, candidate_bytes, &step.ops, limits)?;
+                return Ok(());
+            }
+        }
+        let last = s.current.verify_steps.last().unwrap();
+        let _ = verify_candidate(&last.pre_state, candidate_bytes, &last.ops, limits)?;
+        // Also enforce unchanged raw ZIP entry preservation against doc.original
+        let cand_arch = Archive::open(candidate_bytes.to_vec(), limits)
+            .map_err(|e| EngineError::new(Code::VerifyFailed, Stage::Save, e.to_string()))?;
+        for old in s.current.doc.original.entries() {
+            let Some(new_e) = cand_arch.get(&old.name) else {
+                return Err(EngineError::new(
+                    Code::VerifyFailed,
+                    Stage::Save,
+                    "original ZIP entry deleted",
+                ));
+            };
+            if old.method != new_e.method {
+                return Err(EngineError::new(
+                    Code::VerifyFailed,
+                    Stage::Save,
+                    format!("ZIP method changed: {}", old.name),
+                ));
+            }
+            if old.payload() == new_e.payload()
+                && (s.current.doc.original.raw_data(&old.name) != cand_arch.raw_data(&old.name)
+                    || s.current.doc.original.raw_local_header(&old.name)
+                        != cand_arch.raw_local_header(&old.name))
+            {
+                return Err(EngineError::new(
+                    Code::VerifyFailed,
+                    Stage::Save,
+                    format!("unchanged ZIP entry was re-encoded: {}", old.name),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn handle_project_save(
+        &mut self,
+        req: &RequestEnvelope,
+        p: &ProjectSaveParams,
+    ) -> Result<(Value, Vec<Diagnostic>)> {
+        let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+        let target_path = match (&p.path, &s.binding) {
+            (Some(path), _) => PathBuf::from(path),
+            (None, Some(b)) => b.path().to_path_buf(),
+            (None, None) => {
+                return Err(EngineError::new(
+                    Code::InvalidRequest,
+                    Stage::Save,
+                    "first project.save requires a target path",
+                ));
+            }
+        };
+        let limits = self.limits;
+        let baseline = s.session_baseline.clone();
+        let steps = s.current.verify_steps.clone();
+        let doc_clone = s.current.doc.clone();
+        let rev = s.revision;
+        let receipt = self.roots.save_project(
+            &mut s.binding,
+            &target_path,
+            &doc_clone,
+            rev,
+            |cand_bytes| {
+                let dummy = OpenDocSession {
+                    initial_doc: doc_clone.clone(),
+                    session_baseline: baseline,
+                    current: CommittedState {
+                        doc: doc_clone.clone(),
+                        verify_steps: steps,
+                    },
+                    revision: rev,
+                    binding: None,
+                    undo_stack: Vec::new(),
+                    redo_stack: Vec::new(),
+                    snapshots: BTreeMap::new(),
+                };
+                Self::verify_temporary_hwpx(&dummy, &limits, cand_bytes)
+            },
+        )?;
+        Ok((
+            json!({
+                "path": receipt.path,
+                "sha256": receipt.sha256,
+                "savedVersion": receipt.revision,
+                "revision": s.revision,
+            }),
+            Vec::new(),
+        ))
+    }
+
+    fn handle_document_export(
+        &mut self,
+        req: &RequestEnvelope,
+        p: &DocumentExportParams,
+    ) -> Result<(Value, Vec<Diagnostic>)> {
+        let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+        let target_path = PathBuf::from(&p.path);
+        let limits = self.limits;
+        let baseline = s.session_baseline.clone();
+        let steps = s.current.verify_steps.clone();
+        let doc_clone = s.current.doc.clone();
+        let rev = s.revision;
+        let receipt = self
+            .roots
+            .export_hwpx(&target_path, &doc_clone, |cand_bytes| {
+                let dummy = OpenDocSession {
+                    initial_doc: doc_clone.clone(),
+                    session_baseline: baseline,
+                    current: CommittedState {
+                        doc: doc_clone.clone(),
+                        verify_steps: steps,
+                    },
+                    revision: rev,
+                    binding: None,
+                    undo_stack: Vec::new(),
+                    redo_stack: Vec::new(),
+                    snapshots: BTreeMap::new(),
+                };
+                Self::verify_temporary_hwpx(&dummy, &limits, cand_bytes)
+            })?;
+        Ok((
+            json!({
+                "path": receipt.path,
+                "sha256": receipt.sha256,
+                "exportedVersion": s.revision,
+                "unmodifiedPassthrough": s.current.doc.is_unmodified(),
+            }),
+            Vec::new(),
+        ))
+    }
+}

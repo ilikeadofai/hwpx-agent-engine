@@ -11,6 +11,9 @@ hae-zip = { workspace = true }
 hae-xml = { workspace = true }
 hae-package = { workspace = true }
 sha2 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+unicode-segmentation = { workspace = true }
 
 [lints]
 workspace = true

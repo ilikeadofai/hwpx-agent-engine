@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 hae-diag = { workspace = true }
 hae-zip = { workspace = true }
+hae-package = { workspace = true }
 hae-model = { workspace = true }
 hae-edit = { workspace = true }
 hae-verify = { workspace = true }

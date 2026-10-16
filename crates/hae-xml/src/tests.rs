@@ -152,3 +152,104 @@ fn escapes() {
     assert_eq!(escape_attr("\"'<\t"), "&quot;&apos;&lt;&#x9;");
     assert_eq!(unescape("a&amp;&#65;&#x42;").unwrap(), "a&AB");
 }
+
+// F1 — duplicate expanded attribute names (same URI, different prefixes).
+#[test]
+fn f1_duplicate_expanded_attributes_rejected() {
+    assert_eq!(
+        reject(r#"<x xmlns:a="urn:U" xmlns:b="urn:U" a:k="1" b:k="2"/>"#),
+        "PACKAGE_REJECTED/malformed_xml"
+    );
+    // Same local, different URIs: fine.
+    XmlDoc::parse(br#"<x xmlns:a="urn:U1" xmlns:b="urn:U2" a:k="1" b:k="2"/>"#.to_vec()).unwrap();
+    // Declarations alone are not expanded-attribute collisions.
+    XmlDoc::parse(br#"<x xmlns="urn:X" xmlns:a="urn:Y"/>"#.to_vec()).unwrap();
+    // Default-ns attributes stay in no namespace: same local, one prefixed: fine.
+    XmlDoc::parse(br#"<x xmlns="urn:X" xmlns:a="urn:X" k="1" a:k="2"/>"#.to_vec()).unwrap();
+}
+
+// F2 — colons: second colon and empty prefix/local rejected.
+#[test]
+fn f2_qname_colon_rules() {
+    assert_eq!(
+        reject(r#"<x xmlns:a="urn:U" a:b:c="1"/>"#),
+        "PACKAGE_REJECTED/malformed_xml"
+    );
+    assert_eq!(
+        reject(r#"<a:b:c xmlns:a="urn:U"/>"#),
+        "PACKAGE_REJECTED/malformed_xml"
+    );
+    for bad in ["<:x/>", "<x:/>", "<: />", "<a: />", "<:b/>", "<a::b/>"] {
+        assert!(
+            XmlDoc::parse(bad.as_bytes().to_vec()).is_err(),
+            "expected reject: {bad}"
+        );
+    }
+    XmlDoc::parse(br#"<a:b xmlns:a="urn:U"/>"#.to_vec()).unwrap();
+}
+
+// F3 — XML 1.0 NCName start/char rules with real Unicode ranges.
+#[test]
+fn f3_ncname_validation() {
+    assert_eq!(reject("<1bad/>"), "PACKAGE_REJECTED/malformed_xml");
+    assert_eq!(reject(r#"<x 1a="2"/>"#), "PACKAGE_REJECTED/malformed_xml");
+    assert_eq!(reject("<-bad/>"), "PACKAGE_REJECTED/malformed_xml");
+    assert_eq!(reject("<.bad/>"), "PACKAGE_REJECTED/malformed_xml");
+    assert_eq!(
+        reject(r#"<x a:b:c="1" xmlns:a="urn:U"/>"#),
+        "PACKAGE_REJECTED/malformed_xml"
+    );
+    // Valid: underscore, dot/hyphen inside, Hangul (U+AC00 in 3001-D7FF),
+    // CJK (U+4E2D), NameChar extras (· U+00B7, combining U+0300).
+    XmlDoc::parse("<_x/>".as_bytes().to_vec()).unwrap();
+    XmlDoc::parse("<x-y.z/>".as_bytes().to_vec()).unwrap();
+    XmlDoc::parse("<한글/>".as_bytes().to_vec()).unwrap();
+    XmlDoc::parse("<中/>".as_bytes().to_vec()).unwrap();
+    XmlDoc::parse(
+        "<?xml version=\"1.0\"?><x a\u{b7}b=\"1\"/>"
+            .as_bytes()
+            .to_vec(),
+    )
+    .unwrap();
+    // U+00B7 is NameChar but not NameStartChar.
+    assert!(XmlDoc::parse("<x \u{b7}b=\"1\"/>".as_bytes().to_vec()).is_err());
+}
+
+// F4 — reserved xml/xmlns bindings.
+#[test]
+fn f4_reserved_prefix_bindings() {
+    assert_eq!(
+        reject(r#"<x xmlns:xml="urn:other"/>"#),
+        "PACKAGE_REJECTED/malformed_xml"
+    );
+    assert_eq!(
+        reject(r#"<x xmlns:xml="urn:other" xml:lang="en"/>"#),
+        "PACKAGE_REJECTED/malformed_xml"
+    );
+    // Rebinding xml to its correct URI stays accepted.
+    let d = XmlDoc::parse(
+        br#"<x xmlns:xml="http://www.w3.org/XML/1998/namespace" xml:lang="en"/>"#.to_vec(),
+    )
+    .unwrap();
+    let el = d.el(d.root());
+    let lang = el.attrs.iter().find(|a| a.qname == "xml:lang").unwrap();
+    assert_eq!(lang.ns.as_deref(), Some(NS_XML));
+    // Other prefixes must not take the xml or xmlns namespaces.
+    assert!(
+        XmlDoc::parse(br#"<x xmlns:a="http://www.w3.org/XML/1998/namespace"/>"#.to_vec()).is_err()
+    );
+    assert!(XmlDoc::parse(br#"<x xmlns:xmlns="urn:X"/>"#.to_vec()).is_err());
+    assert!(XmlDoc::parse(br#"<x xmlns:a="http://www.w3.org/2000/xmlns/"/>"#.to_vec()).is_err());
+    // xml prefix works without declaration via the seeded binding.
+    let d = XmlDoc::parse(br#"<x xml:lang="en"/>"#.to_vec()).unwrap();
+    let el = d.el(d.root());
+    assert_eq!(
+        el.attrs
+            .iter()
+            .find(|a| a.qname == "xml:lang")
+            .unwrap()
+            .ns
+            .as_deref(),
+        Some(NS_XML)
+    );
+}

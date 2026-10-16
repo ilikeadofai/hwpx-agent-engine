@@ -288,10 +288,66 @@ fn scan_attrs(tag: &[u8], base: usize) -> Result<Vec<RawAttr>> {
     Ok(out)
 }
 
-fn split_qname(q: &str) -> (Option<&str>, &str) {
+pub const NS_XMLNS: &str = "http://www.w3.org/2000/xmlns/";
+
+/// XML 1.0 5th edition `NameStartChar` minus `:` (i.e. `NCNameStartChar`).
+pub fn is_ncname_start(c: char) -> bool {
+    matches!(c,
+        'A'..='Z' | 'a'..='z' | '_'
+        | '\u{C0}'..='\u{D6}' | '\u{D8}'..='\u{F6}' | '\u{F8}'..='\u{2FF}'
+        | '\u{370}'..='\u{37D}' | '\u{37F}'..='\u{1FFF}'
+        | '\u{200C}'..='\u{200D}' | '\u{2070}'..='\u{218F}'
+        | '\u{2C00}'..='\u{2FEF}' | '\u{3001}'..='\u{D7FF}'
+        | '\u{F900}'..='\u{FDCF}' | '\u{FDF0}'..='\u{FFFD}'
+        | '\u{10000}'..='\u{EFFFF}')
+}
+
+/// XML 1.0 `NameChar` minus `:` (i.e. `NCNameChar`).
+pub fn is_ncname_char(c: char) -> bool {
+    is_ncname_start(c)
+        || matches!(c,
+            '-' | '.' | '0'..='9' | '\u{B7}'
+            | '\u{300}'..='\u{36F}' | '\u{203F}'..='\u{2040}')
+}
+
+fn check_ncname(s: &str, what: &str) -> Result<()> {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(f) if is_ncname_start(f) => {}
+        _ => {
+            return Err(malformed(format!("{what}: invalid NCName {s:?}")));
+        }
+    }
+    if s.chars().any(|c| !is_ncname_char(c)) {
+        return Err(malformed(format!("{what}: invalid NCName {s:?}")));
+    }
+    Ok(())
+}
+
+/// Split and validate a `QName`: at most one `:`, non-empty prefix/local,
+/// each part a valid `NCName`.
+fn parse_qname(q: &str) -> Result<(Option<&str>, &str)> {
+    if q.is_empty() {
+        return Err(malformed("empty element/attribute name"));
+    }
+    if q.matches(':').count() > 1 {
+        return Err(malformed(format!("invalid QName {q:?}: more than one ':'")));
+    }
     match q.split_once(':') {
-        Some((p, l)) => (Some(p), l),
-        None => (None, q),
+        Some((p, l)) => {
+            if p.is_empty() || l.is_empty() {
+                return Err(malformed(format!(
+                    "invalid QName {q:?}: empty prefix/local"
+                )));
+            }
+            check_ncname(p, "prefix")?;
+            check_ncname(l, "local part")?;
+            Ok((Some(p), l))
+        }
+        None => {
+            check_ncname(q, "name")?;
+            Ok((None, q))
+        }
     }
 }
 
@@ -372,30 +428,80 @@ impl XmlDoc {
                         .map_err(|_| malformed("element name not UTF-8"))?
                         .to_string();
                     let raw_attrs = scan_attrs(&bytes[raw.clone()], before)?;
-                    // New namespace scope.
+                    // New namespace scope with reserved-prefix enforcement.
                     let mut scope = Scope {
                         map: scopes.last().unwrap().map.clone(),
                     };
                     for (n, v, _, _) in &raw_attrs {
                         if n == "xmlns" {
+                            if v == NS_XMLNS {
+                                return Err(malformed(
+                                    "default namespace bound to xmlns namespace",
+                                ));
+                            }
                             scope.map.insert(String::new(), Arc::from(v.as_str()));
                         } else if let Some(p) = n.strip_prefix("xmlns:") {
+                            check_ncname(p, "namespace prefix")?;
+                            if p == "xmlns" {
+                                return Err(malformed("prefix xmlns must not be declared"));
+                            }
                             if v.is_empty() {
                                 return Err(malformed(format!("empty namespace for prefix {p}")));
                             }
+                            if p == "xml" {
+                                if v != NS_XML {
+                                    return Err(malformed(format!(
+                                        "prefix xml bound to {v:?}, must be {NS_XML:?}"
+                                    )));
+                                }
+                            } else {
+                                if v == NS_XML {
+                                    return Err(malformed(format!(
+                                        "prefix {p} must not bind the xml namespace"
+                                    )));
+                                }
+                                if v == NS_XMLNS {
+                                    return Err(malformed(format!(
+                                        "prefix {p} must not bind the xmlns namespace"
+                                    )));
+                                }
+                            }
                             scope.map.insert(p.to_string(), Arc::from(v.as_str()));
+                        } else if n.contains(':') {
+                            // Validate non-declaration prefixed names early so
+                            // `xmlns:a:b`-style input cannot slip through scope
+                            // handling; full QName checks repeat below.
+                            parse_qname(n)?;
+                        } else {
+                            check_ncname(n, "attribute name")?;
                         }
                     }
-                    let mut seen = std::collections::HashSet::new();
+                    let mut seen: std::collections::HashSet<String> =
+                        std::collections::HashSet::new();
+                    let mut seen_expanded: std::collections::HashSet<(String, String)> =
+                        std::collections::HashSet::new();
                     let mut attrs = Vec::with_capacity(raw_attrs.len());
                     for (n, v, span, value_span) in raw_attrs {
                         if !seen.insert(n.clone()) {
                             return Err(malformed(format!("duplicate attribute {n}")));
                         }
-                        let (p, l) = split_qname(&n);
+                        // Namespace declarations are tracked separately and do
+                        // not participate in expanded-name duplicate checks.
+                        if n == "xmlns" || n.starts_with("xmlns:") {
+                            parse_qname(&n)?;
+                            attrs.push(Attr {
+                                qname: n.clone(),
+                                ns: None,
+                                local: n.clone(),
+                                value: v,
+                                span,
+                                value_span,
+                            });
+                            continue;
+                        }
+                        let (p, l) = parse_qname(&n)?;
                         let ns = match p {
                             None => None,
-                            Some("xmlns") => None,
                             Some(p) => Some(
                                 scope
                                     .map
@@ -404,6 +510,13 @@ impl XmlDoc {
                                     .ok_or_else(|| malformed(format!("unbound prefix {p}")))?,
                             ),
                         };
+                        let key = (ns.as_deref().unwrap_or("").to_string(), l.to_string());
+                        if !seen_expanded.insert(key) {
+                            return Err(malformed(format!(
+                                "duplicate expanded attribute {{{}}} {l}",
+                                ns.as_deref().unwrap_or("")
+                            )));
+                        }
                         attrs.push(Attr {
                             qname: n.clone(),
                             ns,
@@ -413,7 +526,7 @@ impl XmlDoc {
                             value_span,
                         });
                     }
-                    let (p, l) = split_qname(&qname);
+                    let (p, l) = parse_qname(&qname)?;
                     let ns = match p {
                         Some(p) => Some(
                             scope

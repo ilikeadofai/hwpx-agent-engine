@@ -250,6 +250,8 @@ dependencies = [
  "hae-xml",
  "hae-zip",
  "png",
+ "serde",
+ "serde_json",
  "sha2",
  "zune-jpeg",
 ]
@@ -261,6 +263,7 @@ dependencies = [
  "hae-diag",
  "hae-edit",
  "hae-model",
+ "hae-package",
  "hae-project",
  "hae-verify",
  "hae-zip",
@@ -318,7 +321,10 @@ dependencies = [
  "hae-package",
  "hae-xml",
  "hae-zip",
+ "serde",
+ "serde_json",
  "sha2",
+ "unicode-segmentation",
 ]
 
 [[package]]

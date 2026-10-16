@@ -1,47 +1,45 @@
 # 모델 역할 분담
 
-개정: 2026-10-16 (T3 Code nightly로 옮긴 뒤 다시 정함). 이전 판의 원칙은 유지한다: 총괄과 Sonnet 5.5가 작업을 나누고, 복잡한 일은 Opus 5.5, 간단한 일은 Gemini 3.8 Flash, 단순 코드 작성은 DeepSeek 4.1 Flash가 맡는다. 바뀐 점은 총괄이 Codex의 GPT 6.1 Sol에서 T3의 Claude Opus 5.5로 넘어왔다는 것이다. 라우터·자동 분배는 만들지 않고 총괄이 작업마다 직접 배정한다.
+개정: 2026-10-16(사용자 지정 사용 계획 반영). 각 요금제의 사용량 한도에 빨리 닿지 않도록 사용자가 모델별 역할을 정했다. 이 표가 현재 기준이며, 아래 "이전 기록"은 참고용이다.
 
-## 쓸 수 있는 모델 (2026-10-16 T3 orchestrator_capabilities 기준)
+## 현재 배정 (사용자 지정)
 
-| 경로 | 주요 모델 |
+| 계층 | 모델 | 맡는 일 | 하지 않는 일 |
+|---|---|---|---|
+| 총괄 | **Claude Opus 5.5** | 전체 관리: 단계·범위 판단, 작업 분해와 배정, 결과 수용 결정, 커밋 | 매우 복잡한 작업이 아니면 직접 구현하지 않는다. 멀티모달 작업 |
+| 총괄 보조·검증 | **GPT 6.1 Sol (codex)** | 오케스트레이션 보조, 계획·결과의 독립 검증과 검토 | 매우 복잡한 작업이 아니면 직접 구현하지 않는다. 멀티모달 작업 |
+| 구현 계획 수행 | **Claude Sonnet 5.5** (주력) | 총괄이 넘긴 구현 계획의 실행: 엔진 기능 구현, 시험, 중간 난도 조사 | 범위 변경 결정 |
+| 구현 계획 수행 | **Gemini 4 Argon** (opencode-go) | 사용자가 실제로 경험하는 부분: CLI·MCP 도구 설명과 응답 문구, 오류 메시지, 사용 안내서, 미리보기 산출물의 사용자 표시 | 핵심 보존·트랜잭션 코드 |
+| 세부·단순 작업 | **DeepSeek V4.1 Flash** (opencode-go) | 정해진 시그니처와 시험이 있는 코드, 보조 스크립트, 반복 작업. Gemini 3.8 Flash와 나눠 맡는다 | 원본 보존 XML 편집, 트랜잭션·이력, 격리 정책의 설계 |
+| 세부·단순 작업 | **Gemini 3.8 Flash (High)** (antigravity) | 비전 등 멀티모달 작업(미리보기 이미지 판독, 렌더링 비교, 스크린샷 확인). 그 밖의 단순 작업은 DeepSeek와 나눠 맡는다 | 설계 판단 |
+| 세부·단순 작업 | **Claude Haiku 5.5** | 에이전틱 작업: 여러 명령을 돌리며 확인하는 일(빌드·시험 반복, 파일 대조, 환경 점검) | 판단이 필요한 설계 |
+| 세부·단순 작업 | **Muse Spark 1.3** (opencode-go) | 빠른 처리가 필요한 짧은 작업 | 긴 구현 |
+
+호출하지 않는 모델: Claude Fable, GPT-6 Astra. OpenRouter 경로는 쓰지 않는다. OpenCode 모델은 opencode-go 모델 id로 부른다.
+
+## 호출 경로
+
+| 모델 | 경로 |
 |---|---|
-| claudeAgent (T3 기본) | claude-opus-5-5, claude-sonnet-5-5, claude-haiku-5-5, claude-fable-5-1 외 이전 세대 |
-| codex | gpt-6.1-sol, gpt-6-astra, gpt-daybreak-blue-latest, google-antigravity/gemini-3.8-flash, opencode-go/deepseek-v4.1-flash, opencode-go/gemini-4-argon-contributor 등 |
-| opencode | gemini-4-argon, deepseek-v4-pro, glm-5.3, kimi-k3, qwen3.8, grok-4.7 등 다수 |
-| antigravity | gemini-3.8-flash (low/medium/high) |
-| Claude Code 하위 에이전트 (opencodex 경유) | ocx-deepseek(~deepseek/deepseek-flash-latest), ocx-gemini-3-8-flash, ocx-claude-haiku-5-5 |
+| Sonnet 5.5, Haiku 5.5 | T3 delegate_task(providerInstanceId=claudeAgent) 또는 Claude Code 하위 에이전트(model=sonnet/haiku) |
+| GPT 6.1 Sol | T3 delegate_task(providerInstanceId=codex, model=gpt-6.1-sol) |
+| Gemini 4 Argon | T3 delegate_task(providerInstanceId=opencode, model=opencode-go/gemini-4-argon-contributor) |
+| DeepSeek V4.1 Flash | T3 delegate_task(providerInstanceId=opencode, model=opencode-go/deepseek-v4.1-flash) |
+| Muse Spark 1.3 | T3 delegate_task(providerInstanceId=opencode, model=opencode-go/muse-spark-1.3-contributor) |
+| Gemini 3.8 Flash (High) | T3 delegate_task(providerInstanceId=antigravity, model=gemini-3.8-flash-high) |
 
-## 배정
-
-| 모델 | 맡는 일 | 맡기지 않는 일 |
-|---|---|---|
-| **Claude Opus 5.5 (총괄, 이 스레드)** | 설계 판단, 단계 0 판정, 구현 계획 작성, 정규 상태·트랜잭션·원본 보존 핵심 코드, 하위 결과 검수와 최종 검증 | — |
-| **Claude Sonnet 5.5** | 중간 난도 조사·구현(예: rhwp 출력 형식 조사), 설계·계획 일관성 검토, 코드 리뷰 | 단계 판정, 범위 변경 결정 |
-| **GPT 6.1 Sol (codex)** | 다른 공급자 시각의 독립 검토: 구현 계획·핵심 코드의 반례와 빈틈 찾기. 엔진 코드와 독립된 시험 oracle·변조 시험 작성(구현 계획 1-14) | 최종 결정, 엔진 본 코드 |
-| **DeepSeek 4.1 Flash** | 인터페이스와 통과 시험이 정해진 단순 코드: 시험 보조 스크립트, 오류 코드 열거, 직렬화 구조체, CLI 인자 연결 | 원본 보존 XML 편집, 트랜잭션·이력, 격리 정책, 클린룸 자료 경계에 닿는 코드 |
-| **Gemini 3.8 Flash** | 한국어 문서 표현·용어 점검, 짧은 요약, 단순 확인 | 코드와 설계 판단 |
-| **Gemini 4 Argon** | 사용자에게 보일 긴 한국어 문서(안내서·사용 설명)의 문장 다듬기 | 기술 판단 |
-| Claude Haiku 5.5 | 파일 목록·해시 대조 같은 기계적 확인이 많을 때 | 판단이 필요한 일 |
-
-Claude Fable 5.1은 Opus로도 결론이 안 나는 고난도 검토가 생길 때만 쓰고, 기본 배정에는 넣지 않는다. 그 밖의 opencode 모델(GLM, Kimi, Qwen, Grok 등)은 배정하지 않는다.
+- Claude Code의 ocx-* 하위 에이전트 유형은 쓰지 않는다(2026-10-16에 지정 모델 대신 Haiku로 실행되거나 404로 실패).
+- T3 delegate_task가 거절되면(parent_not_active 등) 해당 작업은 경로가 살아날 때까지 미루고, 총괄이 대신 구현하지 않는다. 기다릴 수 없는 작업만 Claude 하위 에이전트(Sonnet·Haiku)로 돌리고 작업 기록에 남긴다.
 
 ## 규칙
 
-- 하위 모델에는 대상 파일·함수 시그니처·통과해야 할 시험을 함께 준다. 결과는 총괄이나 Sonnet이 읽고 시험을 직접 다시 돌린 뒤 받아들인다.
-- 외부 공급자(DeepSeek, Gemini, GPT)로는 사용자 문서·개인 자료·실명이 든 문서 본문을 보내지 않고, 명세와 공개·합성 자료만 보낸다.
-- 응답한 실제 모델명과 작업 범위를 작업 기록에 남긴다.
-## 호출 경로 (2026-10-16 확인)
+- 하위 모델에는 대상 파일·소유 범위·함수 시그니처·통과해야 할 시험을 함께 준다. 같은 파일을 두 작업이 동시에 소유하지 않는다.
+- 결과는 검증 담당(GPT 6.1 Sol 또는 Haiku의 시험 재실행)을 거친 뒤 총괄이 받아들인다.
+- 외부 공급자로는 사용자 문서·개인 자료·실명이 든 문서 본문을 보내지 않고, 명세와 공개·합성 자료만 보낸다.
+- 응답한 실제 모델명과 작업 범위를 작업 기록(.superpowers/sdd/…/progress.md)에 남긴다.
 
-| 모델 | 경로 | 확인 |
-|---|---|---|
-| Sonnet 5.5 | Claude Code 하위 에이전트(model=sonnet) 또는 T3 delegate_task(claudeAgent) | 사용 중 |
-| DeepSeek 4.1 Flash | **T3 delegate_task, providerInstanceId=opencode, model=opencode/deepseek-v4.1-flash-free** | S4 스크립트 작성에 사용, 응답 정상 |
-| GPT 6.1 Sol | T3 delegate_task, providerInstanceId=codex, model=gpt-6.1-sol | — |
-| Gemini 4 Argon | T3 delegate_task, providerInstanceId=opencode, model=opencode/gemini-4-argon | — |
-| Gemini 3.8 Flash | T3 delegate_task, providerInstanceId=antigravity | — |
+## 이전 기록 (요약)
 
-- 다른 공급자 모델은 T3의 opencode·codex·antigravity 공급자로 부른다. OpenCode 무료 등급은 OpenCode 앱 안에서만 허용되므로, T3의 opencode 공급자(앱을 직접 실행)로는 되지만 opencodex 프록시로 직접 부르면 403이다. 프록시의 opencode-go 경로도 작업공간 지역 설정 때문에 400으로 거절됐다.
-- **Claude Code의 ocx-* 하위 에이전트 유형은 쓰지 않는다.** 2026-10-16에 ocx-deepseek 유형으로 맡긴 작업이 실제로는 Haiku 5.5로 실행됐다(프록시 로그에 DeepSeek 호출 없음). 그 결과물은 채택하지 않고 spikes/work/discarded_haiku/에 두었다.
-- **OpenRouter 경로는 쓰지 않는다**(사용자 지시, 2026-10-16). spikes/tools/ask_model.py는 단계 0 기록으로만 남긴다.
-- T3 delegate_task가 거절되면(예: parent_not_active) DeepSeek 몫은 미뤄 두었다가 경로가 살아나면 맡긴다. 급한 작업은 총괄이나 Sonnet(Claude 하위 에이전트)이 대신하고, 그 사실을 작업 기록에 남긴다.
+- 2026-10-16 오전: Opus 총괄, Sonnet 중간 구현, GPT 6.1 Sol 독립 검토, DeepSeek 단순 코드, Gemini 3.8 Flash 한국어 점검, Gemini 4 Argon 긴 문서.
+- 2026-10-16 오후: 총괄이 일시적으로 Codex GPT 6.1 Sol로 넘어가 OpenCode·Codex 모델에 파일 범위를 나눠 위임했다(단계 1 완료). 이 기간에 Astra도 일부 쓰였으나 이후 사용자 지시로 중단했다.
+- ocx-deepseek 유형으로 맡긴 작업이 Haiku로 실행된 사례의 결과물은 채택하지 않고 spikes/work/discarded_haiku/에 두었다.

@@ -22,10 +22,24 @@ pub use image::ImageBytes;
 /// One edit command (spec §6). Ranges are grapheme-cluster indices.
 #[derive(Debug, Clone)]
 pub enum EditOp {
-    TextReplace { target: String, range: Range<usize>, text: String },
-    ParagraphFormat { target: String, alignment: Option<Alignment>, line_spacing: Option<LineSpacing> },
-    CellSetText { target: String, text: String },
-    ImageReplace { target: String, image: ImageBytes },
+    TextReplace {
+        target: String,
+        range: Range<usize>,
+        text: String,
+    },
+    ParagraphFormat {
+        target: String,
+        alignment: Option<Alignment>,
+        line_spacing: Option<LineSpacing>,
+    },
+    CellSetText {
+        target: String,
+        text: String,
+    },
+    ImageReplace {
+        target: String,
+        image: ImageBytes,
+    },
 }
 
 impl EditOp {
@@ -45,9 +59,19 @@ impl EditOp {
 #[serde(tag = "op", rename_all = "camelCase")]
 pub enum Intent {
     #[serde(rename = "text.replace")]
-    TextReplace { entry: String, path: Vec<usize>, #[serde(rename = "expectedText")] expected_text: String },
+    TextReplace {
+        entry: String,
+        path: Vec<usize>,
+        #[serde(rename = "expectedText")]
+        expected_text: String,
+    },
     #[serde(rename = "cell.setText")]
-    CellSetText { entry: String, path: Vec<usize>, #[serde(rename = "expectedText")] expected_text: String },
+    CellSetText {
+        entry: String,
+        path: Vec<usize>,
+        #[serde(rename = "expectedText")]
+        expected_text: String,
+    },
     #[serde(rename = "paragraph.format")]
     ParagraphFormat {
         entry: String,
@@ -57,7 +81,12 @@ pub enum Intent {
         line_spacing_percent: Option<u32>,
     },
     #[serde(rename = "image.replace")]
-    ImageReplace { entry: String, path: Vec<usize>, #[serde(rename = "imageSha256")] image_sha256: String },
+    ImageReplace {
+        entry: String,
+        path: Vec<usize>,
+        #[serde(rename = "imageSha256")]
+        image_sha256: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -104,7 +133,9 @@ pub(crate) struct Draft {
 
 impl Draft {
     pub fn opts(&self) -> ParseOptions {
-        ParseOptions { max_depth: self.doc.limits.max_xml_depth as usize }
+        ParseOptions {
+            max_depth: self.doc.limits.max_xml_depth as usize,
+        }
     }
 
     /// Replace one entry's payload via splices and rebuild the candidate.
@@ -113,7 +144,11 @@ impl Draft {
             return Ok(());
         }
         let doc = self.doc.xml.get(entry).ok_or_else(|| {
-            EngineError::new(Code::StateInvariantError, Stage::Apply, format!("no parsed entry {entry}"))
+            EngineError::new(
+                Code::StateInvariantError,
+                Stage::Apply,
+                format!("no parsed entry {entry}"),
+            )
         })?;
         let new = doc.splice(edits, self.opts())?;
         let mut st = self.doc.state.clone();
@@ -142,8 +177,16 @@ impl Draft {
             }
             top = p;
         }
-        let ord = doc.el(root).children.iter().position(|&c| c == top).unwrap_or(0);
-        let e = self.anchors.entry(para.entry.clone()).or_insert((usize::MAX, Vec::new()));
+        let ord = doc
+            .el(root)
+            .children
+            .iter()
+            .position(|&c| c == top)
+            .unwrap_or(0);
+        let e = self
+            .anchors
+            .entry(para.entry.clone())
+            .or_insert((usize::MAX, Vec::new()));
         e.0 = e.0.min(ord);
         if top != para.el {
             e.1.push(path);
@@ -158,7 +201,10 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
         return Err(EngineError::new(
             Code::Unsupported,
             Stage::Validate,
-            format!("document is read-only: {}", doc.permissions.readonly_reasons.join(", ")),
+            format!(
+                "document is read-only: {}",
+                doc.permissions.readonly_reasons.join(", ")
+            ),
         )
         .with_reason("document_readonly"));
     }
@@ -173,11 +219,17 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
     };
     for (i, op) in ops.iter().enumerate() {
         let r = match op {
-            EditOp::TextReplace { target, range, text } => text::text_replace(&mut d, target, range.clone(), text),
+            EditOp::TextReplace {
+                target,
+                range,
+                text,
+            } => text::text_replace(&mut d, target, range.clone(), text),
             EditOp::CellSetText { target, text } => text::cell_set_text(&mut d, target, text),
-            EditOp::ParagraphFormat { target, alignment, line_spacing } => {
-                format::paragraph_format(&mut d, target, *alignment, *line_spacing)
-            }
+            EditOp::ParagraphFormat {
+                target,
+                alignment,
+                line_spacing,
+            } => format::paragraph_format(&mut d, target, *alignment, *line_spacing),
             EditOp::ImageReplace { target, image } => image::image_replace(&mut d, target, image),
         };
         r.map_err(|e| {
@@ -187,6 +239,17 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
                 e
             }
         })?;
+    }
+    if d.doc.state.payload_set_sha256() == doc.state.payload_set_sha256() {
+        return Ok(Applied {
+            doc: doc.clone(),
+            changed_ids: Vec::new(),
+            resource_changes: Vec::new(),
+            diagnostics: Vec::new(),
+            intents: Vec::new(),
+            stale: Staleness::default(),
+            cache_removals: BTreeMap::new(),
+        });
     }
     let cache_removals = clear_caches(&mut d)?;
     let stale = update_previews(&mut d, &cache_removals)?;
@@ -216,7 +279,9 @@ fn clear_caches(d: &mut Draft) -> Result<BTreeMap<String, usize>> {
             doc.el(p)
                 .children
                 .iter()
-                .filter(|&&c| hae_model::is_hp(doc.el(c).ns.as_deref()) && doc.el(c).local == "linesegarray")
+                .filter(|&&c| {
+                    hae_model::is_hp(doc.el(c).ns.as_deref()) && doc.el(c).local == "linesegarray"
+                })
                 .map(|&c| doc.el(c).outer())
                 .collect()
         };
@@ -256,7 +321,11 @@ fn update_previews(d: &mut Draft, removals: &BTreeMap<String, usize>) -> Result<
     let edits = std::mem::take(&mut d.prv);
     let touched = !d.intents.is_empty();
     if let Some(name) = d.doc.info.prv_text.clone() {
-        let cur = d.doc.payload(&name).cloned().unwrap_or_else(|| Arc::from(Vec::new()));
+        let cur = d
+            .doc
+            .payload(&name)
+            .cloned()
+            .unwrap_or_else(|| Arc::from(Vec::new()));
         match std::str::from_utf8(&cur) {
             Ok(s) => {
                 let mut s = s.to_string();

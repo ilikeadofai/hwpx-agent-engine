@@ -52,10 +52,10 @@ pub fn is_hp(ns: Option<&str>) -> bool {
 
 /// Namespaces the engine understands; elements in other namespaces are opaque.
 pub fn is_known_ns(ns: Option<&str>) -> bool {
-    match ns {
-        None => false,
-        Some(u) => u.starts_with("http://www.hancom.co.kr/"),
-    }
+    matches!(
+        ns,
+        Some(NS_HP) | Some(NS_HP10) | Some(NS_HS) | Some(NS_HH) | Some(NS_HC)
+    )
 }
 
 /// Classify an element of a section document.
@@ -488,11 +488,14 @@ impl Document {
         self.permissions.readonly_reasons = reasons;
 
         // Opaque elements referring to an identity element's HWPX id lock that node.
-        let mut hwpx_ids: HashMap<(String, String), usize> = HashMap::new();
+        let mut hwpx_ids: HashMap<(String, String), Vec<usize>> = HashMap::new();
         for (ni, n) in self.nodes.iter().enumerate() {
             if let Some(v) = self.xml[&n.entry].el(n.el).attr_value("id") {
                 if !v.is_empty() {
-                    hwpx_ids.insert((n.entry.clone(), v.to_string()), ni);
+                    hwpx_ids
+                        .entry((n.entry.clone(), v.to_string()))
+                        .or_default()
+                        .push(ni);
                 }
             }
         }
@@ -503,8 +506,10 @@ impl Document {
             els.extend(doc.descendants(n.el));
             for e in els {
                 for a in &doc.el(e).attrs {
-                    if let Some(&t) = hwpx_ids.get(&(n.entry.clone(), a.value.clone())) {
-                        locks.push((t, format!("opaque_reference:{}", n.id)));
+                    if let Some(targets) = hwpx_ids.get(&(n.entry.clone(), a.value.clone())) {
+                        for &t in targets {
+                            locks.push((t, format!("opaque_reference:{}", n.id)));
+                        }
                     }
                 }
             }

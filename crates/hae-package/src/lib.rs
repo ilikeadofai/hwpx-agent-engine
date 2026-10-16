@@ -298,7 +298,10 @@ pub fn analyze_cached(
             if !ids.insert(id.clone()) {
                 return Err(broken(format!("duplicate manifest id {id}")));
             }
-            if href.contains("..") || href.starts_with('/') || href.contains('\\') {
+            if href.starts_with('/')
+                || href.contains('\\')
+                || href.split('/').any(|seg| seg == ".." || seg == ".")
+            {
                 return Err(EngineError::rejected(
                     R::PathEscape,
                     format!("manifest href {href}"),
@@ -499,6 +502,66 @@ mod tests {
         )
         .unwrap();
         assert_eq!(info.sections.len(), 28);
+    }
+
+    fn entry(name: &str, payload: &[u8]) -> Entry {
+        Entry {
+            name: name.to_string(),
+            payload: Arc::from(payload.to_vec()),
+            origin: Origin::Original,
+        }
+    }
+
+    fn harness_state(hpf: &str, extra: Vec<Entry>) -> PackageState {
+        let container = r#"<?xml version="1.0" encoding="UTF-8"?><container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="content.hpf"/></rootfiles></container>"#;
+        let section = r#"<?xml version="1.0" encoding="UTF-8"?><hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section"><hs:p>hi</hs:p></hs:sec>"#;
+        let mut entries = vec![
+            entry("mimetype", MIMETYPE.as_bytes()),
+            entry("META-INF/container.xml", container.as_bytes()),
+            entry("content.hpf", hpf.as_bytes()),
+            entry("Contents/section0.xml", section.as_bytes()),
+        ];
+        entries.extend(extra);
+        PackageState { entries }
+    }
+
+    const HPF_BASE: &str = r#"<?xml version="1.0" encoding="UTF-8"?><opf:package xmlns:opf="http://www.idpf.org/2007/opf"><opf:manifest>ITEMS</opf:manifest><opf:spine><opf:itemref idref="sec0"/></opf:spine></opf:package>"#;
+
+    #[test]
+    fn c2_manifest_href_allows_double_dot_inside_segment() {
+        let hpf = HPF_BASE.replace(
+            "ITEMS",
+            r#"<opf:item id="sec0" href="Contents/section0.xml" media-type="text/xml"/><opf:item id="blob" href="BinData/a..b.bin" media-type="application/octet-stream"/>"#,
+        );
+        let st = harness_state(&hpf, vec![entry("BinData/a..b.bin", b"payload-bytes")]);
+        let (info, _) = analyze(&st, true, &Limits::default()).unwrap();
+        assert!(info.item_by_id("blob").is_some());
+        assert_eq!(info.item_by_id("blob").unwrap().entry, "BinData/a..b.bin");
+    }
+
+    #[test]
+    fn c2_manifest_href_rejects_dotdot_segments() {
+        for href in [
+            "../outside.xml",
+            "a/../b.xml",
+            "a/../../b.xml",
+            "./x.xml",
+            "a/./b.xml",
+        ] {
+            let hpf = HPF_BASE.replace(
+                "ITEMS",
+                &format!(
+                    r#"<opf:item id="sec0" href="Contents/section0.xml" media-type="text/xml"/><opf:item id="evil" href="{href}" media-type="text/xml"/>"#
+                ),
+            );
+            let st = harness_state(&hpf, vec![]);
+            let err = analyze(&st, true, &Limits::default()).unwrap_err();
+            assert_eq!(
+                err.reason(),
+                Some("path_escape"),
+                "href {href:?} should be path_escape, got {err}"
+            );
+        }
     }
 
     #[test]

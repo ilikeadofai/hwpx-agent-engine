@@ -194,3 +194,39 @@ fn inspect_pages() {
     let j = serde_json::to_value(&a[0]).unwrap();
     assert_eq!(j["kind"], "section");
 }
+
+#[test]
+fn hancom_uri_prefix_is_not_a_supported_namespace() {
+    assert!(!is_known_ns(Some("http://www.hancom.co.kr/future/unknown")));
+    assert!(is_known_ns(Some(NS_HP)));
+    let doc = XmlDoc::parse(br#"<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" xmlns:x="http://www.hancom.co.kr/future/unknown"><x:reference idref="1"/></hs:sec>"#.to_vec()).unwrap();
+    assert_eq!(
+        identity_elements(&doc)
+            .iter()
+            .filter(|(_, k)| *k == Kind::Opaque)
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn duplicate_hwpx_ids_are_all_locked_by_opaque_reference() {
+    let limits = Limits::default();
+    let original = hae_zip::Archive::open(corpus("ref_empty.hwpx"), &limits).unwrap();
+    let mut state = PackageState::from_archive(&original);
+    let section=br#"<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph" xmlns:x="urn:opaque"><hp:p id="1"><hp:run><hp:t>first</hp:t></hp:run></hp:p><hp:p id="1"><hp:run><hp:t>second</hp:t></hp:run></hp:p><x:reference target="1"/></hs:sec>"#;
+    state.set("Contents/section0.xml", Arc::from(section.to_vec()));
+    let bytes = hae_zip::write(
+        &original,
+        &hae_package::zip_plan(&original, &state).unwrap(),
+    )
+    .unwrap();
+    let d = Document::open(bytes, &limits).unwrap();
+    let paragraphs: Vec<_> = d
+        .nodes
+        .iter()
+        .filter(|n| n.kind == Kind::Paragraph)
+        .collect();
+    assert_eq!(paragraphs.len(), 2);
+    assert!(paragraphs.iter().all(|n| d.check_editable(n).is_err()));
+}
