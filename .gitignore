@@ -2,4 +2,9 @@ spikes/vendor/
 spikes/**/target/
 target/
 spikes/work/
-/target/
+/.codebase-memory/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
