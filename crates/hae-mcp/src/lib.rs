@@ -1,7 +1,7 @@
 //! hae-mcp: stdio MCP server (JSON-RPC 2.0, one message per line) over the session executor.
 //!
 //! Every registry command becomes one MCP tool (`cell.setText` → `cell_set_text`).
-//! The agent supplies `documentId`, `expectedVersion`, `dryRun` and the command
+//! The agent may supply `documentId`, and supplies `expectedVersion`, `dryRun` and the command
 //! params only. The adapter issues one writer per connection and numbers
 //! sequence-tracked requests itself (spec §6), so a duplicated agent call
 //! fails with `VERSION_CONFLICT` instead of being applied twice.
@@ -285,7 +285,7 @@ pub fn input_schema(d: &CommandDescriptor) -> Value {
         extra.push((
             "documentId",
             json!({ "type": "string", "description": descriptions::document_id_property() }),
-            true,
+            false,
         ));
     }
     if d.requires_expected_version {

@@ -45,3 +45,7 @@ JSON-lines와 MCP 코드, 실제 프로세스 동등성 시험, Haiku의 기존 
 R1/R2는 정적 SVG 어휘·CSS/MIME 제한과 내장 래스터 헤더·누적 예산에 더해 필수 워커 격리로 보강했다. R3의 재현된 중복 버퍼·무제한 렌더러/래스터 실행은 예약·중복 경로 거절·자식 주소 공간 제한으로 수정했다. R4/R7/R8/R9는 `adapter-budget-fixes.md`, R5/R6 및 파일 전달은 실행기 계약 시험과 실제 MCP 시험으로 연결했다. 프로세스별 주소 공간 제한·보수적 호스트 회계·샘플링 디스크 제한의 범위를 유지한다.
 
 설계 §13의 구조·편집·저장·프로토콜 검증과 렌더러 격리 검증은 Linux 자동화 범위다. 계획 3-6의 시각 판독은 Gemini 도구가 이미지 픽셀을 전달하지 않아 **UNVERIFIED**다. Windows S4와 `nativeComparison`도 **not_checked**이며 전체 한컴 호환성·0.1 최종 시각 수용을 완료로 선언하지 않는다. 최종 관문 수치는 별도 `haiku-final-linux-gate.md` 및 `stage234-linux-results.md`를 기준으로 한다.
+
+## 2026-10-17 단계 3 최종 판정 (R1–R9 수정·최종 관문 반영)
+
+R1–R9 수정과 격리 PNG 작업자 반영 후의 최종 Linux 관문은 [stage234-linux-results.md](../stage234-linux-results.md)에 기록되어 있다. 해당 관문의 `scripts/check.sh` 종료 0, Rust 243개·사용량 도우미 30개·oracle 88개 통과와 실제 stdio MCP 86/86 통과를 근거로 단계 3 완료 조건 충족: **예(조건부)**. 남은 단일 조건: **시각 판정은 stage3-visual-check.md를 따른다**.

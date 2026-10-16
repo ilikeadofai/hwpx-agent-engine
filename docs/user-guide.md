@@ -151,6 +151,7 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 }
 ```
 - **응답**: 문서 고유 식별자인 `documentId`(예: `"doc-1"`)와 시작 버전 번호인 `revision: 0`을 돌려받습니다.
+- **MCP 문서 선택**: 문서가 필요한 도구의 `documentId`는 선택 사항이며, 생략하면 현재 연결에서 열린 문서를 사용합니다. 지정한 값은 열린 문서 ID와 일치해야 합니다. 불일치는 `TARGET_NOT_FOUND`로 거절하고 열린 문서에 적용하지 않으며, 열린 문서 없이 생략하면 `SESSION_REQUIRED`로 거절합니다. 편집의 `expectedVersion`은 여전히 필수입니다.
 
 ### ② 구조 훑어보기 및 요소 검색 (`document_inspect`, `element_query`)
 문서에 어떤 문단과 표가 있는지 전체 개요를 보거나(`document_inspect`), 특정 글자가 들어간 문단·표 셀을 찾습니다(`element_query`).

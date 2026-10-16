@@ -519,10 +519,10 @@ define_commands! {
         name: "document.preview",
         cli: "document-preview",
         mcp: "document_preview",
-        summary: "Render SVG/PNG preview of the open document (Stage 3 adapter)",
+        summary: "Render SVG/PNG previews with a configured adapter; otherwise RENDERER_UNAVAILABLE (renderer_not_configured)",
         category: Preview,
         mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
-        stage1: false, reason: Some("stage1_renderer_unavailable"),
+        stage1: false, reason: Some("renderer_not_configured"),
         params: DocumentPreviewParams, output: GenericResultShape,
     },
     ProjectSave {

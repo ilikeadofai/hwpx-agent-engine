@@ -275,6 +275,17 @@ fn preview_after_an_edit_is_tied_to_the_new_revision() {
 
 #[test]
 fn command_discovery_reports_preview_configuration_instead_of_old_stage_reason() {
+    let registered = hae_exec::command_list()
+        .into_iter()
+        .find(|d| d.name == "document.preview")
+        .unwrap();
+    assert!(!registered.available);
+    assert!(!registered.supported_in_stage1);
+    assert_eq!(
+        registered.unsupported_reason,
+        Some("renderer_not_configured")
+    );
+    assert!(registered.summary.contains("RENDERER_UNAVAILABLE"));
     let (mut exec, _out, _id) = executor("ref_empty.hwpx");
     let desc = exec
         .call(

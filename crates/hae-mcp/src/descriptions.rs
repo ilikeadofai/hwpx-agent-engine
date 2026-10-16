@@ -37,31 +37,31 @@ fn element_get() -> &'static str {
 }
 
 fn text_replace() -> &'static str {
-    "Replace a non-empty text `range` (`[start, end)` in extended grapheme clusters, `0 <= start < end`, within one paragraph) on paragraph `target` (`nodeId` from `document_inspect`/`element_query`) with `text` (no tabs or newlines; empty string deletes). Requires `documentId` and `expectedVersion` equal to the current revision; on `VERSION_CONFLICT`, re-query to get the latest revision and ranges. Refuses read-only documents (`UNSUPPORTED`), out-of-bounds or empty ranges (`INVALID_RANGE`), ranges crossing tabs/linebreaks/fields/controls (`RANGE_CROSSES_CONTROL`), or unknown inline elements (`UNSUPPORTED_CONTENT_IN_RANGE`); warns with `FORMAT_COLLAPSED` when spanning multiple char shapes. Set `dryRun: true` to preview outcome and diff without changing the document or revision."
+    "Replace a non-empty text `range` (`[start, end)` in extended grapheme clusters, `0 <= start < end`, within one paragraph) on paragraph `target` (`nodeId` from `document_inspect`/`element_query`) with `text` (no tabs or newlines; empty string deletes). Requires `expectedVersion` equal to the current revision; on `VERSION_CONFLICT`, re-query to get the latest revision and ranges. Refuses read-only documents (`UNSUPPORTED`), out-of-bounds or empty ranges (`INVALID_RANGE`), ranges crossing tabs/linebreaks/fields/controls (`RANGE_CROSSES_CONTROL`), or unknown inline elements (`UNSUPPORTED_CONTENT_IN_RANGE`); warns with `FORMAT_COLLAPSED` when spanning multiple char shapes. Set `dryRun: true` to preview outcome and diff without changing the document or revision."
 }
 
 fn paragraph_format() -> &'static str {
-    "Update paragraph `target` (`nodeId` from `document_inspect`/`element_query`) with `alignment` (`left`, `center`, `right`, `justify`, `distribute`, `distributeSpace`) and/or `lineSpacing` (`{\"kind\": \"percent\", \"value\": 1..=1000}`), reusing or cloning the paragraph shape without altering global styles. Requires `documentId` and `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query). Refuses read-only documents or uncloneable shapes (`UNSUPPORTED`), missing targets (`TARGET_NOT_FOUND`), or calls with neither option set (`INVALID_REQUEST`). Set `dryRun: true` to preview without changing the document."
+    "Update paragraph `target` (`nodeId` from `document_inspect`/`element_query`) with `alignment` (`left`, `center`, `right`, `justify`, `distribute`, `distributeSpace`) and/or `lineSpacing` (`{\"kind\": \"percent\", \"value\": 1..=1000}`), reusing or cloning the paragraph shape without altering global styles. Requires `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query). Refuses read-only documents or uncloneable shapes (`UNSUPPORTED`), missing targets (`TARGET_NOT_FOUND`), or calls with neither option set (`INVALID_REQUEST`). Set `dryRun: true` to preview without changing the document."
 }
 
 fn cell_set_text() -> &'static str {
-    "Replace the entire text of table cell `target` (`nodeId` from `document_inspect` or `element_query` with `table`/`row`/`col`) with `text` (no tabs or newlines). Requires `documentId`, `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query), and an unmerged cell containing exactly one paragraph with at least one run. Refuses merged cells, multi-paragraph cells, empty-run cells, or read-only documents (`UNSUPPORTED`), and cells whose text crosses inline controls (`RANGE_CROSSES_CONTROL`). Set `dryRun: true` to preview without changing the document."
+    "Replace the entire text of table cell `target` (`nodeId` from `document_inspect` or `element_query` with `table`/`row`/`col`) with `text` (no tabs or newlines). Requires `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query), and an unmerged cell containing exactly one paragraph with at least one run. Refuses merged cells, multi-paragraph cells, empty-run cells, or read-only documents (`UNSUPPORTED`), and cells whose text crosses inline controls (`RANGE_CROSSES_CONTROL`). Set `dryRun: true` to preview without changing the document."
 }
 
 fn image_replace() -> &'static str {
-    "Replace the media of picture `target` (`nodeId` from `document_inspect`/`element_query`) with a static PNG or JPEG file at `imagePath` (inside `--input-root`), preserving the picture's position, size, and caption while leaving other pictures sharing the old media untouched. Requires `documentId` and `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query). Refuses read-only documents, cropped/effect pictures, or animated/non-PNG/JPEG images (`UNSUPPORTED`), disallowed paths (`PATH_NOT_ALLOWED`), or images over 40.96 megapixels (`RESOURCE_LIMIT`). Set `dryRun: true` to preview without changing the document."
+    "Replace the media of picture `target` (`nodeId` from `document_inspect`/`element_query`) with a static PNG or JPEG file at `imagePath` (inside `--input-root`), preserving the picture's position, size, and caption while leaving other pictures sharing the old media untouched. Requires `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query). Refuses read-only documents, cropped/effect pictures, or animated/non-PNG/JPEG images (`UNSUPPORTED`), disallowed paths (`PATH_NOT_ALLOWED`), or images over 40.96 megapixels (`RESOURCE_LIMIT`). Set `dryRun: true` to preview without changing the document."
 }
 
 fn command_batch() -> &'static str {
-    "Execute multiple edit `steps` (`text.replace`, `paragraph.format`, `cell.setText`, `image.replace`) atomically as a single revision increment and single undo unit. Requires `documentId` and one top-level `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query); each step's ranges and preconditions are evaluated against the state produced by preceding steps. If any step fails, the entire batch rolls back with no state change and reports the failing step index. Set `dryRun: true` to validate and preview the combined diff without changing the document."
+    "Execute multiple edit `steps` (`text.replace`, `paragraph.format`, `cell.setText`, `image.replace`) atomically as a single revision increment and single undo unit. Requires one top-level `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query); each step's ranges and preconditions are evaluated against the state produced by preceding steps. If any step fails, the entire batch rolls back with no state change and reports the failing step index. Set `dryRun: true` to validate and preview the combined diff without changing the document."
 }
 
 fn history_undo() -> &'static str {
-    "Restore the document snapshot from before the last committed edit and increment `revision` by 1 (revisions always move forward). Requires `documentId` and `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query). Fails with `HISTORY_EMPTY` if there is no undo unit available."
+    "Restore the document snapshot from before the last committed edit and increment `revision` by 1 (revisions always move forward). Requires `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query). Fails with `HISTORY_EMPTY` if there is no undo unit available."
 }
 
 fn history_redo() -> &'static str {
-    "Restore the next undone document snapshot (including exact media bytes) and increment `revision` by 1 without re-running commands. Requires `documentId` and `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query). Fails with `HISTORY_EMPTY` if no undone state is available (any new edit clears the redo branch)."
+    "Restore the next undone document snapshot (including exact media bytes) and increment `revision` by 1 without re-running commands. Requires `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query). Fails with `HISTORY_EMPTY` if no undone state is available (any new edit clears the redo branch)."
 }
 
 fn history_clear() -> &'static str {
@@ -131,7 +131,7 @@ pub fn description(command: &str) -> Option<&'static str> {
 
 /// Shown on every `documentId` input property.
 pub fn document_id_property() -> &'static str {
-    "The `documentId` returned by `document_open` for the currently open document."
+    "Optional: defaults to the currently open document; if given it must match the open document. Fails with TARGET_NOT_FOUND on mismatch or SESSION_REQUIRED if no document is open."
 }
 
 /// Shown on every `expectedVersion` input property.
@@ -146,5 +146,5 @@ pub fn dry_run_property() -> &'static str {
 
 /// Returned as `instructions` from `initialize`.
 pub fn server_instructions() -> &'static str {
-    "Preservation-first HWPX document engine. Workflow: (1) call `document_open` to get `documentId` and `revision`; (2) call `document_inspect` or `element_query` to find target `nodeId`s and text; (3) call edit tools (`text_replace`, `paragraph_format`, `cell_set_text`, `image_replace`, `command_batch`) with `documentId` and `expectedVersion` = current revision (use `dryRun: true` to preview without changing anything); (4) on `VERSION_CONFLICT`, re-query before retrying; (5) export to a new `.hwpx` via `document_export` or save a `.hwpwork` project via `project_save`. Text ranges are half-open `[start, end)` extended grapheme cluster indices within a single paragraph. Request sequence numbering is handled automatically by the MCP adapter."
+    "Preservation-first HWPX document engine. Workflow: (1) call `document_open` to get `documentId` and `revision`; (2) call `document_inspect` or `element_query` to find target `nodeId`s and text; (3) call edit tools (`text_replace`, `paragraph_format`, `cell_set_text`, `image_replace`, `command_batch`) with optional `documentId` (defaults to the currently open document; if given it must match the open document) and `expectedVersion` = current revision (use `dryRun: true` to preview without changing anything); (4) on `VERSION_CONFLICT`, re-query before retrying; (5) export to a new `.hwpx` via `document_export` or save a `.hwpwork` project via `project_save`. Text ranges are half-open `[start, end)` extended grapheme cluster indices within a single paragraph. Request sequence numbering is handled automatically by the MCP adapter."
 }

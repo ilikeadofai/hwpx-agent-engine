@@ -39,3 +39,25 @@
 응답 필드(코드가 아님): unalignedMatches, historyEvicted, controlChanged, replay, outcome, savedVersion.
 
 PACKAGE_REJECTED의 reason 값: encrypted, duplicate_name, case_collision, path_escape, zip64_required, bad_mimetype, broken_manifest, dtd_or_entity, non_utf8, malformed_zip, unsupported_compression, multi_disk, crc_mismatch, size_mismatch, header_mismatch, overlapping_entries, malformed_xml, foreign_namespace. 앞의 9개는 설계서 §11, 나머지는 총괄 추가다.
+
+## 렌더러 진단(목록 밖 문자열 코드)
+
+2026-10-17 결정. 렌더러·레이아웃 진단은 preview 결과의 `metadata.diagnostics` 안에 들어가는 문자열 코드이며 엔진 오류 코드(`hae-diag::Code`)가 아니다. 위 엔진 코드 표와 enum의 1:1 계약에 포함하지 않는다. 프리뷰의 렌더러 오류·쪽수 제한 엔진 코드는 기존 `RENDERER_UNAVAILABLE` / `PREVIEW_PAGE_LIMIT`를 유지한다(요청·자원·입출력에 대한 공통 엔진 오류도 기존 계약을 따른다).
+
+아래 목록은 `crates/hae-render-rhwp`와 `crates/hae-exec/src/preview.rs`의 실제 생성·전달 경로를 기준으로 한다.
+
+| 문자열 코드 | 뜻 |
+|---|---|
+| `LAYOUT_*` | rhwp stderr의 대문자·밑줄 코드인 배치 경고를 그대로 전달하며, `page=N`은 0부터 세는 값을 1부터 세는 쪽 번호로 바꾼다. 고정 enum 목록이 아니다. |
+| `LAYOUT_OVERFLOW` | rhwp가 보고한 쪽 배치 넘침(전달 파서 시험에 포함). |
+| `LAYOUT_OVERFLOW_DRAW` | rhwp가 보고한 그리기 배치 넘침(전달 파서 시험에 포함). |
+| `LAYOUT_OVERFLOW_CELL_LINES` | rhwp 매니페스트의 표 셀 줄 넘침 보고. |
+| `SVG_UNSAFE` | 정적 SVG 안전 검사에 실패해 해당 쪽 출력을 보류함. |
+| `FONT_UNAVAILABLE` | 참조 글꼴이 작업자에 제공된 글꼴 스냅샷에 없어 대체 글꼴을 사용함. |
+| `PAGE_NOT_RENDERED` | 요청한 쪽이 렌더링된 범위 밖에 있음. |
+| `PNG_FAILED` | 격리 래스터 작업자가 해당 쪽 PNG를 만들지 못함(SVG는 유지 가능). |
+| `PAGE_CONTENT_OMITTED` | 직렬화 응답 한도 때문에 쪽 본문을 응답에서 생략함. |
+| `PAGE_CONTENT_ARTIFACT` | 쪽 본문을 설정된 출력 루트 아래 파일로 전달함. |
+| `RENDERER_UNTRUSTED_CONTENT` | rhwp 매니페스트가 문서 내용을 신뢰할 수 없다고 표시함. |
+| `RENDERER_STDERR` | 배치 코드로 해석되지 않은 비어 있지 않은 stderr 줄의 개수를 알림. |
+| `NOTES_TRUNCATED` | 진단 수 한도로 추가 진단을 생략함. |

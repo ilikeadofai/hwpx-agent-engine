@@ -54,6 +54,7 @@ fn initialize_ping_and_tools_list_cover_every_registry_command() {
             .as_array()
             .map(|r| r.iter().filter_map(Value::as_str).collect())
             .unwrap_or_default();
+        assert!(!required.contains(&"documentId"), "{name}");
         assert_eq!(
             props.contains_key("documentId"),
             command.requires_document,
@@ -241,4 +242,45 @@ fn every_command_has_a_description_row() {
         command_list().len(),
         "table has a row that is not a registry command"
     );
+}
+
+#[test]
+fn optional_document_id_never_redirects_an_edit_to_the_open_document() {
+    let t = TempDir::new("document-id");
+    let path = t.with_corpus("bodojaryo-reference.hwpx");
+    let mut mcp = McpClient::start(t.path());
+    let (missing, is_error) = mcp.call_tool("document_inspect", json!({}));
+    assert!(is_error);
+    assert_eq!(first_code(&missing), "SESSION_REQUIRED");
+
+    let (open, is_error) = mcp.call_tool("document_open", json!({ "path": path }));
+    assert!(!is_error, "{open}");
+    let doc = open["result"]["documentId"].as_str().unwrap();
+    let (query, is_error) = mcp.call_tool(
+        "element_query",
+        json!({ "kind": "paragraph", "textContains": "보도자료" }),
+    );
+    assert!(!is_error, "{query}");
+    let target = query["result"]["matches"][0]["nodeId"].clone();
+    let (before, is_error) = mcp.call_tool("element_get", json!({ "target": target }));
+    assert!(!is_error, "{before}");
+    let mut edit = json!({
+        "documentId": format!("{doc}-wrong"), "expectedVersion": 0,
+        "target": target, "range": { "start": 0, "end": 2 }, "text": "공지",
+    });
+    let (rejected, is_error) = mcp.call_tool("text_replace", edit.clone());
+    assert!(is_error);
+    assert_eq!(first_code(&rejected), "TARGET_NOT_FOUND");
+    let (after, is_error) = mcp.call_tool(
+        "element_get",
+        json!({ "documentId": doc, "target": target }),
+    );
+    assert!(!is_error, "{after}");
+    assert_eq!(before["result"], after["result"]);
+    edit.as_object_mut().unwrap().remove("documentId");
+    let (applied, is_error) = mcp.call_tool("text_replace", edit);
+    assert!(!is_error, "{applied}");
+    assert_eq!(applied["result"]["beforeVersion"], 0);
+    assert_eq!(applied["result"]["afterVersion"], 1);
+    assert_eq!(mcp.finish().0, 0);
 }
