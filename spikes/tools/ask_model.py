@@ -6,7 +6,7 @@ model, prompt_file, out_file = sys.argv[1:4]
 prompt = Path(prompt_file).read_text()
 body = {"model": model, "messages": [
     {"role": "system", "content": "You write small, correct, dependency-free code for a well-specified task. Output only the requested file content inside one fenced code block, then nothing else."},
-    {"role": "user", "content": prompt}], "max_tokens": 16000}
+    {"role": "user", "content": prompt}], "max_tokens": int(__import__("os").environ.get("ASK_MAX_TOKENS", "16000"))}
 req = urllib.request.Request("http://127.0.0.1:10100/v1/chat/completions", json.dumps(body, ensure_ascii=False).encode(), {"Content-Type": "application/json"})
 t = time.monotonic()
 with urllib.request.urlopen(req, timeout=300) as r:

@@ -1,0 +1,9 @@
+{
+  "route": "T3 Code delegate_task, providerInstanceId=opencode",
+  "requested_model": "opencode/deepseek-v4.1-flash-free",
+  "date": "2026-10-16",
+  "prompt_sha256": "5a133ca7c2cc97531609867cb45e4ff7b40754d95c3eaa45f1046e11ba0265fd",
+  "output_sha256": "20fa6a18b9d5238b3f8b55556f5af6035bd58b950d3dfc8b8907e7063c06421e",
+  "verified_by": "claude-opus-5-5 (총괄): 코드 읽기, 세 문서 실행, OpenRouter판과 출력 payload 동일 확인, 바이트 splice 독립 검사",
+  "note": "같은 명세를 OpenRouter 경로(deepseek/deepseek-v4.1-flash)로도 생성했으며 openrouter_attempt/에 기록용으로 보존. Haiku 5.5가 잘못 맡았던 판은 spikes/work/discarded_haiku/ (미채택)."
+}
