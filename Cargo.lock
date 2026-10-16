@@ -449,6 +449,7 @@ dependencies = [
  "hae-xml",
  "quick-xml",
  "resvg",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",

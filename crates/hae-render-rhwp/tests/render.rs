@@ -121,13 +121,16 @@ fn page_limit_makes_a_partial_result() {
 
 #[test]
 fn unsafe_pages_are_withheld() {
-    let (env, _d) = fake_env(
+    let (env, _d) = fake_env_pages(
         r#"
 printf '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' > /out/p1.svg
 printf '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>' > /out/p2.svg
-S1=$(wc -c < /out/p1.svg); S2=$(wc -c < /out/p2.svg)
-echo "{\"format\":\"svg\",\"pageCount\":2,\"pages\":[{\"page\":0,\"path\":\"/out/p1.svg\",\"bytes\":$S1},{\"page\":1,\"path\":\"/out/p2.svg\",\"bytes\":$S2}]}"
+P=$7
+FILE=/out/p$((P + 1)).svg
+N=$(wc -c < "$FILE")
+echo "{\"format\":\"svg\",\"pageCount\":2,\"renderedCount\":1,\"pages\":[{\"page\":$P,\"path\":\"$FILE\",\"bytes\":$N}]}"
 "#,
+        2,
         |_| {},
     );
     let out = env.adapter.preview(&request(b"PK", None), None).unwrap();

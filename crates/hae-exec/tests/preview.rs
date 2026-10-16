@@ -272,3 +272,43 @@ fn preview_after_an_edit_is_tied_to_the_new_revision() {
     assert_eq!(exec.current_revision(), Some(1));
     assert!(v1["staleLayoutSections"].as_array().is_some());
 }
+
+#[test]
+fn command_discovery_reports_preview_configuration_instead_of_old_stage_reason() {
+    let (mut exec, _out, _id) = executor("ref_empty.hwpx");
+    let desc = exec
+        .call(
+            "command.describe",
+            json!({"command":"document.preview"}),
+            None,
+            false,
+        )
+        .result
+        .unwrap();
+    assert_eq!(desc["available"], false);
+    assert_eq!(desc["unsupportedReason"], "renderer_not_configured");
+    let (adapter, _fonts) = adapter(|_| {});
+    exec.set_renderer(adapter);
+    let desc = exec
+        .call(
+            "command.describe",
+            json!({"command":"document.preview"}),
+            None,
+            false,
+        )
+        .result
+        .unwrap();
+    assert_eq!(desc["available"], true);
+    assert!(desc.get("unsupportedReason").is_none());
+    let list = exec
+        .call("command.list", json!({}), None, false)
+        .result
+        .unwrap();
+    let preview = list["commands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["name"] == "document.preview")
+        .unwrap();
+    assert_eq!(preview["available"], true);
+}

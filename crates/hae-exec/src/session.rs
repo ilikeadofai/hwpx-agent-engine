@@ -248,6 +248,18 @@ impl SessionExecutor {
         self.renderer = Some(adapter);
     }
 
+    fn configured_descriptor(&self, mut descriptor: CommandDescriptor) -> CommandDescriptor {
+        if descriptor.name == "document.preview" {
+            descriptor.available = self.renderer.is_some();
+            descriptor.unsupported_reason = if descriptor.available {
+                None
+            } else {
+                Some("renderer_not_configured")
+            };
+        }
+        descriptor
+    }
+
     /// Enable `document.preview` from `HAE_RHWP` (+ `HAE_BWRAP`, `HAE_FONT_DIR`).
     /// Returns whether an adapter was configured; unset means unconfigured.
     pub fn configure_renderer_from_env(&mut self) -> bool {
@@ -586,12 +598,12 @@ impl SessionExecutor {
         match parsed {
             ParsedCommand::CommandList(_) => Ok((
                 json!({
-                    "commands": command_list(),
+                    "commands": command_list().into_iter().map(|d| self.configured_descriptor(d)).collect::<Vec<_>>(),
                 }),
                 Vec::new(),
             )),
             ParsedCommand::CommandDescribe(p) => {
-                let d = command_describe(&p.command)?;
+                let d = self.configured_descriptor(command_describe(&p.command)?);
                 Ok((serde_json::to_value(d).unwrap(), Vec::new()))
             }
             ParsedCommand::DocumentOpen(p) => self.handle_open(&p),
@@ -849,7 +861,26 @@ impl SessionExecutor {
             )
             .with_reason("renderer_not_configured"));
         };
-        crate::preview::render(&adapter, &s.current.doc, s.revision, p, &self.limits)
+        let mut preview_limits = self.limits;
+        preview_limits.max_session_memory = self
+            .limits
+            .max_session_memory
+            .saturating_sub(Self::compute_memory(s, None));
+        if preview_limits.max_session_memory == 0 {
+            return Err(EngineError::new(
+                Code::ResourceLimit,
+                Stage::Render,
+                "no session memory remains for preview",
+            ));
+        }
+        crate::preview::render(
+            &adapter,
+            &s.current.doc,
+            s.revision,
+            p,
+            &preview_limits,
+            Some(&self.roots),
+        )
     }
 
     fn read_para_format_props(

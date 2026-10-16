@@ -763,6 +763,149 @@ impl IoRoots {
         })
     }
 
+    /// Publish caller-validated PNG/SVG bytes directly under `output_root`.
+    ///
+    /// The generated name is random and never replaces an existing entry. This
+    /// storage API does not parse images; the caller owns image validation.
+    /// Payload plus readback is bounded by `max_session_memory`. If the parent
+    /// fsync fails after publication, the error detail contains the published
+    /// receipt's `path`, `sha256`, and `revision`; the file is not rolled back.
+    pub fn write_preview_artifact(
+        &self,
+        extension: &str,
+        payload: &[u8],
+        revision: u64,
+    ) -> Result<SaveReceipt> {
+        let stage = Stage::Render;
+        if !matches!(extension, "png" | "svg") {
+            return Err(EngineError::new(
+                Code::InvalidRequest,
+                stage,
+                "preview artifact extension must be 'png' or 'svg'",
+            ));
+        }
+        let max_bytes = self
+            .limits
+            .max_project_bytes
+            .min(self.limits.max_session_memory / 2);
+        if payload.len() as u64 > max_bytes {
+            return Err(EngineError::new(
+                Code::ResourceLimit,
+                stage,
+                "preview artifact exceeds project or readback memory limit",
+            ));
+        }
+
+        let id = hae_model::new_id("preview-").map_err(|e| io_err(stage, e.to_string()))?;
+        let path = self.output_root.join(format!("{id}.{extension}"));
+        let a = self.resolve_output(&path, stage)?;
+        // resolve_output traverses the root and parent separately. For this
+        // direct child, verify the actual I/O descriptor is the configured root
+        // as well, closing a directory replacement between those traversals.
+        if a.parent_id != self.output_root_id {
+            return Err(path_err(stage, "configured output root identity changed"));
+        }
+        self.check_not_protected(&a.canonical, None, stage)?;
+        match statat(&a.dir, a.name.as_str(), AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(st) => {
+                self.check_not_protected(&a.canonical, Some(stat_id(&st)), stage)?;
+                return Err(EngineError::new(
+                    Code::TargetExists,
+                    stage,
+                    "preview artifact target already exists",
+                ));
+            }
+            Err(e) if e == rustix::io::Errno::NOENT => {}
+            Err(e) => return Err(io_err(stage, format!("stat preview target: {e}"))),
+        }
+
+        let sha256 = sha256_hex(payload);
+        let (tmp_name, tmp_fd) = self.write_temp_file(&a.dir, &a.name, payload, stage)?;
+        let pre_publish = (|| -> Result<()> {
+            // Explicitly set 0600 even when the process umask is more restrictive.
+            rustix::fs::fchmod(&tmp_fd, Mode::from_raw_mode(0o600))
+                .map_err(|e| io_err(stage, format!("chmod temp preview: {e}")))?;
+            let (reread, reread_id) =
+                Self::read_regular_nofollow(&a.dir, &tmp_name, max_bytes, stage)?;
+            let tmp_stat =
+                fstat(&tmp_fd).map_err(|e| io_err(stage, format!("fstat temp preview: {e}")))?;
+            if reread_id != stat_id(&tmp_stat) || reread != payload || sha256_hex(&reread) != sha256
+            {
+                return Err(io_err(stage, "temporary preview identity or bytes changed"));
+            }
+            if self.take_fault(FaultStep::TempFsync) {
+                return Err(io_err(stage, "injected temp fsync failure"));
+            }
+            fsync(&tmp_fd).map_err(|e| io_err(stage, format!("fsync temp preview: {e}")))?;
+
+            // Refuse a root path swap before publication; all writes and cleanup
+            // still use the original, identity-checked directory descriptor.
+            let current = self.resolve_output(&a.canonical, stage)?;
+            if current.parent_id != a.parent_id {
+                return Err(path_err(stage, "preview parent directory identity changed"));
+            }
+            let current_tmp = statat(&a.dir, tmp_name.as_str(), AtFlags::SYMLINK_NOFOLLOW)
+                .map_err(|e| io_err(stage, format!("stat temp preview: {e}")))?;
+            if !is_reg(&current_tmp) || stat_id(&current_tmp) != reread_id {
+                return Err(path_err(
+                    stage,
+                    "temporary preview replaced before publication",
+                ));
+            }
+            self.check_not_protected(&a.canonical, None, stage)?;
+            if self.take_fault(FaultStep::Rename) {
+                return Err(io_err(stage, "injected rename failure"));
+            }
+            renameat_with(
+                &a.dir,
+                tmp_name.as_str(),
+                &a.dir,
+                a.name.as_str(),
+                RenameFlags::NOREPLACE,
+            )
+            .map_err(|e| {
+                if e == rustix::io::Errno::EXIST {
+                    EngineError::new(
+                        Code::TargetExists,
+                        stage,
+                        "preview artifact target created concurrently",
+                    )
+                } else {
+                    io_err(stage, format!("renameat_with preview: {e}"))
+                }
+            })?;
+            Ok(())
+        })();
+        if let Err(e) = pre_publish {
+            let _ = unlinkat(&a.dir, tmp_name.as_str(), AtFlags::empty());
+            return Err(e);
+        }
+
+        let receipt = SaveReceipt {
+            path: a.canonical,
+            sha256,
+            revision,
+        };
+        let parent_sync = if self.take_fault(FaultStep::ParentFsync) {
+            Err(rustix::io::Errno::IO)
+        } else {
+            fsync(&a.dir)
+        };
+        if let Err(e) = parent_sync {
+            return Err(EngineError::new(
+                Code::SaveDurabilityUncertain,
+                stage,
+                format!("preview artifact published but parent directory fsync failed: {e}"),
+            )
+            .with_detail(serde_json::json!({
+                "path": receipt.path,
+                "sha256": receipt.sha256,
+                "revision": receipt.revision,
+            })));
+        }
+        Ok(receipt)
+    }
+
     /// Export a `.hwpx` package to a new file under `output_root`.
     /// Never overwrites existing files or protected inputs.
     pub fn export_hwpx<F>(

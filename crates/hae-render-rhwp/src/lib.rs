@@ -5,31 +5,44 @@
 //! binary through a read-only input directory, reads only the files listed in
 //! rhwp's JSON manifest from the temporary `/out`, scans every SVG
 //! ([`svg_safety`]) and never falls back to another renderer or to an
-//! unsandboxed run. Failure is explicit (`RENDERER_UNAVAILABLE` with a
+//! unsandboxed run. Product PNG rasterisation is never done in this process
+//! either: a separate `hae-raster` worker ([`worker`]) runs in the same
+//! sandbox on a read-only copy of the page SVG and an exact snapshot of the
+//! already hashed fonts. Failure is explicit (`RENDERER_UNAVAILABLE` with a
 //! machine-readable reason) and never touches document state.
+//!
+//! Pinned `export-render-tree` has no manifest protocol. The trusted adapter
+//! inventories its finished output directory, accepts exactly the bounded
+//! `render_tree_NNN.json` set determined by dump-pages, rejects extra entries,
+//! and records exact file lengths before any tree read. This exception applies
+//! only to that command; SVG paths must always come from rhwp's manifest.
 
 pub mod fonts;
 pub mod pages;
 pub mod png;
 pub mod sandbox;
 pub mod svg_safety;
+pub mod worker;
 
 use fonts::{referenced_families, FontFile, FontSet};
 use hae_diag::{Code, Diagnostic, EngineError, Limits, Result, Stage};
 use hae_model::Document;
 use hae_package::sha256_hex;
 pub use pages::{join_pages, PageInfo, PageStatus};
-use png::{CheckedSvg, PngOptions};
+use png::PngOptions;
 pub use sandbox::CancelToken;
 use sandbox::{ProcOutput, RunError, RunLimits, Sandbox, TempDir};
 use serde::Serialize;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use worker::{PageJob, RasterOutcome, RasterStage};
 
 /// rhwp commit this engine pins (spec §9).
 pub const PINNED_COMMIT: &str = "1a76570e833917d15817415a53c09ad61ab3203f";
@@ -47,6 +60,10 @@ pub struct AdapterConfig {
     pub rhwp_path: PathBuf,
     pub bwrap_path: PathBuf,
     pub font_dir: PathBuf,
+    /// `hae-raster` worker executable used for every PNG. Explicit; PATH is
+    /// never searched. Defaults to `hae-raster` beside the running
+    /// executable ([`worker::default_worker_path`]); `HAE_RASTER` overrides it.
+    pub raster_path: PathBuf,
     /// Parent of the per-run temporary directories.
     pub work_dir: PathBuf,
     /// rhwp commit recorded in metadata (as configured, not derived).
@@ -64,6 +81,7 @@ impl AdapterConfig {
             rhwp_path: rhwp_path.into(),
             bwrap_path: PathBuf::from(DEFAULT_BWRAP),
             font_dir: font_dir.into(),
+            raster_path: worker::default_worker_path(),
             work_dir: std::env::temp_dir(),
             renderer_commit: Some(PINNED_COMMIT.to_string()),
             limits: Limits::default(),
@@ -73,7 +91,8 @@ impl AdapterConfig {
         }
     }
 
-    /// Read `HAE_RHWP` (required), `HAE_BWRAP` and `HAE_FONT_DIR`. `None` when
+    /// Read `HAE_RHWP` (required), `HAE_BWRAP`, `HAE_FONT_DIR` and
+    /// `HAE_RASTER` (the `hae-raster` worker). `None` when
     /// `HAE_RHWP` is unset, i.e. the preview adapter is not configured.
     pub fn from_env() -> Option<Self> {
         let rhwp = std::env::var_os("HAE_RHWP").filter(|v| !v.is_empty())?;
@@ -83,6 +102,9 @@ impl AdapterConfig {
         let mut c = AdapterConfig::new(rhwp, font_dir);
         if let Some(b) = std::env::var_os("HAE_BWRAP").filter(|v| !v.is_empty()) {
             c.bwrap_path = b.into();
+        }
+        if let Some(r) = std::env::var_os("HAE_RASTER").filter(|v| !v.is_empty()) {
+            c.raster_path = r.into();
         }
         Some(c)
     }
@@ -96,7 +118,7 @@ impl AdapterConfig {
     }
 }
 
-fn unavailable(reason: &str, msg: impl Into<String>) -> EngineError {
+pub(crate) fn unavailable(reason: &str, msg: impl Into<String>) -> EngineError {
     EngineError::new(Code::RendererUnavailable, Stage::Render, msg).with_reason(reason)
 }
 
@@ -195,6 +217,26 @@ pub struct PreviewOutput {
     pub render_millis: u128,
 }
 
+/// Explicit allocation accounting. Parser multipliers reserve workspace before
+/// parsing; they are deliberately not advertised as a process RSS guarantee.
+struct MemoryBudget {
+    remaining: u64,
+}
+impl MemoryBudget {
+    fn reserve(&mut self, bytes: u64) -> Result<()> {
+        self.remaining = self.remaining.checked_sub(bytes).ok_or_else(|| {
+            unavailable(
+                "memory_limit",
+                format!("preview needs {bytes} bytes; {} remain", self.remaining),
+            )
+        })?;
+        Ok(())
+    }
+    fn release(&mut self, bytes: u64) {
+        self.remaining = self.remaining.saturating_add(bytes);
+    }
+}
+
 #[derive(Default)]
 struct State {
     sandbox_verified: bool,
@@ -229,18 +271,33 @@ impl RhwpAdapter {
 
     /// Fonts of the configured directory (rescanned when the listing changed).
     pub fn fonts(&self) -> Result<Arc<FontSet>> {
+        self.fonts_with_budget(&mut MemoryBudget {
+            remaining: self.cfg.limits.max_session_memory,
+        })
+    }
+
+    fn fonts_with_budget(&self, budget: &mut MemoryBudget) -> Result<Arc<FontSet>> {
         let mut st = self.state.lock().unwrap();
         if let Some(f) = &st.fonts {
             if f.is_current() {
+                budget.reserve(f.memory_reservation())?;
                 return Ok(f.clone());
             }
         }
-        let f = Arc::new(FontSet::scan(&self.cfg.font_dir).map_err(|e| {
-            unavailable(
-                "font_dir_unreadable",
-                format!("font directory {}: {e}", self.cfg.font_dir.display()),
+        st.fonts = None;
+        // Reserve before hashing/loading, then retain the actual bounded charge.
+        let allowance = budget.remaining;
+        budget.reserve(allowance)?;
+        let f = Arc::new(
+            FontSet::scan_with_budget(
+                &self.cfg.font_dir,
+                allowance.saturating_sub(1024 * 1024) / 4,
             )
-        })?);
+            .map_err(|e| unavailable("memory_limit", format!("bounded font scan: {e}")))?,
+        );
+        let charge = f.memory_reservation();
+        budget.release(allowance);
+        budget.reserve(charge)?;
         st.fonts = Some(f.clone());
         Ok(f)
     }
@@ -272,7 +329,7 @@ impl RhwpAdapter {
     }
 
     fn stage(&self, hwpx: &[u8]) -> Result<Staged> {
-        let rhwp = fs::read(&self.cfg.rhwp_path).map_err(|e| {
+        let mut rhwp = fs::File::open(&self.cfg.rhwp_path).map_err(|e| {
             unavailable(
                 "renderer_missing",
                 format!("rhwp binary {}: {e}", self.cfg.rhwp_path.display()),
@@ -292,11 +349,24 @@ impl RhwpAdapter {
                 .map_err(|e| io("mkdir", e))?;
         }
         let bin = in_dir.join("rhwp");
-        fs::write(&bin, &rhwp).map_err(|e| io("copy renderer", e))?;
+        let mut staged_bin = fs::File::create(&bin).map_err(|e| io("create renderer", e))?;
+        let mut hash = Sha256::new();
+        let mut chunk = [0u8; 64 * 1024];
+        loop {
+            let n = rhwp.read(&mut chunk).map_err(|e| io("read renderer", e))?;
+            if n == 0 {
+                break;
+            }
+            staged_bin
+                .write_all(&chunk[..n])
+                .map_err(|e| io("copy renderer", e))?;
+            hash.update(&chunk[..n]);
+        }
+        let rhwp_sha256 = format!("{:x}", hash.finalize());
         fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).map_err(|e| io("chmod", e))?;
         fs::write(in_dir.join(INPUT_NAME), hwpx).map_err(|e| io("write snapshot", e))?;
         Ok(Staged {
-            rhwp_sha256: sha256_hex(&rhwp),
+            rhwp_sha256,
             input_sha256: sha256_hex(hwpx),
             in_dir,
             out_dir,
@@ -304,25 +374,35 @@ impl RhwpAdapter {
         })
     }
 
-    fn run(
+    fn preview_run(
         &self,
         sb: &Sandbox,
         st: &Staged,
         argv: &[&str],
         cancel: Option<&CancelToken>,
+        budget: &MemoryBudget,
+        deadline: Instant,
     ) -> Result<ProcOutput> {
+        let mut limits = self.cfg.run_limits();
+        limits.timeout = deadline.saturating_duration_since(Instant::now());
+        if limits.timeout.is_zero() {
+            return Err(run_error(RunError::Timeout(limits.timeout)));
+        }
+        // Pipe capacities are reserved by subdivision before readers allocate.
+        limits.stdout_cap = limits.stdout_cap.min((budget.remaining / 32) as usize);
+        limits.stderr_cap = limits.stderr_cap.min((budget.remaining / 128) as usize);
         let out = sb
-            .run(
+            .run_with_memory(
                 &st.in_dir,
                 &st.out_dir,
                 argv,
-                &self.cfg.run_limits(),
+                &limits,
                 cancel,
+                Some(budget.remaining),
             )
             .map_err(run_error)?;
         if !out.success() {
-            let tail = String::from_utf8_lossy(&out.stderr);
-            let tail: String = tail
+            let tail: String = String::from_utf8_lossy(&out.stderr)
                 .chars()
                 .rev()
                 .take(1000)
@@ -334,35 +414,29 @@ impl RhwpAdapter {
                 "render_failed",
                 format!("renderer exited with {:?} for {:?}", out.code, argv.get(1)),
             )
-            .with_detail(json!({ "stderrTail": tail })));
+            .with_detail(json!({"stderrTail":tail})));
         }
         Ok(out)
     }
 
-    fn renderer_version(
-        &self,
-        sb: &Sandbox,
-        st: &Staged,
-        cancel: Option<&CancelToken>,
-    ) -> Result<String> {
-        let out = self.run(sb, st, &["/in/rhwp", "--version"], cancel)?;
-        let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if !v.starts_with("rhwp") || v.len() > 200 || v.contains('\n') {
-            return Err(unavailable(
-                "invalid_output",
-                format!("unrecognised renderer version output: {v:?}"),
-            ));
-        }
-        Ok(v)
-    }
-
-    /// Render a revision-fixed snapshot to SVG (and optionally PNG) pages.
+    /// Backwards-compatible entry point using the configured session limit.
     pub fn preview(
         &self,
         req: &RenderRequest<'_>,
         cancel: Option<&CancelToken>,
     ) -> Result<PreviewOutput> {
-        let started = std::time::Instant::now();
+        self.preview_with_budget(req, cancel, self.cfg.limits.max_session_memory)
+    }
+
+    /// Render against the session's remaining allowance (after document/history
+    /// charges). Reservations include retained pages, fonts and parse workspace.
+    pub fn preview_with_budget(
+        &self,
+        req: &RenderRequest<'_>,
+        cancel: Option<&CancelToken>,
+        memory_budget: u64,
+    ) -> Result<PreviewOutput> {
+        let started = Instant::now();
         if self.cfg.rhwp_path.as_os_str().is_empty() {
             return Err(unavailable(
                 "renderer_not_configured",
@@ -370,67 +444,98 @@ impl RhwpAdapter {
             ));
         }
         let sb = self.sandbox()?;
-        let fonts = self.fonts()?;
+        let deadline = Instant::now() + Duration::from_secs(self.cfg.limits.renderer_timeout_secs);
+        let mut budget = MemoryBudget {
+            remaining: memory_budget.min(self.cfg.limits.max_session_memory),
+        };
+        // Fixed metadata, bounded notes, staging buffers, and borrowed snapshot.
+        let request_charge = req
+            .pages
+            .map_or(0, |p| p.len() as u64)
+            .checked_mul(64)
+            .and_then(|n| {
+                n.checked_add(
+                    req.hwpx.len() as u64 + req.document_id.len() as u64 * 8 + 1024 * 1024,
+                )
+            })
+            .ok_or_else(|| unavailable("memory_limit", "request metadata size overflow"))?;
+        budget.reserve(request_charge)?;
+        let fonts = self.fonts_with_budget(&mut budget)?;
         let st = self.stage(req.hwpx)?;
-        let version = self.renderer_version(&sb, &st, cancel)?;
-        let out = self.run(
+        // PNGs are made only by the supervised worker. Stage it (and fail on a
+        // missing worker) before any renderer work; there is no host fallback.
+        let mut raster = if req.want_png {
+            Some(RasterStage::prepare(
+                &self.cfg.raster_path,
+                &self.cfg.bwrap_path,
+                &self.cfg.work_dir,
+                &fonts,
+            )?)
+        } else {
+            None
+        };
+        let mut raster_families: Option<BTreeSet<String>> = None;
+        let mut raster_address_space = 0u64;
+        let version_out = self.preview_run(
             &sb,
             &st,
-            &[
-                "/in/rhwp",
-                "export-svg",
-                "/in/doc.hwpx",
-                "-o",
-                "/out",
-                "--json",
-            ],
+            &["/in/rhwp", "--version"],
             cancel,
+            &budget,
+            deadline,
         )?;
-
-        let manifest: Value = serde_json::from_slice(&out.stdout)
-            .map_err(|e| unavailable("invalid_output", format!("manifest is not JSON: {e}")))?;
-        let listed = parse_manifest(&manifest).map_err(|m| unavailable("invalid_output", m))?;
-        let total = listed.len();
+        let version = String::from_utf8_lossy(&version_out.stdout)
+            .trim()
+            .to_string();
+        if !version.starts_with("rhwp") || version.len() > 200 || version.contains('\n') {
+            return Err(unavailable(
+                "invalid_output",
+                "unrecognised renderer version output",
+            ));
+        }
+        drop(version_out);
+        let dump_out = self.preview_run(
+            &sb,
+            &st,
+            &["/in/rhwp", "dump-pages", "/in/doc.hwpx", "--json"],
+            cancel,
+            &budget,
+            deadline,
+        )?;
+        let (dump, dump_charge) = parse_output_json(&dump_out, &mut budget)?;
+        let total = dump
+            .get("pages")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .ok_or_else(|| unavailable("invalid_output", "dump-pages output has no pages array"))?;
+        drop(dump);
+        drop(dump_out);
+        budget.release(dump_charge);
         let max_pages = self.cfg.limits.max_preview_pages as usize;
         let limit_hit = total > max_pages;
         let rendered_count = total.min(max_pages);
-
         let mut notes = Vec::new();
         let mut diagnostics = Vec::new();
-        notes.extend(layout_notes(&String::from_utf8_lossy(&out.stderr)));
-        if manifest.get("untrustedContent").and_then(Value::as_bool) == Some(true) {
-            notes.push(note(
-                "RENDERER_UNTRUSTED_CONTENT",
-                "warning",
-                None,
-                "rhwp flagged the document content as untrusted",
-            ));
-        }
-        if manifest
-            .get("overflowCellLines")
-            .and_then(Value::as_u64)
-            .unwrap_or(0)
-            > 0
-        {
-            notes.push(note(
-                "LAYOUT_OVERFLOW_CELL_LINES",
-                "warning",
-                None,
-                "rhwp reported table cell lines that overflow their cells",
-            ));
-        }
         if limit_hit {
             diagnostics.push(
                 Diagnostic::error(
                     Code::PreviewPageLimit,
                     Stage::Render,
-                    format!("document has {total} pages; only the first {max_pages} were rendered"),
+                    format!(
+                        "document has {total} pages; export is restricted to the first {max_pages}"
+                    ),
                 )
-                .with_detail(json!({ "totalPages": total, "maxPages": max_pages })),
+                .with_detail(json!({"totalPages":total,"maxPages":max_pages})),
             );
         }
-
-        // Which pages to return.
+        let selected_count = req
+            .pages
+            .map_or(rendered_count, |pages| pages.len().min(rendered_count));
+        budget.reserve(
+            (selected_count as u64)
+                .checked_mul(16384)
+                .ok_or_else(|| unavailable("memory_limit", "page metadata size overflow"))?,
+        )?;
         let wanted: Vec<usize> = match req.pages {
             None => (0..rendered_count).collect(),
             Some(list) => {
@@ -438,7 +543,7 @@ impl RhwpAdapter {
                 for &p in list {
                     if p >= 1 && (p as usize) <= rendered_count {
                         seen.insert(p as usize - 1);
-                    } else {
+                    } else if notes.len() < MAX_NOTES {
                         notes.push(note(
                             "PAGE_NOT_RENDERED",
                             "warning",
@@ -450,38 +555,124 @@ impl RhwpAdapter {
                 seen.into_iter().collect()
             }
         };
-        let missing_requested = req.pages.is_some_and(|l| l.len() > wanted.len());
-
+        let missing_requested = req
+            .pages
+            .is_some_and(|l| l.iter().any(|&p| p == 0 || p as usize > rendered_count));
         let mut pages_out = Vec::new();
         let mut dropped_unsafe = 0usize;
         let mut families = BTreeSet::new();
+        let mut seen_paths = BTreeSet::new();
         for idx in wanted {
-            let lp = &listed[idx];
-            let bytes = read_out_file(&st.out_dir, &lp.path, lp.bytes)
+            if cancel.is_some_and(CancelToken::is_cancelled) {
+                return Err(run_error(RunError::Cancelled));
+            }
+            let page_arg = idx.to_string();
+            // Pinned rhwp supports one zero-based --page per invocation, not a
+            // range. Its pageCount remains the document total for a subset.
+            let out = self.preview_run(
+                &sb,
+                &st,
+                &[
+                    "/in/rhwp",
+                    "export-svg",
+                    "/in/doc.hwpx",
+                    "-o",
+                    "/out",
+                    "--json",
+                    "--page",
+                    &page_arg,
+                ],
+                cancel,
+                &budget,
+                deadline,
+            )?;
+            let (manifest, charge) = parse_output_json(&out, &mut budget)?;
+            if manifest.get("pageCount").and_then(Value::as_u64) != Some(total as u64) {
+                return Err(unavailable(
+                    "invalid_output",
+                    "manifest total differs from bounded dump-pages",
+                ));
+            }
+            let listed = parse_manifest(&manifest).map_err(|m| unavailable("invalid_output", m))?;
+            if listed.len() != 1 || listed[0].page != idx {
+                return Err(unavailable(
+                    "invalid_output",
+                    "renderer did not export exactly the selected page",
+                ));
+            }
+            let lp = &listed[0];
+            if !seen_paths.insert(lp.path.clone()) {
+                return Err(unavailable(
+                    "invalid_output",
+                    "duplicate manifest output path",
+                ));
+            }
+            if notes.len() < MAX_NOTES {
+                notes.extend(
+                    layout_notes(&String::from_utf8_lossy(&out.stderr))
+                        .into_iter()
+                        .take(MAX_NOTES - notes.len()),
+                );
+            }
+            if manifest.get("untrustedContent").and_then(Value::as_bool) == Some(true)
+                && notes.len() < MAX_NOTES
+            {
+                notes.push(note(
+                    "RENDERER_UNTRUSTED_CONTENT",
+                    "warning",
+                    None,
+                    "rhwp flagged the document content as untrusted",
+                ));
+            }
+            if manifest
+                .get("overflowCellLines")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                > 0
+                && notes.len() < MAX_NOTES
+            {
+                notes.push(note(
+                    "LAYOUT_OVERFLOW_CELL_LINES",
+                    "warning",
+                    Some(idx as u32 + 1),
+                    "rhwp reported overflowing table cell lines",
+                ));
+            }
+            let path = lp.path.clone();
+            let bytes_len = lp.bytes;
+            drop(listed);
+            drop(manifest);
+            drop(out);
+            budget.release(charge);
+            let workspace = bytes_len
+                .checked_mul(16)
+                .and_then(|n| n.checked_add(65536))
+                .ok_or_else(|| unavailable("memory_limit", "SVG workspace size overflow"))?;
+            budget.reserve(workspace)?;
+            let bytes = read_out_file_bounded(&st.out_dir, &path, Some(bytes_len), bytes_len)
                 .map_err(|m| unavailable("invalid_output", m))?;
             let chk = svg_safety::check_svg(&bytes);
             if !chk.is_safe() {
                 dropped_unsafe += 1;
-                let summary: Vec<String> = chk
-                    .issues
-                    .iter()
-                    .take(5)
-                    .map(|i| format!("{:?}: {}", i.kind, i.detail))
-                    .collect();
-                notes.push(note(
-                    "SVG_UNSAFE",
-                    "error",
-                    Some(idx as u32 + 1),
-                    format!(
-                        "page withheld, unsafe SVG ({} issues): {}",
-                        chk.issues.len(),
-                        summary.join("; ")
-                    ),
-                ));
+                if notes.len() < MAX_NOTES {
+                    notes.push(note(
+                        "SVG_UNSAFE",
+                        "error",
+                        Some(idx as u32 + 1),
+                        format!("page withheld, unsafe SVG ({} issues)", chk.issues.len()),
+                    ));
+                }
+                drop(bytes);
+                budget.release(workspace);
                 continue;
             }
             if let Ok(text) = std::str::from_utf8(&bytes) {
-                families.extend(referenced_families(text));
+                // Cap retained metadata across all pages.
+                for family in referenced_families(text).into_iter().take(50) {
+                    if families.len() < 50 && family.len() <= 200 {
+                        families.insert(family);
+                    }
+                }
             }
             let mut page = PreviewPage {
                 page: idx as u32 + 1,
@@ -490,24 +681,64 @@ impl RhwpAdapter {
                 png: None,
                 png_sha256: None,
             };
-            if req.want_png {
-                match CheckedSvg::new(&page.svg)
-                    .map_err(|_| "page SVG failed the safety scan".to_string())
-                    .and_then(|c| {
-                        png::rasterize_svg(c, &fonts, &req.png).map_err(|e| e.to_string())
-                    }) {
-                    Ok(p) => {
-                        page.png_sha256 = Some(sha256_hex(&p));
-                        page.png = Some(p);
+            if let Some(stage) = raster.as_mut() {
+                let mut opts = req.png;
+                opts.max_pixels = opts.max_pixels.min(self.cfg.limits.max_image_pixels);
+                // The parent keeps only the encoded PNG (cap reserved up front)
+                // and a bounded result read. The rest of the remaining session
+                // allowance is the worker's RLIMIT_AS (virtual address space).
+                let png_cap = (budget.remaining / 8)
+                    .min(MAX_OUT_FILE_BYTES)
+                    .min(self.cfg.out_cap_bytes);
+                let held = png_cap + worker::RESULT_WORKSPACE;
+                budget.reserve(held)?;
+                let address_space = budget.remaining;
+                if address_space < worker::MIN_ADDRESS_SPACE {
+                    return Err(unavailable(
+                        "memory_limit",
+                        format!(
+                            "{address_space} bytes remain for the raster worker; it needs at least {}",
+                            worker::MIN_ADDRESS_SPACE
+                        ),
+                    ));
+                }
+                raster_address_space = raster_address_space.max(address_space);
+                let job = PageJob {
+                    svg: &page.svg,
+                    svg_sha256: &page.svg_sha256,
+                    scale: opts.scale,
+                    max_pixels: opts.max_pixels,
+                    max_decoded_bytes: address_space / 4,
+                    max_png_bytes: png_cap,
+                    address_space,
+                };
+                match stage.rasterize(&job, cancel, deadline)? {
+                    RasterOutcome::Png(p) => {
+                        budget.release(held - p.png.len() as u64);
+                        raster_families.get_or_insert(p.families);
+                        page.png_sha256 = Some(p.sha256);
+                        page.png = Some(p.png);
                     }
-                    Err(m) => notes.push(note("PNG_FAILED", "warning", Some(page.page), m)),
+                    RasterOutcome::Failed { reason, message } => {
+                        budget.release(held);
+                        if notes.len() < MAX_NOTES {
+                            notes.push(note(
+                                "PNG_FAILED",
+                                "warning",
+                                Some(page.page),
+                                format!("raster worker {reason}: {message}"),
+                            ));
+                        }
+                    }
                 }
             }
+            budget.release(workspace - page.svg.len() as u64);
             pages_out.push(page);
         }
 
-        if !families.is_empty() {
-            let available = fonts.families();
+        // Family availability is known only from a worker that loaded the
+        // snapshot; the host never builds a font database for the preview.
+        if let Some(available) = raster_families.as_ref().filter(|_| !families.is_empty()) {
             for f in families.iter().take(50) {
                 if !available.contains(&f.to_lowercase()) {
                     notes.push(note(
@@ -532,7 +763,13 @@ impl RhwpAdapter {
 
         let status = if pages_out.is_empty() {
             RenderStatus::Failed
-        } else if limit_hit || dropped_unsafe > 0 || missing_requested {
+        } else if limit_hit
+            || dropped_unsafe > 0
+            || missing_requested
+            || (req.want_png && pages_out.iter().any(|p| p.png.is_none()))
+        {
+            // A requested PNG that could not be made (worker failure, cap) is
+            // an incomplete result even though the SVG page is retained.
             RenderStatus::Partial
         } else {
             RenderStatus::Rendered
@@ -551,7 +788,11 @@ impl RhwpAdapter {
                 .as_bytes()
             )[..16]
         );
-        let bwrap_version = bwrap_version(&self.cfg.bwrap_path);
+        let bwrap_version =
+            bwrap_version(&self.cfg.bwrap_path, &st.out_dir, deadline, cancel, &budget);
+        if cancel.is_some_and(CancelToken::is_cancelled) {
+            return Err(run_error(RunError::Cancelled));
+        }
         let metadata = PreviewMetadata {
             document_id: req.document_id.to_string(),
             content_revision: req.content_revision,
@@ -562,8 +803,18 @@ impl RhwpAdapter {
                 "version": version,
                 "sha256": st.rhwp_sha256,
                 "commit": self.cfg.renderer_commit,
+                "rasterizer": raster.as_ref().map(|r| json!({
+                    "name": worker::WORKER_NAME,
+                    "protocol": worker::PROTOCOL,
+                    "sha256": r.worker_sha256,
+                    "bytes": r.worker_bytes,
+                    "fontSnapshot": {"hash": r.fonts_hash, "files": r.font_files},
+                })),
             }),
-            sandbox: json!({ "tool": "bubblewrap", "version": bwrap_version, "selfTest": "passed" }),
+            sandbox: json!({ "tool": "bubblewrap", "version": bwrap_version, "selfTest": "passed",
+                "memoryLimit": {"tool":"/usr/bin/prlimit", "resource":"RLIMIT_AS", "scope":"per-process virtual address space; inherited by descendants", "bytesAtMost":memory_budget.min(self.cfg.limits.max_session_memory)},
+                "rasterMemoryLimit": raster.as_ref().map(|_| json!({"tool":"/usr/bin/prlimit", "resource":"RLIMIT_AS", "scope":"raster worker process only: virtual address space after parent PNG/result reservations; not RSS, not an aggregate with the parent, tmpfs or kernel memory", "bytesAtMost":raster_address_space})),
+            }),
             fonts: json!({
                 "hash": fonts.hash,
                 "files": fonts.files.iter().map(|f: &FontFile| json!({"path": f.path, "bytes": f.bytes, "sha256": f.sha256})).collect::<Vec<_>>(),
@@ -591,33 +842,34 @@ impl RhwpAdapter {
     /// Page numbers for the document's nodes (spec §7), computed from the
     /// document's current snapshot. Pages are `renderer-estimated`.
     pub fn page_info(&self, doc: &Document, cancel: Option<&CancelToken>) -> Result<PageInfo> {
-        let hwpx = doc.to_hwpx()?;
         let sb = self.sandbox()?;
+        let deadline = Instant::now() + Duration::from_secs(self.cfg.limits.renderer_timeout_secs);
+        let mut budget = MemoryBudget {
+            remaining: self.cfg.limits.max_session_memory,
+        };
+        budget.reserve(1024 * 1024 + doc.state.total_bytes().saturating_mul(2))?;
+        let hwpx = doc.to_hwpx()?;
         let st = self.stage(&hwpx)?;
-        let dump_out = self.run(
+        let dump_out = self.preview_run(
             &sb,
             &st,
             &["/in/rhwp", "dump-pages", "/in/doc.hwpx", "--json"],
             cancel,
+            &budget,
+            deadline,
         )?;
-        let dump: Value = serde_json::from_slice(&dump_out.stdout).map_err(|e| {
-            unavailable(
-                "invalid_output",
-                format!("dump-pages output is not JSON: {e}"),
-            )
-        })?;
+        let (dump, _dump_charge) = parse_output_json(&dump_out, &mut budget)?;
+        drop(dump_out);
         let n = dump
             .get("pages")
             .and_then(Value::as_array)
             .map(Vec::len)
             .ok_or_else(|| unavailable("invalid_output", "dump-pages output has no pages array"))?;
         if n > MAX_RENDER_TREE_PAGES {
-            return Err(unavailable(
-                "output_limit",
-                format!("document has {n} pages; page information is limited to {MAX_RENDER_TREE_PAGES}"),
-            ));
+            return Err(unavailable("output_limit",
+                format!("document has {n} pages; page information is limited to {MAX_RENDER_TREE_PAGES}")));
         }
-        self.run(
+        self.preview_run(
             &sb,
             &st,
             &[
@@ -628,33 +880,118 @@ impl RhwpAdapter {
                 "/out",
             ],
             cancel,
+            &budget,
+            deadline,
         )?;
+        // Trusted wrapper manifest: no untrusted directory discovery or arbitrary
+        // synthesized-path reads. Every name and size is validated before reads.
+        let listed =
+            tree_inventory(&st.out_dir, n).map_err(|m| unavailable("invalid_output", m))?;
         let mut trees = Vec::with_capacity(n);
-        for i in 1..=n {
-            let name = format!("/out/render_tree_{i:03}.json");
-            let bytes = read_out_file(&st.out_dir, &name, 0)
+        for (name, bytes_len) in listed {
+            let charge = bytes_len
+                .checked_mul(17)
+                .and_then(|n| n.checked_add(65536))
+                .ok_or_else(|| unavailable("memory_limit", "tree workspace size overflow"))?;
+            budget.reserve(charge)?;
+            let bytes = read_out_file_bounded(&st.out_dir, &name, Some(bytes_len), bytes_len)
                 .map_err(|m| unavailable("invalid_output", m))?;
             trees.push(
                 serde_json::from_slice::<Value>(&bytes)
                     .map_err(|e| unavailable("invalid_output", format!("{name}: {e}")))?,
             );
         }
+        budget.reserve(doc.nodes.len() as u64 * 512 + doc.state.total_bytes().saturating_mul(2))?;
+        if cancel.is_some_and(CancelToken::is_cancelled) {
+            return Err(run_error(RunError::Cancelled));
+        }
         Ok(join_pages(doc, &trees, &dump))
     }
 }
 
-fn bwrap_version(bwrap: &Path) -> Option<String> {
-    let o = std::process::Command::new(bwrap)
-        .arg("--version")
+/// Narrow protocol adapter for pinned rhwp's manifestless tree export. The
+/// process has finished and its namespace descendants have been terminated.
+fn tree_inventory(out_dir: &Path, pages: usize) -> std::result::Result<Vec<(String, u64)>, String> {
+    let expected: BTreeSet<String> = (1..=pages)
+        .map(|i| format!("render_tree_{i:03}.json"))
+        .collect();
+    let mut found = BTreeSet::new();
+    for entry in fs::read_dir(out_dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry
+            .file_name()
+            .to_str()
+            .ok_or("non-UTF8 tree filename")?
+            .to_string();
+        if !expected.contains(&name) || !entry.file_type().map_err(|e| e.to_string())?.is_file() {
+            return Err("tree output inventory contains an unexpected or nonregular entry".into());
+        }
+        found.insert(name);
+    }
+    if found != expected {
+        return Err("tree output inventory is incomplete".into());
+    }
+    (1..=pages)
+        .map(|i| {
+            let name = format!("render_tree_{i:03}.json");
+            let md = fs::symlink_metadata(out_dir.join(&name)).map_err(|e| e.to_string())?;
+            if !md.is_file() || md.len() > MAX_OUT_FILE_BYTES {
+                return Err("invalid tree inventory file".into());
+            }
+            Ok((format!("/out/{name}"), md.len()))
+        })
+        .collect()
+}
+
+fn parse_output_json(out: &ProcOutput, budget: &mut MemoryBudget) -> Result<(Value, u64)> {
+    // Includes raw stdout, Value allocations and transient parser workspace.
+    let charge = (out.stdout.len() as u64)
+        .checked_mul(17)
+        .and_then(|n| n.checked_add(out.stderr.len() as u64 + 65536))
+        .ok_or_else(|| unavailable("memory_limit", "JSON workspace size overflow"))?;
+    budget.reserve(charge)?;
+    let value = serde_json::from_slice(&out.stdout).map_err(|e| {
+        unavailable(
+            "invalid_output",
+            format!("renderer output is not JSON: {e}"),
+        )
+    })?;
+    Ok((value, charge))
+}
+
+fn bwrap_version(
+    bwrap: &Path,
+    out_dir: &Path,
+    deadline: Instant,
+    cancel: Option<&CancelToken>,
+    budget: &MemoryBudget,
+) -> Option<String> {
+    let mut limits = RunLimits::with_timeout_secs(1);
+    limits.timeout = deadline
+        .saturating_duration_since(Instant::now())
+        .min(Duration::from_millis(250));
+    if limits.timeout.is_zero() {
+        return None;
+    }
+    limits.stdout_cap = 4096.min((budget.remaining / 4) as usize);
+    limits.stderr_cap = limits.stdout_cap;
+    let mut cmd = std::process::Command::new(bwrap);
+    cmd.arg("--version")
         .env_clear()
         .stdin(std::process::Stdio::null())
-        .output()
-        .ok()?;
-    Some(String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|s| !s.is_empty())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let o = sandbox::run_limited(cmd, out_dir, &limits, cancel).ok()?;
+    if !o.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&o.stdout).trim().to_string();
+    (!value.is_empty() && value.len() <= 200 && !value.contains('\n')).then_some(value)
 }
 
 #[derive(Debug)]
 struct ListedPage {
+    page: usize,
     path: String,
     bytes: u64,
 }
@@ -672,17 +1009,28 @@ fn parse_manifest(m: &Value) -> std::result::Result<Vec<ListedPage>, String> {
         .get("pages")
         .and_then(Value::as_array)
         .ok_or("manifest has no pages list")?;
-    if pages.len() != count {
+    if pages.len() > count
+        || m.get("renderedCount")
+            .is_some_and(|v| v.as_u64() != Some(pages.len() as u64))
+    {
         return Err(format!(
             "manifest lists {} pages but pageCount is {count}",
             pages.len()
         ));
     }
-    let mut out = Vec::with_capacity(count);
+    let mut out = Vec::with_capacity(pages.len());
+    let mut paths = BTreeSet::new();
+    let mut previous = None;
     for (i, p) in pages.iter().enumerate() {
-        if p.get("page").and_then(Value::as_u64) != Some(i as u64) {
-            return Err(format!("manifest page entry {i} is out of order"));
+        let page = p
+            .get("page")
+            .and_then(Value::as_u64)
+            .filter(|&p| p < count as u64)
+            .ok_or_else(|| format!("invalid manifest page {i}"))? as usize;
+        if previous.is_some_and(|p| p >= page) {
+            return Err("manifest pages out of order".into());
         }
+        previous = Some(page);
         let path = p
             .get("path")
             .and_then(Value::as_str)
@@ -691,7 +1039,11 @@ fn parse_manifest(m: &Value) -> std::result::Result<Vec<ListedPage>, String> {
             .get("bytes")
             .and_then(Value::as_u64)
             .ok_or_else(|| format!("manifest page {i} has no byte size"))?;
+        if !paths.insert(path) {
+            return Err("duplicate manifest output path".into());
+        }
         out.push(ListedPage {
+            page,
             path: path.to_string(),
             bytes,
         });
@@ -701,13 +1053,24 @@ fn parse_manifest(m: &Value) -> std::result::Result<Vec<ListedPage>, String> {
 
 /// Read one regular file named by the renderer (as `/out/...`) from the host
 /// side of `/out`. Absolute-in-sandbox paths only, no `..`, no symlinks at any
-/// level, regular files only, size bounded. `expect_len == 0` skips the exact
-/// size check (render-tree files have no manifest).
+/// level, regular files only, size bounded. `None` is only for the explicitly
+/// scoped pinned render-tree naming exception; `Some(0)` is exact.
+#[cfg(test)]
 fn read_out_file(
     out_dir: &Path,
     sandbox_path: &str,
-    expect_len: u64,
+    expect_len: Option<u64>,
 ) -> std::result::Result<Vec<u8>, String> {
+    read_out_file_bounded(out_dir, sandbox_path, expect_len, MAX_OUT_FILE_BYTES)
+}
+
+fn read_out_file_bounded(
+    out_dir: &Path,
+    sandbox_path: &str,
+    expect_len: Option<u64>,
+    max_bytes: u64,
+) -> std::result::Result<Vec<u8>, String> {
+    let max_bytes = max_bytes.min(MAX_OUT_FILE_BYTES);
     let rel = sandbox_path
         .strip_prefix("/out/")
         .ok_or_else(|| format!("path {sandbox_path:?} is outside /out"))?;
@@ -733,15 +1096,15 @@ fn read_out_file(
             return Err(format!("{sandbox_path}: parent is not a directory"));
         }
         if last {
-            if md.len() > MAX_OUT_FILE_BYTES {
+            if md.len() > max_bytes {
                 return Err(format!(
                     "{sandbox_path}: {} bytes exceeds the per-file cap",
                     md.len()
                 ));
             }
-            if expect_len != 0 && md.len() != expect_len {
+            if expect_len.is_some_and(|expected| md.len() != expected) {
                 return Err(format!(
-                    "{sandbox_path}: manifest says {expect_len} bytes, file has {}",
+                    "{sandbox_path}: manifest says {expect_len:?} bytes, file has {}",
                     md.len()
                 ));
             }
@@ -749,12 +1112,19 @@ fn read_out_file(
     }
     let mut f = fs::File::open(&cur).map_err(|e| format!("{sandbox_path}: {e}"))?;
     let mut buf = Vec::new();
+    if let Some(size) = expect_len {
+        buf.try_reserve_exact(size as usize + 1)
+            .map_err(|_| "output buffer allocation failed")?;
+    }
     (&mut f)
-        .take(MAX_OUT_FILE_BYTES + 1)
+        .take(max_bytes + 1)
         .read_to_end(&mut buf)
         .map_err(|e| format!("{sandbox_path}: {e}"))?;
-    if buf.len() as u64 > MAX_OUT_FILE_BYTES {
+    if buf.len() as u64 > max_bytes {
         return Err(format!("{sandbox_path}: exceeds the per-file cap"));
+    }
+    if expect_len.is_some_and(|n| n != buf.len() as u64) {
+        return Err("output size changed during read".into());
     }
     Ok(buf)
 }
@@ -764,7 +1134,7 @@ fn read_out_file(
 fn layout_notes(stderr: &str) -> Vec<RenderNote> {
     let mut v = Vec::new();
     let mut other = 0usize;
-    for line in stderr.lines() {
+    for line in stderr.lines().take(MAX_NOTES) {
         let line = line.trim();
         if let Some((code, rest)) = line.split_once(':') {
             if code.starts_with("LAYOUT_")
@@ -780,7 +1150,12 @@ fn layout_notes(stderr: &str) -> Vec<RenderNote> {
                         d.parse::<u32>().ok()
                     })
                     .map(|p| p + 1);
-                v.push(note(code, "warning", page, line));
+                v.push(note(
+                    code,
+                    "warning",
+                    page,
+                    line.chars().take(2048).collect::<String>(),
+                ));
                 continue;
             }
         }
@@ -815,12 +1190,28 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_manifest_paths_are_rejected() {
+        let m = json!({"format":"svg","pageCount":2,"pages":[
+            {"page":0,"path":"/out/a.svg","bytes":6},
+            {"page":1,"path":"/out/a.svg","bytes":6}
+        ]});
+        assert!(parse_manifest(&m).is_err());
+    }
+
+    #[test]
+    fn declared_zero_is_an_exact_size() {
+        let td = out_dir();
+        fs::write(td.path().join("a.svg"), b"<svg/>").unwrap();
+        assert!(read_out_file(td.path(), "/out/a.svg", Some(0)).is_err());
+    }
+
+    #[test]
     fn manifest_validation() {
         let ok = json!({"format":"svg","pageCount":1,"pages":[{"page":0,"path":"/out/a.svg","bytes":3}]});
         assert_eq!(parse_manifest(&ok).unwrap().len(), 1);
         for bad in [
             json!({"format":"png","pageCount":0,"pages":[]}),
-            json!({"format":"svg","pageCount":2,"pages":[{"page":0,"path":"/out/a.svg","bytes":3}]}),
+            json!({"format":"svg","pageCount":0,"pages":[{"page":0,"path":"/out/a.svg","bytes":3}]}),
             json!({"format":"svg","pageCount":1,"pages":[{"page":5,"path":"/out/a.svg","bytes":3}]}),
             json!({"format":"svg","pageCount":1,"pages":[{"page":0,"bytes":3}]}),
         ] {
@@ -841,10 +1232,10 @@ mod tests {
         std::os::unix::fs::symlink("/etc/passwd", td.path().join("link.svg")).unwrap();
         std::os::unix::fs::symlink("/etc", td.path().join("dirlink")).unwrap();
         assert_eq!(
-            read_out_file(td.path(), "/out/a.svg", 6).unwrap(),
+            read_out_file(td.path(), "/out/a.svg", Some(6)).unwrap(),
             b"<svg/>"
         );
-        assert!(read_out_file(td.path(), "/out/sub/b.svg", 1).is_ok());
+        assert!(read_out_file(td.path(), "/out/sub/b.svg", Some(1)).is_ok());
         for bad in [
             "/out/../etc/passwd",
             "/out/./a.svg",
@@ -857,9 +1248,12 @@ mod tests {
             "/out/",
             "/out//a.svg",
         ] {
-            assert!(read_out_file(td.path(), bad, 0).is_err(), "{bad} accepted");
+            assert!(
+                read_out_file(td.path(), bad, None).is_err(),
+                "{bad} accepted"
+            );
         }
         // Manifest size must match the file.
-        assert!(read_out_file(td.path(), "/out/a.svg", 7).is_err());
+        assert!(read_out_file(td.path(), "/out/a.svg", Some(7)).is_err());
     }
 }

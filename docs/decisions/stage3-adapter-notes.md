@@ -27,3 +27,25 @@
 ## 실행기 연결
 
 `SessionExecutor::set_renderer(Arc<RhwpAdapter>)` 또는 `configure_renderer_from_env()`로 켠다. 켜지 않으면 `document.preview`는 이전처럼 `RENDERER_UNAVAILABLE`(reason `renderer_not_configured`)이다. 프리뷰는 읽기 전용이다: 문서 상태·revision·이력·요청 번호를 건드리지 않고, `expectedVersion`이 있으면 불일치 시 `VERSION_CONFLICT`. 결과에 `staleLayoutSections`(편집 뒤 줄 배치 캐시를 지운 구역)를 함께 낸다. CLI·JSON-lines·MCP 서버가 `configure_renderer_from_env()`를 부르도록 하는 연결은 해당 crate 소유자가 한다.
+
+
+## 2026-10-16 독립 검토 이후 변경
+
+위 기록은 최초 구현 시점의 동작이다. 현재 동작은 독립 반례 R1~R9와 다음 해결 기록을 기준으로 읽는다.
+
+- `resumption-review/svg-png-fixes.md`: fail-closed SVG 검사와 내장 래스터의 헤더·개별/누적 픽셀·버퍼 한도.
+- `resumption-review/adapter-budget-fixes.md`: 남은 세션 예산 전달, 폰트 페이로드 제한·불변 바이트, `prlimit` 주소 공간 제한, 생성 전 페이지 선택, 빈 prefix의 section unavailable, 감독되는 bwrap 버전 조회, 0바이트 크기 정확 대조, render-tree 목록 매니페스트.
+- `resumption-review/preview-artifacts.md`: 출력 루트에 생성하는 PNG/SVG의 안전한 파일 공개.
+
+실행기는 현재 문서·이력의 회계값, 직렬화된 스냅샷과 응답 조립 여유분을 제외한 예산을 어댑터에 넘긴다. PNG 실패를 성공으로 표시하지 않으며, 실제 JSON 및 MCP의 추가 이스케이프를 고려한다. 큰 내용은 삭제하지 않고 `pages[].png.path` 또는 `pages[].svgArtifact`로 전달한다. 출력 루트가 없는 내부 조립 호출에만 `omitted: response_limit` 대안이 남아 있다.
+
+R7 수정 뒤 28구역 코퍼스의 section 15는 rhwp의 텍스트 prefix 증거가 비어 있어 unavailable이다. 현재 대응 건수는 문단 621·표 6·셀 290·그림 4이며, 이전 637·8·308은 최초 구현의 관찰값이다. 대응 건수를 유지하려고 검증을 생략하지 않는다.
+
+OS 메모리 제한은 렌더러 자식의 프로세스별 `RLIMIT_AS`다. 호스트 resvg·파서의 보수적 회계를 전체 프로세스 RSS 상한 검증으로 간주하지 않는다. 임의 SVG의 엄격한 호스트 메모리 격리는 추가 worker가 필요한 한계다. 출력 디렉터리는 샘플링하므로 순간적인 디스크 초과도 하드 quota로 막는다고 주장하지 않는다.
+
+
+## 2026-10-17 PNG 작업 프로세스 통합
+
+이전 단락의 호스트 resvg 격리 과제는 `resumption-review/raster-worker.md`의 별도 작업 프로세스로 구현했다. 제품 프리뷰는 호스트에서 PNG 변환이나 폰트 DB 구축을 하지 않는다. 같은 빌드의 `hae-raster`를 읽기 전용으로 복사해 bwrap와 `prlimit` 아래 실행하고, 실제로 사용한 폰트 바이트를 숫자 파일명 스냅샷으로 전달한다. 부모는 결과 파일 목록·크기·PNG 기본 구조·픽셀 수·해시와 SVG/폰트 해시 대응을 대조한다. 누락·잘못된 출력·비정상 종료는 명시 실패이고 호스트 대체 실행은 없다.
+
+어댑터는 요청한 PNG가 빠지면 SVG를 보존한 `partial`을 반환한다. 실행기는 PNG만 요청했는데 아무 내용도 전달할 수 없으면 `failed`로 표시한다. 메타데이터에 작업 파일 SHA-256과 폰트 스냅샷 해시, 작업 프로세스 `RLIMIT_AS` 범위를 기록한다. 이 한도는 프로세스별 가상 주소 공간이며 전체 엔진·자손·tmpfs·커널 메모리의 합산 RSS 한도가 아니다. 직접 라이브러리 API의 호스트 호출 가능성과 제품 프리뷰 경로의 필수 격리를 구분한다.

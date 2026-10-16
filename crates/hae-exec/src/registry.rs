@@ -33,6 +33,9 @@ pub struct CommandDescriptor {
     pub supports_dry_run: bool,
     pub records_history: bool,
     pub supported_in_stage1: bool,
+    /// Available with the current adapter configuration. Runtime discovery
+    /// updates preview availability without changing historical stage metadata.
+    pub available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unsupported_reason: Option<&'static str>,
     pub input_schema: Value,
@@ -294,6 +297,7 @@ macro_rules! define_commands {
                         supports_dry_run: $dry,
                         records_history: $hist,
                         supported_in_stage1: $s1,
+                        available: $s1,
                         unsupported_reason: $reason,
                         input_schema: schema_json::<$params>(),
                         output_schema: schema_json::<$out>(),

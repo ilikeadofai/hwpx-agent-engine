@@ -4,15 +4,19 @@
 
 use hae_package::sha256_hex;
 use resvg::usvg::fontdb;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
+use std::io::{Read, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::SystemTime;
 
 const MAX_FONT_FILES: usize = 4096;
 const MAX_FONT_DEPTH: usize = 8;
+const MAX_FONT_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_FONT_FILE_BYTES: u64 = 32 * 1024 * 1024;
 /// (relative path, absolute path, bytes, mtime) of one font file.
 type Listed = (String, PathBuf, u64, Option<SystemTime>);
 
@@ -27,6 +31,27 @@ pub struct FontFile {
     pub sha256: String,
 }
 
+/// One font payload staged for the raster worker. `file` is a generated
+/// numeric filename; `path`, `bytes` and `sha256` are the values hashed into
+/// [`FontSet::hash`], so the worker can verify the exact set it receives.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SnapshotEntry {
+    pub file: String,
+    pub path: String,
+    pub bytes: u64,
+    pub sha256: String,
+}
+
+/// SHA-256 over the sorted `path \t bytes \t sha256` lines of a font set.
+fn set_hash<'a>(files: impl IntoIterator<Item = (&'a str, u64, &'a str)>) -> String {
+    let mut lines = String::new();
+    for (rel, bytes, sha) in files {
+        lines.push_str(&format!("{rel}\t{bytes}\t{sha}\n"));
+    }
+    sha256_hex(lines.as_bytes())
+}
+
 /// Scanned font directory.
 #[derive(Debug)]
 pub struct FontSet {
@@ -36,19 +61,34 @@ pub struct FontSet {
     pub hash: String,
     fingerprint: Vec<(String, u64, Option<SystemTime>)>,
     db: OnceLock<Arc<fontdb::Database>>,
+    // Bounded immutable bytes; database loading never rereads live files.
+    payloads: Vec<Vec<u8>>,
 }
 
-fn collect(root: &Path, dir: &Path, depth: usize, out: &mut Vec<Listed>) -> std::io::Result<()> {
+fn collect(
+    root: &Path,
+    dir: &Path,
+    depth: usize,
+    visited: &mut usize,
+    out: &mut Vec<Listed>,
+) -> std::io::Result<()> {
     if depth > MAX_FONT_DEPTH {
         return Ok(());
     }
-    let mut entries: Vec<_> = fs::read_dir(dir)?.flatten().collect();
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        *visited += 1;
+        if *visited > MAX_FONT_FILES * 2 {
+            return Err(std::io::Error::other("too many font directory entries"));
+        }
+        entries.push(entry?);
+    }
     entries.sort_by_key(|e| e.file_name());
     for e in entries {
         let p = e.path();
         let md = fs::symlink_metadata(&p)?;
         if md.is_dir() {
-            collect(root, &p, depth + 1, out)?;
+            collect(root, &p, depth + 1, visited, out)?;
         } else if md.is_file() {
             let ext = p
                 .extension()
@@ -75,7 +115,7 @@ fn collect(root: &Path, dir: &Path, depth: usize, out: &mut Vec<Listed>) -> std:
 
 fn scan_fingerprint(dir: &Path) -> std::io::Result<Vec<Listed>> {
     let mut v = Vec::new();
-    collect(dir, dir, 0, &mut v)?;
+    collect(dir, dir, 0, &mut 0, &mut v)?;
     v.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(v)
 }
@@ -83,13 +123,42 @@ fn scan_fingerprint(dir: &Path) -> std::io::Result<Vec<Listed>> {
 impl FontSet {
     /// Scan and hash `dir`.
     pub fn scan(dir: &Path) -> std::io::Result<FontSet> {
+        Self::scan_with_budget(dir, MAX_FONT_BYTES)
+    }
+
+    /// Bound the complete font payload before opening any font file.
+    pub fn scan_with_budget(dir: &Path, max_bytes: u64) -> std::io::Result<FontSet> {
         let listed = scan_fingerprint(dir)?;
+        let max_bytes = max_bytes.min(MAX_FONT_BYTES);
+        listed.iter().try_fold(0u64, |n, (_, _, bytes, _)| {
+            if *bytes > MAX_FONT_FILE_BYTES {
+                return Err(std::io::Error::other("font exceeds per-file memory limit"));
+            }
+            n.checked_add(*bytes)
+                .filter(|n| *n <= max_bytes)
+                .ok_or_else(|| std::io::Error::other("font payload exceeds memory limit"))
+        })?;
+        // Include payload/database copies and metadata before any payload read.
+        // The adapter supplies (remaining - 1 MiB) / 4 as max_bytes.
+        let reservation: u64 = listed
+            .iter()
+            .map(|(rel, _, bytes, _)| bytes.saturating_mul(4) + 8192 + rel.len() as u64 * 8)
+            .sum();
+        if reservation > max_bytes.saturating_mul(4).saturating_add(1024 * 1024) {
+            return Err(std::io::Error::other("font workspace exceeds memory limit"));
+        }
+        let mut payloads = Vec::with_capacity(listed.len());
         let mut files = Vec::with_capacity(listed.len());
-        let mut lines = String::new();
         for (rel, path, bytes, _) in &listed {
-            let data = fs::read(path)?;
+            let mut data = Vec::new();
+            fs::File::open(path)?
+                .take(bytes + 1)
+                .read_to_end(&mut data)?;
+            if data.len() as u64 != *bytes {
+                return Err(std::io::Error::other("font changed during bounded read"));
+            }
             let sha = sha256_hex(&data);
-            lines.push_str(&format!("{rel}\t{bytes}\t{sha}\n"));
+            payloads.push(data);
             files.push(FontFile {
                 path: rel.clone(),
                 bytes: *bytes,
@@ -98,11 +167,122 @@ impl FontSet {
         }
         Ok(FontSet {
             dir: dir.to_path_buf(),
+            hash: set_hash(
+                files
+                    .iter()
+                    .map(|f| (f.path.as_str(), f.bytes, f.sha256.as_str())),
+            ),
             files,
-            hash: sha256_hex(lines.as_bytes()),
             fingerprint: listed.into_iter().map(|(r, _, b, m)| (r, b, m)).collect(),
             db: OnceLock::new(),
+            payloads,
         })
+    }
+
+    /// Write the already hashed payloads to `dir` under generated numeric
+    /// filenames, never reading the live font directory again. The set was
+    /// bounded at scan time (file count, per-file and total bytes); files are
+    /// created exclusively so an existing entry is an error, not overwritten.
+    pub(crate) fn write_snapshot(&self, dir: &Path) -> std::io::Result<Vec<SnapshotEntry>> {
+        let mut entries = Vec::with_capacity(self.files.len());
+        for (i, (file, data)) in self.files.iter().zip(&self.payloads).enumerate() {
+            if data.len() as u64 != file.bytes {
+                return Err(std::io::Error::other("font payload length changed"));
+            }
+            let name = format!("{i:04}.font");
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o644)
+                .open(dir.join(&name))?
+                .write_all(data)?;
+            entries.push(SnapshotEntry {
+                file: name,
+                path: file.path.clone(),
+                bytes: file.bytes,
+                sha256: file.sha256.clone(),
+            });
+        }
+        Ok(entries)
+    }
+
+    /// Load exactly the staged `entries` from `dir` (worker side). Every file
+    /// must be a regular file of the declared length and SHA-256, and the
+    /// recomputed set hash must equal `expected_hash`; nothing else in `dir`
+    /// and no system font is consulted. The declared total is bounded before
+    /// any file is opened.
+    pub(crate) fn from_snapshot(
+        dir: &Path,
+        entries: &[SnapshotEntry],
+        expected_hash: &str,
+        max_bytes: u64,
+    ) -> std::io::Result<FontSet> {
+        let bad = |m: &str| std::io::Error::other(m.to_string());
+        if entries.len() > MAX_FONT_FILES {
+            return Err(bad("too many snapshot fonts"));
+        }
+        let max_bytes = max_bytes.min(MAX_FONT_BYTES);
+        entries.iter().try_fold(0u64, |n, e| {
+            if e.bytes > MAX_FONT_FILE_BYTES {
+                return Err(bad("snapshot font exceeds per-file limit"));
+            }
+            n.checked_add(e.bytes)
+                .filter(|n| *n <= max_bytes)
+                .ok_or_else(|| bad("snapshot fonts exceed the total limit"))
+        })?;
+        let mut files = Vec::with_capacity(entries.len());
+        let mut payloads = Vec::with_capacity(entries.len());
+        for e in entries {
+            let numeric = e.file.strip_suffix(".font").is_some_and(|stem| {
+                !stem.is_empty() && stem.len() <= 8 && stem.bytes().all(|b| b.is_ascii_digit())
+            });
+            if !numeric {
+                return Err(bad("snapshot font filename is not generated"));
+            }
+            let path = dir.join(&e.file);
+            if !fs::symlink_metadata(&path)?.is_file() {
+                return Err(bad("snapshot font is not a regular file"));
+            }
+            let mut data = Vec::new();
+            fs::File::open(&path)?
+                .take(e.bytes + 1)
+                .read_to_end(&mut data)?;
+            if data.len() as u64 != e.bytes || sha256_hex(&data) != e.sha256 {
+                return Err(bad("snapshot font differs from its declared hash"));
+            }
+            files.push(FontFile {
+                path: e.path.clone(),
+                bytes: e.bytes,
+                sha256: e.sha256.clone(),
+            });
+            payloads.push(data);
+        }
+        let hash = set_hash(
+            files
+                .iter()
+                .map(|f| (f.path.as_str(), f.bytes, f.sha256.as_str())),
+        );
+        if hash != expected_hash {
+            return Err(bad("snapshot font set hash differs from the expected hash"));
+        }
+        Ok(FontSet {
+            dir: dir.to_path_buf(),
+            files,
+            hash,
+            // A snapshot is immutable; there is no live directory to track.
+            fingerprint: Vec::new(),
+            db: OnceLock::new(),
+            payloads,
+        })
+    }
+
+    /// Conservative reservation for retained payloads, a database copy and
+    /// font parser/metadata workspace. This is accounting, not an RSS bound.
+    pub fn memory_reservation(&self) -> u64 {
+        self.files
+            .iter()
+            .map(|f| f.bytes.saturating_mul(4) + 8192 + f.path.len() as u64 * 8)
+            .sum()
     }
 
     /// True if the directory listing (names, sizes, mtimes) is unchanged.
@@ -128,8 +308,8 @@ impl FontSet {
         self.db
             .get_or_init(|| {
                 let mut db = fontdb::Database::new();
-                for f in &self.files {
-                    let _ = db.load_font_file(self.dir.join(&f.path));
+                for data in &self.payloads {
+                    db.load_font_data(data.clone());
                 }
                 // Generic families resolve to a family of this directory (the
                 // alphabetically first), never to a system font. Without this
@@ -148,6 +328,13 @@ impl FontSet {
                 Arc::new(db)
             })
             .clone()
+    }
+
+    /// True once the font database has been built. The product preview must
+    /// never build it in the host process (the worker does), so tests observe it.
+    #[doc(hidden)]
+    pub fn database_loaded(&self) -> bool {
+        self.db.get().is_some()
     }
 
     /// Lower-cased family names available in the set.
@@ -208,6 +395,73 @@ pub fn referenced_families(svg: &str) -> BTreeSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn font_payload_budget_counts_the_complete_set() {
+        let tmp =
+            crate::sandbox::TempDir::new_in(&std::env::temp_dir(), "hae-font-total-").unwrap();
+        fs::write(tmp.path().join("a.ttf"), [0u8; 64]).unwrap();
+        fs::write(tmp.path().join("b.ttf"), [0u8; 64]).unwrap();
+        assert!(FontSet::scan_with_budget(tmp.path(), 100).is_err());
+        assert_eq!(
+            FontSet::scan_with_budget(tmp.path(), 128)
+                .unwrap()
+                .files
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn oversized_font_is_rejected_before_reading() {
+        let tmp =
+            crate::sandbox::TempDir::new_in(&std::env::temp_dir(), "hae-font-limit-").unwrap();
+        let file = fs::File::create(tmp.path().join("huge.ttf")).unwrap();
+        file.set_len(64 * 1024 * 1024 + 1).unwrap();
+        assert!(FontSet::scan(tmp.path()).is_err());
+    }
+
+    #[test]
+    fn snapshot_carries_the_hashed_payloads_not_the_live_files() {
+        use crate::sandbox::TempDir;
+        let live = TempDir::new_in(&std::env::temp_dir(), "hae-font-live-").unwrap();
+        fs::write(live.path().join("a.ttf"), b"original").unwrap();
+        fs::write(live.path().join("b.otf"), b"second").unwrap();
+        let set = FontSet::scan(live.path()).unwrap();
+        // The live directory changes after hashing; the snapshot must not.
+        fs::write(live.path().join("a.ttf"), b"mutated!").unwrap();
+        let snap = TempDir::new_in(&std::env::temp_dir(), "hae-font-snap-").unwrap();
+        let entries = set.write_snapshot(snap.path()).unwrap();
+        assert_eq!(
+            entries.iter().map(|e| e.file.as_str()).collect::<Vec<_>>(),
+            ["0000.font", "0001.font"]
+        );
+        assert_eq!(
+            fs::read(snap.path().join("0000.font")).unwrap(),
+            b"original"
+        );
+        // Existing files are never overwritten.
+        assert!(set.write_snapshot(snap.path()).is_err());
+
+        let loaded = FontSet::from_snapshot(snap.path(), &entries, &set.hash, 1024).unwrap();
+        assert_eq!(loaded.hash, set.hash);
+        assert_eq!(loaded.files.len(), 2);
+        assert!(!loaded.database_loaded());
+
+        // Wrong expected hash, size budget and generated-name rules.
+        assert!(FontSet::from_snapshot(snap.path(), &entries, &"0".repeat(64), 1024).is_err());
+        assert!(FontSet::from_snapshot(snap.path(), &entries, &set.hash, 10).is_err());
+        let mut renamed = entries.clone();
+        renamed[0].file = "../a.ttf".into();
+        assert!(FontSet::from_snapshot(snap.path(), &renamed, &set.hash, 1024).is_err());
+        // Tampering, truncation and symlinks are detected.
+        fs::write(snap.path().join("0000.font"), b"tampered").unwrap();
+        assert!(FontSet::from_snapshot(snap.path(), &entries, &set.hash, 1024).is_err());
+        fs::remove_file(snap.path().join("0000.font")).unwrap();
+        std::os::unix::fs::symlink(live.path().join("b.otf"), snap.path().join("0000.font"))
+            .unwrap();
+        assert!(FontSet::from_snapshot(snap.path(), &entries, &set.hash, 1024).is_err());
+    }
 
     #[test]
     fn referenced_families_unescapes_entities() {

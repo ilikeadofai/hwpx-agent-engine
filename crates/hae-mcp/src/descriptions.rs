@@ -41,7 +41,7 @@ fn text_replace() -> &'static str {
 }
 
 fn paragraph_format() -> &'static str {
-    "Update paragraph `target` (`nodeId` from `document_inspect`/`element_query`) with `alignment` (`left`, `center`, `right`, `justify`, `distribute`, `distributeSpace`) and/or `lineSpacing` (`{\"kind\": \"percent\", \"value\": 50..=500}`), reusing or cloning the paragraph shape without altering global styles. Requires `documentId` and `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query). Refuses read-only documents or uncloneable shapes (`UNSUPPORTED`), missing targets (`TARGET_NOT_FOUND`), or calls with neither option set (`INVALID_REQUEST`). Set `dryRun: true` to preview without changing the document."
+    "Update paragraph `target` (`nodeId` from `document_inspect`/`element_query`) with `alignment` (`left`, `center`, `right`, `justify`, `distribute`, `distributeSpace`) and/or `lineSpacing` (`{\"kind\": \"percent\", \"value\": 1..=1000}`), reusing or cloning the paragraph shape without altering global styles. Requires `documentId` and `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query). Refuses read-only documents or uncloneable shapes (`UNSUPPORTED`), missing targets (`TARGET_NOT_FOUND`), or calls with neither option set (`INVALID_REQUEST`). Set `dryRun: true` to preview without changing the document."
 }
 
 fn cell_set_text() -> &'static str {

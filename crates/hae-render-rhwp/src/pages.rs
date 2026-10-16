@@ -819,15 +819,14 @@ pub fn join_pages(doc: &Document, render_trees: &[Value], dump: &Value) -> PageI
         }
     }
     for p in &dp_para {
-        let Some(preview) = &p.preview else { continue };
         let Some(Ok(i)) = rec_of_kind(&p.addr, RK::P) else {
             mark_bad(sec_of(&p.addr), "orphan-address");
             continue;
         };
         let ours = squash(&recs[i].text);
-        let theirs = squash(preview);
+        let theirs = p.preview.as_deref().map(squash).unwrap_or_default();
         let n = ours.len().min(theirs.len()).min(8);
-        if ours[..n] != theirs[..n] {
+        if (!ours.is_empty() && theirs.is_empty()) || ours[..n] != theirs[..n] {
             mark_bad(recs[i].si, "text-prefix-mismatch");
         }
     }

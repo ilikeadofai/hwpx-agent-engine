@@ -28,11 +28,21 @@ const EXIT_OK: i32 = 0;
 const EXIT_FAILED: i32 = 1;
 const EXIT_USAGE: i32 = 2;
 
+/// Extra help line printed with `--help`: how `document.preview` gets its
+/// sandboxed renderer.
+const RENDERER_HELP: &str = "\
+Preview environment (used by document.preview):
+  HAE_RHWP      Path to the sandboxed rhwp renderer executable (enables preview)
+  HAE_BWRAP     Path to bubblewrap (default /usr/bin/bwrap)
+  HAE_FONT_DIR  Font directory mounted for rendering (default /usr/share/fonts)
+  HAE_RASTER    PNG worker executable (default hae-raster next to this application)";
+
 #[derive(Parser)]
 #[command(
     name = "hae",
     version,
-    about = "HWPX document engine CLI: one-session command scripts and one-shot commands"
+    about = "HWPX document engine CLI: one-session command scripts and one-shot commands",
+    after_help = RENDERER_HELP
 )]
 struct Cli {
     #[command(subcommand)]
@@ -48,6 +58,7 @@ enum Mode {
 }
 
 #[derive(Args)]
+#[command(after_help = RENDERER_HELP)]
 struct ScriptArgs {
     /// Root directory for HWPX/image inputs (must already exist)
     #[arg(long, default_value = "/tmp")]
@@ -61,6 +72,7 @@ struct ScriptArgs {
 }
 
 #[derive(Args)]
+#[command(after_help = RENDERER_HELP)]
 struct RunArgs {
     /// Root directory for HWPX/image inputs (must already exist)
     #[arg(long, default_value = "/tmp")]
@@ -88,6 +100,24 @@ fn main() {
         Mode::Run(args) => run_once(args),
     };
     std::process::exit(exit);
+}
+
+/// Turn on `document.preview` when `HAE_RHWP` is set. A configuration failure
+/// is reported once on stderr and the session keeps running with preview
+/// unavailable; nothing is ever written to stdout.
+fn configure_preview(executor: &mut SessionExecutor) {
+    if std::env::var_os("HAE_RHWP")
+        .filter(|v| !v.is_empty())
+        .is_none()
+    {
+        return;
+    }
+    if !executor.configure_renderer_from_env() {
+        eprintln!(
+            "hae: preview renderer not configured (HAE_RHWP/HAE_BWRAP/HAE_FONT_DIR); \
+             document.preview will return RENDERER_UNAVAILABLE"
+        );
+    }
 }
 
 /// One script step. Unknown JSON keys are ignored so scripts can carry
@@ -144,6 +174,7 @@ fn run_script(args: ScriptArgs) -> i32 {
                 return EXIT_USAGE;
             }
         };
+    configure_preview(&mut executor);
 
     let mut vars = Vars::default();
     let mut responses: Vec<ResponseEnvelope> = Vec::with_capacity(steps.len());
@@ -238,6 +269,7 @@ fn run_once(args: RunArgs) -> i32 {
             return EXIT_USAGE;
         }
     };
+    configure_preview(&mut executor);
     let response = executor.call(&command, params, expected_version, dry_run);
     log_step(0, &command, dry_run, &response);
     match serde_json::to_string(&response) {

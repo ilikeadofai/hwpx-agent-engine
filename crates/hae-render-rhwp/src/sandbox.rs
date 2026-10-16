@@ -15,6 +15,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::Read;
 use std::os::unix::fs::DirBuilderExt;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -244,7 +245,35 @@ impl Sandbox {
         limits: &RunLimits,
         cancel: Option<&CancelToken>,
     ) -> Result<ProcOutput, RunError> {
-        let args = self.build_args(in_dir, out_dir, argv);
+        self.run_with_memory(in_dir, out_dir, argv, limits, cancel, None)
+    }
+
+    /// Apply RLIMIT_AS inside bwrap through a trusted argv-only wrapper.
+    /// The hard limit is inherited by descendants; it is per-process virtual
+    /// address space, not a cgroup or an aggregate resident-memory guarantee.
+    pub fn run_with_memory(
+        &self,
+        in_dir: &Path,
+        out_dir: &Path,
+        argv: &[&str],
+        limits: &RunLimits,
+        cancel: Option<&CancelToken>,
+        memory_bytes: Option<u64>,
+    ) -> Result<ProcOutput, RunError> {
+        let bound;
+        let mut wrapped = Vec::new();
+        if let Some(bytes) = memory_bytes {
+            if !Path::new("/usr/bin/prlimit").is_file() {
+                return Err(RunError::Spawn(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "/usr/bin/prlimit is required for renderer memory containment",
+                )));
+            }
+            bound = format!("--as={bytes}:{bytes}");
+            wrapped.extend(["/usr/bin/prlimit", bound.as_str(), "--"]);
+        }
+        wrapped.extend_from_slice(argv);
+        let args = self.build_args(in_dir, out_dir, &wrapped);
         let mut cmd = Command::new(&self.bwrap);
         cmd.args(args)
             .env_clear()
@@ -424,6 +453,11 @@ pub fn run_limited(
     cancel: Option<&CancelToken>,
 ) -> Result<ProcOutput, RunError> {
     let started = Instant::now();
+    if cancel.is_some_and(CancelToken::is_cancelled) {
+        return Err(RunError::Cancelled);
+    }
+    // Safe std API; no pre_exec. Also covers host metadata wrappers that fork.
+    cmd.process_group(0);
     let mut child = cmd.spawn().map_err(RunError::Spawn)?;
     let out_over = Arc::new(AtomicBool::new(false));
     let err_over = Arc::new(AtomicBool::new(false));
@@ -468,12 +502,22 @@ pub fn run_limited(
 
     if let Some(err) = failure {
         // SIGKILL to bwrap; its pid namespace init dies with it (--die-with-parent).
+        if let Some(pid) = rustix::process::Pid::from_raw(child.id() as i32) {
+            let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+        }
         let _ = child.kill();
         let _ = child.wait();
         return Err(err);
     }
+    // Clean up a metadata wrapper's descendants even if the wrapper exited.
+    if let Some(pid) = rustix::process::Pid::from_raw(child.id() as i32) {
+        let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+    }
     let status = child.wait().map_err(RunError::Wait)?;
-    let grace = Duration::from_secs(2);
+    let grace = limits
+        .timeout
+        .saturating_sub(started.elapsed())
+        .min(Duration::from_millis(100));
     let stdout = out_rx.recv_timeout(grace).unwrap_or_default();
     let stderr = err_rx.recv_timeout(grace).unwrap_or_default();
     if out_over.load(Ordering::SeqCst) {

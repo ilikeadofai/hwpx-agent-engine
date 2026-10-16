@@ -24,10 +24,10 @@
 | 난수 ID | `getrandom` | `=0.3.4` | 기본 | MIT OR Apache-2.0 | `documentId`, `nodeId`, `sessionId`, `writerId` 생성 |
 | PNG 검증 | `png` | `=0.18.1` | 기본 | MIT OR Apache-2.0 | 할당 전 IHDR 크기·화소 상한 확인, CRC 및 Adler-32 강제 검증, 재인코딩 없음 |
 | JPEG 검증 | `zune-jpeg` | `=0.5.15` | 기본 | MIT OR Apache-2.0 OR Zlib | 할당 전 SOF 크기·메모리 상한 확인 및 엔트로피 스캔 완전성 검증 |
-| 안전한 파일 I/O | `rustix` | `=1.1.4` | `fs` | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | Linux `openat`, `O_NOFOLLOW`, `flock`, `fsync`, `renameat_with(NOREPLACE)` |
+| 안전한 파일 I/O | `rustix` | `=1.1.4` | `fs`, `process` | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | Linux `openat`, `O_NOFOLLOW`, `flock`, `fsync`, `renameat_with(NOREPLACE)`; renderer supervisor waits and process control |
 | 오류 정의 | `thiserror` | `=2.0.20` | 기본 | MIT OR Apache-2.0 | `hae-diag::EngineError` |
 | CLI 인자 파싱 | `clap` | `=4.6.6` | `derive` | MIT OR Apache-2.0 | `hae-cli` 스크립트·단발 실행 모드 |
-| SVG 래스터화 | `resvg` | `=0.45.1` | `default-features = false`, `text`, `raster-images`, `memmap-fonts` | MPL-2.0 | `hae-render-rhwp::png`: 검사한 SVG를 PNG로 변환(작업 3-4). rhwp 저장소 Cargo.lock이 쓰는 0.45.1과 같은 버전이며 Rust 1.93.1에서 빌드됨. 순수 Rust(usvg·tiny-skia·rustybuzz·fontdb 포함). 시스템 글꼴(`system-fonts`)과 fontconfig는 끄고 설정한 폰트 폴더만 읽는다. |
+| SVG 래스터화 | `resvg` | `=0.45.1` | `default-features = false`, `text`, `raster-images`, `memmap-fonts` | MPL-2.0 | `hae-render-rhwp::png`: 별도 격리 `hae-raster`에서 검사한 SVG를 PNG로 변환(작업 3-4). rhwp 저장소 Cargo.lock이 쓰는 0.45.1과 같은 버전이며 Rust 1.93.1에서 빌드됨. 순수 Rust(usvg·tiny-skia·rustybuzz·fontdb 포함). 시스템 글꼴(`system-fonts`)과 fontconfig는 끄고 설정한 폰트 폴더만 읽는다. |
 
 ## 3. RustSec 및 안전성 점검
 

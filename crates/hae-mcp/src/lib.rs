@@ -13,7 +13,9 @@ use hae_exec::{
     command_list, CommandCategory, CommandDescriptor, RequestEnvelope, ResponseEnvelope,
     SessionExecutor,
 };
-use hae_jsonl::{encode_response, read_line_limited, Line, MAX_REQUEST_BYTES};
+use hae_jsonl::{
+    read_line_limited, response_too_large, Line, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES,
+};
 use serde_json::{json, Map, Value};
 use std::io::{self, BufRead, Write};
 
@@ -174,10 +176,7 @@ impl McpServer {
                 );
             }
         }
-        Ok(json!({
-            "content": [{ "type": "text", "text": encode_response(&response) }],
-            "isError": !response.ok,
-        }))
+        Ok(tool_result(response))
     }
 
     fn run_tool(
@@ -343,8 +342,47 @@ fn rpc_error(id: &Value, error: &RpcError) -> Value {
     })
 }
 
+fn tool_result(mut response: ResponseEnvelope) -> Value {
+    let mut text = serde_json::to_string(&response).unwrap_or_default();
+    if text.len() > MAX_RESPONSE_BYTES {
+        response = response_too_large(&response, text.len());
+        text = serde_json::to_string(&response).unwrap_or_default();
+    }
+    json!({
+        "content": [{ "type": "text", "text": text }],
+        "isError": !response.ok,
+    })
+}
+
 fn write_line<W: Write>(out: &mut W, value: &Value) -> io::Result<()> {
-    let text = serde_json::to_string(value).unwrap_or_default();
+    let mut text = serde_json::to_string(value).unwrap_or_default();
+    if text.len() > MAX_RESPONSE_BYTES {
+        // The MCP envelope escapes the JSON tool response a second time.
+        // Enforce the limit on these final wire bytes, retaining the request id.
+        let inner = value
+            .pointer("/result/content/0/text")
+            .and_then(Value::as_str)
+            .and_then(|s| serde_json::from_str::<ResponseEnvelope>(s).ok());
+        let limited = if let Some(response) = inner {
+            json!({ "jsonrpc": "2.0", "id": value.get("id").unwrap_or(&Value::Null),
+                "result": tool_result(response_too_large(&response, text.len())) })
+        } else {
+            rpc_error(
+                value.get("id").unwrap_or(&Value::Null),
+                &RpcError::new(
+                    -32603,
+                    "RESOURCE_LIMIT: JSON-RPC response exceeds the 4MiB wire limit",
+                ),
+            )
+        };
+        text = serde_json::to_string(&limited).unwrap_or_default();
+        if text.len() > MAX_RESPONSE_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "bounded JSON-RPC response exceeds wire limit",
+            ));
+        }
+    }
     out.write_all(text.as_bytes())?;
     out.write_all(b"\n")?;
     out.flush()

@@ -23,15 +23,22 @@ fn corpus_28_sections_matches_the_spike_counts() {
     assert_eq!(info.page_count, 28);
     assert_eq!(info.sections.len(), 28);
     assert!(
-        info.sections.iter().all(|s| s.available),
+        info.sections.iter().all(|s| s.available == (s.index != 15)),
         "{:?}",
         info.sections
     );
+    // Pinned rhwp emits an empty preview for nonempty text in section 15.
+    // R7 requires that section to fail closed; only independently joined nodes count as resolved.
+    assert_eq!(
+        info.sections[15].reason.as_deref(),
+        Some("text-prefix-mismatch")
+    );
     // map_paths.py on the same file: 8 tables, 308 cells, 637 top-level
-    // paragraphs, 4 resolvable pictures (14 more sit inside groups).
-    assert_eq!(info.counts.tables, 8, "{:?}", info.counts);
-    assert_eq!(info.counts.cells, 308, "{:?}", info.counts);
-    assert_eq!(info.counts.paragraphs, 637, "{:?}", info.counts);
+    // paragraphs. Section 15 withholds 2 tables, 18 cells, 16 paragraphs.
+    // Four pictures resolve; 14 more sit inside groups.
+    assert_eq!(info.counts.tables, 6, "{:?}", info.counts);
+    assert_eq!(info.counts.cells, 290, "{:?}", info.counts);
+    assert_eq!(info.counts.paragraphs, 621, "{:?}", info.counts);
     assert_eq!(info.counts.pictures, 4, "{:?}", info.counts);
 
     // Every resolved node reports 1-based pages within range.
@@ -58,7 +65,16 @@ fn corpus_28_sections_matches_the_spike_counts() {
         .collect();
     assert_eq!(unavailable_pics.len(), 14, "{unavailable_pics:?}");
     assert!(
-        unavailable_pics.iter().all(|r| r.starts_with("in-")),
+        unavailable_pics
+            .iter()
+            .filter(|r| r.starts_with("in-"))
+            .count()
+            == 13
+            && unavailable_pics
+                .iter()
+                .filter(|r| r.as_str() == "text-prefix-mismatch")
+                .count()
+                == 1,
         "{unavailable_pics:?}"
     );
     // The first top-level paragraph of the document is on page 1.
@@ -112,4 +128,57 @@ fn unavailable_adapter_gives_explicit_error() {
     let doc = open("ref_empty.hwpx");
     let e = adapter.page_info(&doc, None).unwrap_err();
     assert_eq!(e.reason(), Some("sandbox_unverified"));
+}
+
+#[test]
+fn nonempty_paragraph_requires_nonempty_text_evidence() {
+    use serde_json::json;
+    let original = open("ref_empty.hwpx");
+    let mut state = original.state.clone();
+    let xml = String::from_utf8(state.get("Contents/section0.xml").unwrap().to_vec()).unwrap();
+    assert!(xml.contains("<hp:t/>"));
+    state.set(
+        "Contents/section0.xml",
+        xml.replacen("<hp:t/>", "<hp:t>EXPECTED</hp:t>", 1)
+            .into_bytes()
+            .into(),
+    );
+    let doc = original.rebuild(state, vec![]).unwrap();
+    let tree = json!({"type":"Page","children":[{"type":"Body","children":[{"type":"TextLine","pi":0,"children":[]}]}]});
+    for value in [
+        None,
+        Some(json!(null)),
+        Some(json!("")),
+        Some(json!("   ")),
+        Some(json!(7)),
+    ] {
+        let mut item = json!({"kind":"fullParagraph","paraIndex":0});
+        if let Some(v) = value {
+            item["textPreview"] = v;
+        }
+        let dump = json!({"pages":[{"section":0,"columns":[{"items":[item]}]}]});
+        let info = hae_render_rhwp::join_pages(&doc, std::slice::from_ref(&tree), &dump);
+        assert!(!info.sections[0].available, "{dump}: {:?}", info.sections);
+        assert!(info.nodes.values().all(|s| s.page_list().is_none()));
+    }
+}
+
+#[test]
+fn tree_inventory_rejects_extra_renderer_outputs() {
+    let (env, _d) = fake_env(
+        r#"
+if [ "$1" = export-render-tree ]; then
+    printf '{"type":"Page","children":[]}' > /out/render_tree_001.json
+    printf 'unexpected' > /out/extra.json
+fi
+"#,
+        |_| {},
+    );
+    let doc = open("ref_empty.hwpx");
+    let result = env.adapter.page_info(&doc, None);
+    assert!(
+        result.is_err(),
+        "tree outputs must match the trusted inventory"
+    );
+    assert_eq!(result.err().unwrap().reason(), Some("invalid_output"));
 }
