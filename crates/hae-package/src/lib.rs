@@ -181,6 +181,17 @@ pub fn analyze(
     mimetype_stored: bool,
     limits: &Limits,
 ) -> Result<(PackageInfo, XmlMap)> {
+    analyze_cached(state, mimetype_stored, limits, None)
+}
+
+/// Like [`analyze`], reusing parsed XML from `prev` for entries whose payload
+/// is the same allocation (unchanged since the previous analysis).
+pub fn analyze_cached(
+    state: &PackageState,
+    mimetype_stored: bool,
+    limits: &Limits,
+    prev: Option<&XmlMap>,
+) -> Result<(PackageInfo, XmlMap)> {
     let first = state
         .entries
         .first()
@@ -220,6 +231,13 @@ pub fn analyze(
     let mut xml: XmlMap = BTreeMap::new();
     for e in &state.entries {
         if is_xml_name(&e.name) {
+            if let Some(d) = prev
+                .and_then(|m| m.get(&e.name))
+                .filter(|d| Arc::ptr_eq(d.bytes(), &e.payload))
+            {
+                xml.insert(e.name.clone(), d.clone());
+                continue;
+            }
             let d = XmlDoc::parse_with(e.payload.clone(), opts).map_err(|err| {
                 let mut d = err.0;
                 d.message = format!("{}: {}", e.name, d.message);
