@@ -306,8 +306,11 @@ impl Driver for Mcp {
 fn semantic(command: &str, response: &Value) -> Value {
     let result = &response["result"];
     let count = |value: &Value| value.as_array().map(Vec::len);
-    let capabilities = result["matches"].as_array().map(|items| {
-        items.iter().map(|item| {
+    let capabilities = result["matches"]
+        .as_array()
+        .filter(|_| command == "element.query")
+        .map(|items| {
+            items.iter().map(|item| {
             assert!(item["edits"].is_object(), "discovery must report per-command edits");
             if item["kind"] == "paragraph" {
                 assert!(item["textSpans"].is_array());
@@ -319,7 +322,7 @@ fn semantic(command: &str, response: &Value) -> Value {
                 "childParagraphsEditable": item["childParagraphsEditable"],
             })
         }).collect::<Vec<_>>()
-    });
+        });
     json!({
         "command": command,
         "ok": response["ok"],
@@ -331,6 +334,11 @@ fn semantic(command: &str, response: &Value) -> Value {
         "afterVersion": result["afterVersion"],
         "changedIds": count(&result["changedIds"]),
         "matches": count(&result["matches"]),
+        "replacementCount": result["replacementCount"],
+        "paragraphCount": result["paragraphCount"],
+        "skippedCount": result["skippedCount"],
+        "skipped": result["skipped"],
+        "previews": result["matches"].as_array().map(|items| items.iter().map(|m| json!({"range": m["range"], "before": m["before"], "after": m["after"]})).collect::<Vec<_>>()),
         "capabilities": capabilities,
         "exportedVersion": result["exportedVersion"],
         "unmodifiedPassthrough": result["unmodifiedPassthrough"],
@@ -543,4 +551,90 @@ fn jsonl_transport_rules_over_a_real_process() {
     );
     assert_eq!(first_code(&unknown), "UNKNOWN_WRITER");
     assert_eq!(c.finish().0, 0);
+}
+
+/// text.replaceAll over the same four interfaces: dryRun list, real edit,
+/// Undo to the original bytes, and the edited export must all agree.
+fn replace_all_scenario(input: &Path, export: &Path) -> Vec<Step> {
+    let restored = export.with_file_name("restored.hwpx");
+    let versioned = |mut s: Step| {
+        s.versioned = true;
+        s
+    };
+    let params = json!({ "find": "기념행사", "text": "행사" });
+    vec![
+        Step {
+            save_as: Some("open"),
+            ..step("document.open", json!({ "path": input }))
+        },
+        Step {
+            dry_run: true,
+            ..versioned(step("text.replaceAll", params.clone()))
+        },
+        versioned(step("text.replaceAll", params)),
+        step(
+            "element.query",
+            json!({ "kind": "paragraph", "textContains": "기념행사" }),
+        ),
+        step("document.export", json!({ "path": export })),
+        versioned(step("history.undo", json!({}))),
+        step("document.export", json!({ "path": restored })),
+    ]
+}
+
+#[test]
+fn four_interfaces_agree_on_text_replace_all() {
+    type Maker = fn(PathBuf) -> Box<dyn Driver>;
+    let makers: [(&'static str, Maker); 4] = [
+        ("inproc-all", |dir| Box::new(InProcess { dir })),
+        ("cli-all", |dir| Box::new(CliScript { dir })),
+        ("jsonl-all", |dir| Box::new(Jsonl { dir })),
+        ("mcp-all", |dir| Box::new(Mcp { dir })),
+    ];
+    let original = fs::read(common::corpus_file(DOC)).unwrap();
+    let mut runs = Vec::new();
+    for (name, make) in makers {
+        let dir = TempDir::new(name);
+        let input = dir.with_corpus(DOC);
+        let export = dir.path().join("export.hwpx");
+        let steps = replace_all_scenario(&input, &export);
+        let responses = make(dir.path().to_path_buf()).run(&steps);
+        assert_eq!(responses.len(), steps.len(), "{name}");
+        for (s, r) in steps.iter().zip(&responses) {
+            assert_eq!(r["ok"], true, "{name}: {} failed: {r}", s.command);
+        }
+        let semantic_steps: Vec<Value> = steps
+            .iter()
+            .zip(&responses)
+            .map(|(s, r)| semantic(s.command, r))
+            .collect();
+        let edited = fs::read(&export).unwrap();
+        let restored = fs::read(dir.path().join("restored.hwpx")).unwrap();
+        runs.push((name, semantic_steps, edited, restored));
+    }
+    let (_, reference, edited, restored) = &runs[0];
+    assert_eq!(reference[1]["outcome"], "applied");
+    assert_eq!(reference[1]["afterVersion"], 0, "dryRun keeps the revision");
+    let count = reference[1]["replacementCount"].as_u64().unwrap();
+    assert!(count >= 1, "the corpus paragraph is found");
+    assert_eq!(
+        reference[1]["previews"].as_array().unwrap().len() as u64,
+        count
+    );
+    assert_eq!(
+        reference[2]["replacementCount"],
+        reference[1]["replacementCount"]
+    );
+    assert_eq!(reference[2]["afterVersion"], 1);
+    assert_eq!(
+        reference[3]["matches"], 0,
+        "every replaceable match was replaced"
+    );
+    assert_ne!(edited, &original);
+    assert_eq!(restored, &original, "Undo restores the original bytes");
+    for (name, semantic_steps, e, r) in &runs[1..] {
+        assert_eq!(semantic_steps, reference, "{name}: per-step results differ");
+        assert_eq!(e, edited, "{name}: edited export differs");
+        assert_eq!(r, restored, "{name}: restored export differs");
+    }
 }
