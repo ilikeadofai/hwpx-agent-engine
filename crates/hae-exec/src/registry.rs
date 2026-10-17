@@ -126,7 +126,10 @@ pub struct ParagraphFormatParams {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CellSetTextParams {
     pub target: String,
-    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paragraphs: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

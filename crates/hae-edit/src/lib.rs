@@ -36,6 +36,10 @@ pub enum EditOp {
         target: String,
         text: String,
     },
+    CellSetParagraphs {
+        target: String,
+        paragraphs: Vec<String>,
+    },
     ImageReplace {
         target: String,
         image: ImageBytes,
@@ -48,6 +52,7 @@ impl EditOp {
             EditOp::TextReplace { target, .. }
             | EditOp::ParagraphFormat { target, .. }
             | EditOp::CellSetText { target, .. }
+            | EditOp::CellSetParagraphs { target, .. }
             | EditOp::ImageReplace { target, .. } => target,
         }
     }
@@ -224,7 +229,12 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
                 range,
                 text,
             } => text::text_replace(&mut d, target, range.clone(), text),
-            EditOp::CellSetText { target, text } => text::cell_set_text(&mut d, target, text),
+            EditOp::CellSetText { target, text } => {
+                text::cell_set_text(&mut d, target, Some(text), None)
+            }
+            EditOp::CellSetParagraphs { target, paragraphs } => {
+                text::cell_set_text(&mut d, target, None, Some(paragraphs))
+            }
             EditOp::ParagraphFormat {
                 target,
                 alignment,

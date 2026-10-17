@@ -13,7 +13,7 @@ macro_rules! codes {
 
         impl Code {
             /// All codes in table order.
-            pub const ALL: [Code; 31] = [ $( Code::$variant, )* ];
+            pub const ALL: [Code; 32] = [ $( Code::$variant, )* ];
 
             /// The wire string of the code.
             pub fn as_str(self) -> &'static str {
@@ -53,6 +53,7 @@ codes! {
     TargetNotFound => "TARGET_NOT_FOUND", Some("§6"), false;
     AmbiguousTarget => "AMBIGUOUS_TARGET", Some("§6"), false;
     Unsupported => "UNSUPPORTED", Some("§6"), false;
+    InvalidArgument => "INVALID_ARGUMENT", None, false;
     InvalidRange => "INVALID_RANGE", Some("§6"), false;
     RangeCrossesControl => "RANGE_CROSSES_CONTROL", Some("§6"), false;
     UnsupportedContentInRange => "UNSUPPORTED_CONTENT_IN_RANGE", Some("§6"), false;

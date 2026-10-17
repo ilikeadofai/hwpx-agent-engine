@@ -1082,14 +1082,31 @@ impl SessionExecutor {
                     .map(|n| (n.entry.clone(), doc.doc_of(n).path(n.el)))
                     .unwrap_or_default();
                 Ok((
-                    EditOp::CellSetText {
-                        target: p.target,
-                        text: p.text.clone(),
+                    match (&p.text, &p.paragraphs) {
+                        (Some(text), None) => EditOp::CellSetText {
+                            target: p.target.clone(),
+                            text: text.clone(),
+                        },
+                        (None, Some(paragraphs)) => EditOp::CellSetParagraphs {
+                            target: p.target.clone(),
+                            paragraphs: paragraphs.clone(),
+                        },
+                        _ => {
+                            return Err(wrap_err(EngineError::new(
+                                Code::InvalidArgument,
+                                Stage::Validate,
+                                "supply exactly one of text or paragraphs",
+                            )))
+                        }
                     },
-                    VerifyOperation::CellSetText {
-                        entry,
-                        path,
-                        text: p.text,
+                    match (p.text, p.paragraphs) {
+                        (Some(text), None) => VerifyOperation::CellSetText { entry, path, text },
+                        (None, Some(paragraphs)) => VerifyOperation::CellSetParagraphs {
+                            entry,
+                            path,
+                            paragraphs,
+                        },
+                        _ => unreachable!(),
                     },
                 ))
             }

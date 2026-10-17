@@ -409,70 +409,55 @@ pub(crate) fn text_replace(
     Ok(())
 }
 
-pub(crate) fn cell_set_text(d: &mut Draft, target: &str, new: &str) -> Result<()> {
+pub(crate) fn cell_set_text(
+    d: &mut Draft,
+    target: &str,
+    text: Option<&str>,
+    paragraphs: Option<&[String]>,
+) -> Result<()> {
     let cell = d.node(target, Some(Kind::Cell))?;
-    check_new_text(new)?;
-    if let Some(r) = d.doc.cell_block_reason(&cell) {
+    if let Some(reason) = d.doc.cell_block_reason(&cell) {
         return Err(EngineError::new(
             Code::Unsupported,
             Stage::Validate,
-            format!("cell cannot be edited: {r}"),
+            "unsupported cell structure",
         )
         .with_target(target)
-        .with_reason(r));
+        .with_reason(reason));
     }
-    let para = d
+    let paras: Vec<String> = d
         .doc
         .children(target)
-        .find(|n| n.kind == Kind::Paragraph)
-        .cloned()
-        .or_else(|| {
-            d.doc
-                .nodes
-                .iter()
-                .find(|n| n.kind == Kind::Paragraph && d.doc.is_descendant(n, target))
-                .cloned()
-        })
-        .ok_or_else(|| {
-            EngineError::new(Code::Unsupported, Stage::Validate, "cell has no paragraph")
-                .with_target(target)
-        })?;
-    d.doc.check_editable(&para)?;
-    let pt = d.doc.para_text(&para)?;
-    let old_text = pt.text.clone();
-    if old_text == new {
-        return Ok(());
+        .filter(|p| p.kind == Kind::Paragraph)
+        .map(|p| p.id.clone())
+        .collect();
+    if text.is_some() && paras.len() != 1 {
+        return Err(EngineError::new(Code::Unsupported,Stage::Validate,"use paragraphs for a multi-paragraph cell").with_target(target).with_detail(serde_json::json!({"paragraphCount":paras.len(),"hint":"use paragraphs with exactly paragraphCount strings"})));
     }
-    let splices = if pt.pieces.is_empty() {
-        empty_insert(d, &para, new)?
-    } else {
-        let all = 0..pt.text.chars().count();
-        let (s, diag) = plan_replace(d, &para, &pt, all, new)?;
-        if let Some(x) = diag {
-            d.diags.push(x);
+    let values: Vec<&str> = match (text, paragraphs) {
+        (Some(s), None) => vec![s],
+        (None, Some(ss)) if ss.len() == paras.len() => ss.iter().map(String::as_str).collect(),
+        _ => {
+            return Err(EngineError::new(
+                Code::InvalidArgument,
+                Stage::Validate,
+                "supply exactly one of text or paragraphs, matching the cell paragraph count",
+            )
+            .with_target(target)
+            .with_detail(serde_json::json!({"paragraphCount":paras.len()})))
         }
-        s
     };
-    d.splice_entry(&para.entry, splices)?;
-    let p2 = d.doc.require(&para.id, Some(Kind::Paragraph))?.clone();
-    let got = d.doc.para_text(&p2)?.text;
-    if got != new {
-        return Err(EngineError::new(
-            Code::StateInvariantError,
-            Stage::Apply,
-            format!("cell.setText produced {got:?}, expected {new:?}"),
-        ));
+    for value in &values {
+        check_new_text(value)?;
     }
-    d.anchor(&p2);
-    let c2 = d.doc.require(target, Some(Kind::Cell))?.clone();
-    let path = d.doc.doc_of(&c2).path(c2.el);
-    d.intents.push(Intent::CellSetText {
-        entry: c2.entry.clone(),
-        path,
-        expected_text: new.to_string(),
-    });
-    d.prv.push((old_text, new.to_string()));
+    for (id, value) in paras.iter().zip(values) {
+        let para = d.node(id, Some(Kind::Paragraph))?;
+        let pt = d.doc.para_text(&para)?;
+        if pt.text.is_empty() && value.is_empty() {
+            continue;
+        }
+        text_replace(d, id, 0..pt.grapheme_len(), value)?;
+    }
     d.changed.push(target.to_string());
-    d.changed.push(para.id.clone());
     Ok(())
 }

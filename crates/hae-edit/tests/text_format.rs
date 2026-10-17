@@ -233,12 +233,9 @@ fn outline_capabilities_describe_existing_text_and_cell_boundaries() {
     );
     assert_eq!(empty["editable"], true);
     let cells: Vec<_> = values.iter().filter(|v| v["kind"] == "cell").collect();
-    for (cell, reason) in cells.iter().zip(["merged_cell", "cell_paragraph_count"]) {
-        assert_eq!(
-            cell["edits"]["cell.setText"],
-            serde_json::json!({"available":false,"reason":reason})
-        );
-        assert_eq!(cell["editable"], false);
+    for cell in cells {
+        assert_eq!(cell["edits"]["cell.setText"]["available"], true);
+        assert_eq!(cell["editable"], true);
         assert_eq!(cell["childParagraphsEditable"], true);
     }
     let e = apply(

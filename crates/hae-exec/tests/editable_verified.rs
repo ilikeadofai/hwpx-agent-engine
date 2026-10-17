@@ -417,3 +417,57 @@ fn v02_empty_paragraph_insertion_appends_t_after_existing_children() {
         assert!(!dry(&mut exec, &item, 0, 0, "X"));
     }
 }
+
+#[test]
+fn v02_merged_multi_paragraph_cell_and_argument_guidance() {
+    let body = cell("<hp:t>one</hp:t>")
+        .replace("rowSpan=\"1\"", "rowSpan=\"2\"")
+        .replace(
+            "</hp:subList>",
+            &format!("{}{}{}", p(""), p("<hp:t>three</hp:t>"), "</hp:subList>"),
+        );
+    let h = Harness::new();
+    let mut exec = h.open(&synthetic(&body));
+    let c = query(&mut exec, "element.query", json!({"kind":"cell"}))["matches"][0].clone();
+    assert_eq!(c["edits"]["cell.setText"]["available"], true);
+    for params in [
+        json!({"text":"one"}),
+        json!({"paragraphs":["one"]}),
+        json!({"text":"one","paragraphs":["a","b","c"]}),
+        json!({}),
+    ] {
+        let mut params = params;
+        params["target"] = c["nodeId"].clone();
+        let r = exec.call("cell.setText", params, Some(0), false);
+        assert!(!r.ok);
+        if r.diagnostics[0].code == hae_diag::Code::Unsupported {
+            assert!(r.diagnostics[0].detail.as_ref().unwrap()["hint"]
+                .as_str()
+                .unwrap()
+                .contains("paragraphs"));
+        }
+    }
+    let r = exec.call(
+        "cell.setText",
+        json!({"target":c["nodeId"],"paragraphs":["first","second","third"]}),
+        Some(0),
+        false,
+    );
+    assert!(r.ok, "{:?}", r.diagnostics);
+    assert_eq!(
+        query(
+            &mut exec,
+            "element.query",
+            json!({"kind":"paragraph","ancestor":c["nodeId"]})
+        )["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    let r = exec.call("history.undo", json!({}), Some(1), false);
+    assert!(r.ok);
+    let out = h.0.join("undo.hwpx");
+    query(&mut exec, "document.export", json!({"path":out}));
+    assert_eq!(fs::read(out).unwrap(), synthetic(&body));
+}

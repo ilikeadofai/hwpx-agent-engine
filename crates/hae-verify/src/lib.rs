@@ -231,12 +231,22 @@ fn verify_inner(
                     material = true;
                 }
             }
-            VerifyOperation::CellSetText { text, .. } => {
-                let (para, changed) = text::cell(&mut expected, entry, &doc, target, text)?;
-                if let Some(pair) = changed {
-                    anchor(&mut anchors, entry, &doc, para)?;
-                    preview.push(pair);
-                    material = true;
+            VerifyOperation::CellSetText { .. } | VerifyOperation::CellSetParagraphs { .. } => {
+                let (text, paragraphs) = match op {
+                    VerifyOperation::CellSetText { text, .. } => (Some(text.as_str()), None),
+                    VerifyOperation::CellSetParagraphs { paragraphs, .. } => {
+                        (None, Some(paragraphs.as_slice()))
+                    }
+                    _ => unreachable!(),
+                };
+                for (para, changed) in
+                    text::cell(&mut expected, entry, &doc, target, text, paragraphs)?
+                {
+                    if let Some(pair) = changed {
+                        anchor(&mut anchors, entry, &doc, para)?;
+                        preview.push(pair);
+                        material = true;
+                    }
                 }
             }
             VerifyOperation::ParagraphFormat {

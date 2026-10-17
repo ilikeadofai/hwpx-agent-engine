@@ -1,5 +1,5 @@
 //! Independent scalar-source mapping for paragraph requests.
-use crate::{attr, change, fail, hp, unsupported, Splice};
+use crate::{change, fail, hp, unsupported, Splice};
 use hae_diag::Result;
 use hae_package::PackageState;
 use hae_xml::{escape_text, is_xml_char, Item, XmlDoc};
@@ -362,9 +362,9 @@ pub(crate) fn cell(
     entry: &str,
     doc: &XmlDoc,
     tc: usize,
-    text: &str,
-) -> Result<CellChange> {
-    new_text(text)?;
+    text: Option<&str>,
+    paragraphs: Option<&[String]>,
+) -> Result<Vec<CellChange>> {
     if !hp(doc.el(tc), "tc") {
         return Err(fail("cell target is not hp:tc"));
     }
@@ -377,26 +377,36 @@ pub(crate) fn cell(
         if hp(e, "tbl") {
             return Err(unsupported("nested table"));
         }
-        if hp(e, "cellSpan")
-            && (attr(doc, i, "colSpan")?.value != "1" || attr(doc, i, "rowSpan")?.value != "1")
-        {
-            return Err(unsupported("merged cell"));
-        }
         if hp(e, "p") {
             paras.push(i);
         }
     }
-    if paras.len() != 1 {
-        return Err(unsupported("cell must contain exactly one paragraph"));
+    if paras.is_empty() {
+        return Err(unsupported("cell has no paragraphs"));
     }
-    let p = paras[0];
-    let v = view(doc, p);
-    if !v.scalars.is_empty() {
-        let len = v.scalars.len();
-        return Ok((p, replace_scalars(state, entry, doc, v, 0..len, text)?));
+    let values: Vec<&str> = match (text, paragraphs) {
+        (Some(s), None) if paras.len() == 1 => vec![s],
+        (None, Some(ss)) if paras.len() == ss.len() => ss.iter().map(String::as_str).collect(),
+        _ => return Err(unsupported("invalid cell paragraph arguments")),
+    };
+    let mut changes = Vec::new();
+    for (p, text) in paras.into_iter().zip(values) {
+        new_text(text)?;
+        let current = XmlDoc::parse(state.get(entry).unwrap().clone())?;
+        let path = doc.path(p);
+        let now = crate::at(&current, &path)?;
+        let v = view(&current, now);
+        let changed = if v.scalars.is_empty() {
+            if text.is_empty() {
+                None
+            } else {
+                insert(state, entry, &current, now, v, 0, text)?
+            }
+        } else {
+            let len = v.scalars.len();
+            replace_scalars(state, entry, &current, v, 0..len, text)?
+        };
+        changes.push((p, changed));
     }
-    if text.is_empty() {
-        return Ok((p, None));
-    }
-    Ok((p, insert(state, entry, doc, p, v, 0, text)?))
+    Ok(changes)
 }

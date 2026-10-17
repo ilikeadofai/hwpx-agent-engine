@@ -102,7 +102,7 @@ fn local_documents_advertised_spans_match_real_dry_runs() {
                 if edits["cell.setText"]["available"] == true {
                     let r = exec.call(
                         "cell.setText",
-                        json!({"target":item["nodeId"],"text":"X"}),
+                        json!({"target":item["nodeId"],"paragraphs":vec!["X";children["matches"].as_array().unwrap().len()]}),
                         Some(0),
                         true,
                     );

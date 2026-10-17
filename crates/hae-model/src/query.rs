@@ -300,9 +300,12 @@ impl Document {
         if let Some(r) = self.verification_block_reason(n) {
             return Some(r);
         }
-        let Some(para) = self.children(&n.id).find(|p| p.kind == Kind::Paragraph) else {
-            return Some("cell_paragraph_count".into());
-        };
+        self.children(&n.id)
+            .filter(|p| p.kind == Kind::Paragraph)
+            .find_map(|p| self.cell_paragraph_block_reason(p))
+    }
+
+    fn cell_paragraph_block_reason(&self, para: &Node) -> Option<String> {
         if let Err(e) = self.check_editable(para) {
             return Some(e.reason().unwrap_or("not_editable").into());
         }
@@ -345,7 +348,6 @@ impl Document {
                 Some(t) if !text_element_supported(doc, t) => {
                     Some("unsupported_content_in_range".into())
                 }
-                None if doc.el(run).end.is_none() => Some("no_run".into()),
                 _ => None,
             };
         }
@@ -435,16 +437,12 @@ impl Document {
     }
 
     pub fn cell_block_reason(&self, n: &Node) -> Option<String> {
-        let a = self.cell_addr(n)?;
-        if a.row_span != 1 || a.col_span != 1 {
-            return Some("merged_cell".into());
-        }
         let paras: Vec<&Node> = self.children_deep(n, Kind::Paragraph);
         let direct: Vec<&&Node> = paras
             .iter()
             .filter(|p| p.parent.as_deref() == Some(&n.id))
             .collect();
-        if direct.len() != 1 {
+        if direct.is_empty() {
             return Some("cell_paragraph_count".into());
         }
         if self

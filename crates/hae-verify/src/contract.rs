@@ -56,6 +56,12 @@ pub enum VerifyOperation {
         path: Vec<usize>,
         text: String,
     },
+    #[serde(rename = "cell.setParagraphs")]
+    CellSetParagraphs {
+        entry: String,
+        path: Vec<usize>,
+        paragraphs: Vec<String>,
+    },
     #[serde(rename = "paragraph.format")]
     ParagraphFormat {
         entry: String,
@@ -80,6 +86,7 @@ impl VerifyOperation {
         match self {
             Self::TextReplace { entry, path, .. }
             | Self::CellSetText { entry, path, .. }
+            | Self::CellSetParagraphs { entry, path, .. }
             | Self::ParagraphFormat { entry, path, .. }
             | Self::ImageReplace { entry, path, .. } => (entry, path),
         }
