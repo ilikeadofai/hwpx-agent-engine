@@ -1046,12 +1046,12 @@ def k_merged_cells(b):
 
 case(
     "merged_cells.hwpx", "table",
-    "2행 2열 표에서 (0,0) 이 rowSpan=2 로 병합되어 (1,0) 주소가 비어 있다. 병합 셀은 조회·보존 대상이며 cell.setText 는 UNSUPPORTED(merged_cell). (row,col) 조회는 병합 영역 전체를 덮는 셀을 돌려준다.",
+    "2행 2열 표에서 (0,0) 이 rowSpan=2 로 병합되어 (1,0) 주소가 비어 있다. 0.2에서 병합 기준 셀의 cell.setText를 허용한다. (row,col) 조회는 병합 영역 전체를 덮는 셀을 돌려준다.",
     c_merged_cells, k_merged_cells,
     [
         {"op": "cell.setText", "target": {"table": 0, "row": 0, "col": 0},
-         "args": {"text": "바꿈"}, "expect": "reject",
-         "code": "UNSUPPORTED", "reason": "merged_cell"},
+         "args": {"text": "바꿈"}, "expect": "applied",
+         "sourceText":"병합", "resultText":"바꿈", "diagnostics":[]},
         {"op": "cell.setText", "target": {"table": 0, "row": 0, "col": 1},
          "args": {"text": "바꿈"}, "expect": "applied",
          "sourceText": "우상", "resultText": "바꿈", "diagnostics": []},
@@ -1087,7 +1087,7 @@ def k_multiparagraph_cell(b):
 
 case(
     "multiparagraph_cell.hwpx", "table",
-    "1행 2열 표. (0,0) 은 문단 하나, (0,1) 은 문단 둘. cell.setText 는 문단이 둘 이상인 셀을 UNSUPPORTED(cell_paragraph_count) 로 거절한다. 조회 텍스트는 셀 문단들을 '\\n' 로 잇는다.",
+    "1행 2열 표. (0,0) 은 문단 하나, (0,1) 은 문단 둘. 0.2에서 다문단 셀의 text 입력은 안내와 함께 거절하고 정확한 문단 수의 paragraphs 입력을 허용한다. 조회 텍스트는 셀 문단들을 '\\n' 로 잇는다.",
     c_multiparagraph_cell, k_multiparagraph_cell,
     [
         {"op": "cell.setText", "target": {"table": 0, "row": 0, "col": 0},
@@ -1098,6 +1098,9 @@ case(
          "code": "UNSUPPORTED", "reason": "cell_paragraph_count"},
         {"op": "element.query", "args": {"table": 0, "row": 0, "col": 1}, "expect": "ok",
          "matches": [{"table": 0, "row": 0, "col": 1}], "unalignedMatches": 0},
+        {"op":"cell.setText", "target":{"table":0,"row":0,"col":1},
+         "args":{"paragraphs":["첫째 변경","둘째 변경"]},"expect":"applied",
+         "resultText":"첫째 변경\n둘째 변경","diagnostics":[]},
     ])
 
 

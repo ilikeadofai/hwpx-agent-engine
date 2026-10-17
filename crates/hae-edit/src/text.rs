@@ -595,7 +595,7 @@ pub(crate) fn cell_set_text(
         .map(|p| p.id.clone())
         .collect();
     if text.is_some() && paras.len() != 1 {
-        return Err(EngineError::new(Code::Unsupported,Stage::Validate,"use paragraphs for a multi-paragraph cell").with_target(target).with_detail(serde_json::json!({"paragraphCount":paras.len(),"hint":"use paragraphs with exactly paragraphCount strings"})));
+        return Err(EngineError::new(Code::Unsupported,Stage::Validate,"use paragraphs for a multi-paragraph cell").with_target(target).with_reason("cell_paragraph_count").with_detail(serde_json::json!({"paragraphCount":paras.len(),"hint":"use paragraphs with exactly paragraphCount strings"})));
     }
     let values: Vec<&str> = match (text, paragraphs) {
         (Some(s), None) => vec![s],

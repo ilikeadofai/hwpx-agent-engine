@@ -69,6 +69,11 @@ fn build_edit_op(doc: &Document, op: &Value, base_dir: &Path, limits: &Limits) -
                 preserve: false,
             }
         }
+        "cell.setText" if args.get("paragraphs").is_some() => EditOp::CellSetParagraphs {
+            target,
+            paragraphs: serde_json::from_value(args["paragraphs"].clone()).unwrap(),
+            preserve: args["controls"] == "preserve",
+        },
         "cell.setText" => EditOp::CellSetText {
             target,
             text: args["text"].as_str().unwrap().to_string(),
