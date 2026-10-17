@@ -213,7 +213,10 @@ fn verify_inner(
         check_opaque_refs(&xml, entry, &doc, target)?;
         match op {
             VerifyOperation::TextReplace {
-                range, replacement, ..
+                range,
+                replacement,
+                preserve,
+                ..
             } => {
                 if !hp(doc.el(target), "p") {
                     return Err(fail("text target is not a paragraph"));
@@ -225,6 +228,7 @@ fn verify_inner(
                     target,
                     range.clone(),
                     replacement,
+                    *preserve,
                 )? {
                     anchor(&mut anchors, entry, &doc, target)?;
                     preview.push((old, new));
@@ -232,16 +236,26 @@ fn verify_inner(
                 }
             }
             VerifyOperation::CellSetText { .. } | VerifyOperation::CellSetParagraphs { .. } => {
-                let (text, paragraphs) = match op {
-                    VerifyOperation::CellSetText { text, .. } => (Some(text.as_str()), None),
-                    VerifyOperation::CellSetParagraphs { paragraphs, .. } => {
-                        (None, Some(paragraphs.as_slice()))
+                let (text, paragraphs, preserve) = match op {
+                    VerifyOperation::CellSetText { text, preserve, .. } => {
+                        (Some(text.as_str()), None, *preserve)
                     }
+                    VerifyOperation::CellSetParagraphs {
+                        paragraphs,
+                        preserve,
+                        ..
+                    } => (None, Some(paragraphs.as_slice()), *preserve),
                     _ => unreachable!(),
                 };
-                for (para, changed) in
-                    text::cell(&mut expected, entry, &doc, target, text, paragraphs)?
-                {
+                for (para, changed) in text::cell(
+                    &mut expected,
+                    entry,
+                    &doc,
+                    target,
+                    text,
+                    paragraphs,
+                    preserve,
+                )? {
                     if let Some(pair) = changed {
                         anchor(&mut anchors, entry, &doc, para)?;
                         preview.push(pair);

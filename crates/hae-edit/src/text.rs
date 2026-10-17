@@ -40,6 +40,7 @@ fn plan_replace(
     pt: &ParaText,
     cps: Range<usize>,
     new: &str,
+    preserve: bool,
 ) -> Result<(Vec<Splice>, Option<Diagnostic>)> {
     let doc = d.doc.doc_of(para);
     let covered: Vec<&hae_model::Piece> = pt
@@ -49,6 +50,7 @@ fn plan_replace(
         .collect();
     for p in &covered {
         match &p.kind {
+            PieceKind::Control { .. } if preserve => {}
             PieceKind::Control { name, .. } => {
                 return Err(EngineError::new(
                     Code::RangeCrossesControl,
@@ -71,6 +73,29 @@ fn plan_replace(
             }
             _ => {}
         }
+    }
+    if preserve
+        && (pt
+            .verification_barriers
+            .iter()
+            .any(|&b| cps.start < b && b < cps.end)
+            || covered.iter().any(|p| {
+                matches!(p.kind, PieceKind::CData { .. })
+                    || (matches!(p.kind, PieceKind::Text { .. } | PieceKind::Ref { .. })
+                        && pt
+                            .text
+                            .chars()
+                            .skip(p.cp_start.max(cps.start))
+                            .take((p.cp_start + p.cp_len).min(cps.end) - p.cp_start.max(cps.start))
+                            .any(|c| ['\t', '\n', '\r'].contains(&c)))
+            }))
+    {
+        return Err(EngineError::new(
+            Code::UnsupportedContentInRange,
+            Stage::Validate,
+            "preserve range contains unsupported markup",
+        )
+        .with_target(&para.id));
     }
     // Uninterpreted attributes on the touched hp:t elements.
     let ts: BTreeSet<usize> = covered.iter().filter_map(|p| p.t).collect();
@@ -110,6 +135,9 @@ fn plan_replace(
     let mut out = Vec::new();
     let mut inserted = false;
     for p in &covered {
+        if matches!(p.kind, PieceKind::Control { .. }) {
+            continue;
+        }
         let s = cps.start.max(p.cp_start);
         let e = cps.end.min(p.cp_start + p.cp_len);
         let (raw, replacement) = if let PieceKind::CData { raw } = &p.kind {
@@ -145,9 +173,67 @@ fn plan_replace(
         out.push((raw, replacement));
         inserted = true;
     }
+    if !inserted && preserve {
+        let mut cp = 0;
+        let mut empty = None;
+        for &r in &doc.el(para.el).children {
+            if !(is_hp(doc.el(r).ns.as_deref()) && doc.el(r).local == "run") {
+                continue;
+            }
+            for &t in &doc.el(r).children {
+                if is_hp(doc.el(t).ns.as_deref())
+                    && doc.el(t).local == "t"
+                    && doc.el(t).items.is_empty()
+                    && cps.start <= cp
+                    && cp <= cps.end
+                    && hae_model::para::text_element_supported(doc, t)
+                {
+                    empty.get_or_insert(t);
+                }
+                cp += pt
+                    .pieces
+                    .iter()
+                    .filter(|p| {
+                        p.t == Some(t)
+                            || (p.t.is_none()
+                                && matches!(p.kind,PieceKind::Control{el,..} if el==t))
+                    })
+                    .map(|p| p.cp_len)
+                    .sum::<usize>();
+            }
+        }
+        if let Some(t) = empty {
+            let el = doc.el(t);
+            let cut = if el.end.is_some() {
+                (el.inner(), escape_text(new).into_bytes())
+            } else {
+                let tag = std::str::from_utf8(&doc.bytes()[el.start.clone()]).unwrap();
+                (
+                    el.start.clone(),
+                    format!(
+                        "{}>{}</{}>",
+                        tag.trim_end_matches('>').trim_end_matches('/').trim_end(),
+                        escape_text(new),
+                        el.qname
+                    )
+                    .into_bytes(),
+                )
+            };
+            out.push(cut);
+        } else if !new.is_empty() {
+            return Err(EngineError::new(
+                Code::UnsupportedContentInRange,
+                Stage::Validate,
+                "preserve range has no existing text fragment",
+            )
+            .with_reason("no_text_fragment")
+            .with_target(&para.id));
+        }
+    }
     // FORMAT_COLLAPSED: covered runs with different character shapes.
     let shapes: BTreeSet<Option<&str>> = covered
         .iter()
+        .filter(|p| !matches!(p.kind, PieceKind::Control { .. }))
         .map(|p| doc.el(p.run).attr_value("charPrIDRef"))
         .collect();
     let diag = (shapes.len() > 1).then(|| {
@@ -347,6 +433,7 @@ pub(crate) fn text_replace(
     target: &str,
     range: Range<usize>,
     new: &str,
+    preserve: bool,
 ) -> Result<()> {
     let para = d.node(target, Some(Kind::Paragraph))?;
     check_new_text(new)?;
@@ -375,11 +462,57 @@ pub(crate) fn text_replace(
     let (splices, diag) = if range.start == range.end {
         (plan_insert(d, &para, &pt, range.start, new)?, None)
     } else {
-        plan_replace(d, &para, &pt, cps.clone(), new)?
+        plan_replace(d, &para, &pt, cps.clone(), new, preserve)?
     };
     let old_text = pt.text.clone();
     let mut expected: String = pt.text.chars().take(cps.start).collect();
-    expected.push_str(new);
+    if preserve && cps.start < cps.end {
+        let first = pt.pieces.iter().find(|p| {
+            p.cp_start < cps.end
+                && cps.start < p.cp_start + p.cp_len
+                && !matches!(p.kind, PieceKind::Control { .. })
+        });
+        let mut put = false;
+        for p in pt
+            .pieces
+            .iter()
+            .filter(|p| p.cp_start < cps.end && cps.start < p.cp_start + p.cp_len)
+        {
+            if matches!(p.kind, PieceKind::Control { .. }) {
+                expected.extend(pt.text.chars().skip(p.cp_start).take(p.cp_len));
+            } else if !put {
+                expected.push_str(new);
+                put = true;
+            }
+        }
+        // An existing empty t may occur after leading objects. Derive its
+        // placement from the selected byte splice, not from a new structure.
+        if first.is_none() && !new.is_empty() {
+            let at = splices[0].0.start;
+            expected = pt.text.chars().take(cps.start).collect();
+            let mut put = false;
+            for p in pt
+                .pieces
+                .iter()
+                .filter(|p| p.cp_start < cps.end && cps.start < p.cp_start + p.cp_len)
+            {
+                let el = match p.kind {
+                    PieceKind::Control { el, .. } => el,
+                    _ => unreachable!(),
+                };
+                if !put && at < d.doc.doc_of(&para).el(el).outer().start {
+                    expected.push_str(new);
+                    put = true;
+                }
+                expected.extend(pt.text.chars().skip(p.cp_start).take(p.cp_len));
+            }
+            if !put {
+                expected.push_str(new);
+            }
+        }
+    } else {
+        expected.push_str(new);
+    }
     expected.extend(pt.text.chars().skip(cps.end));
     if expected == old_text {
         return Ok(()); // no-op step
@@ -396,6 +529,50 @@ pub(crate) fn text_replace(
     }
     if let Some(x) = diag {
         d.diags.push(x);
+    }
+    if preserve {
+        let controls: Vec<_> = pt
+            .pieces
+            .iter()
+            .filter(|p| {
+                p.cp_start < cps.end
+                    && cps.start < p.cp_start + p.cp_len
+                    && matches!(p.kind, PieceKind::Control { .. })
+            })
+            .collect();
+        if !controls.is_empty() {
+            let after = d.doc.para_text(&para2)?;
+            let selected: BTreeSet<_> = pt
+                .pieces
+                .iter()
+                .filter(|p| matches!(p.kind, PieceKind::Control { .. }))
+                .enumerate()
+                .filter(|(_, p)| p.cp_start < cps.end && cps.start < p.cp_start + p.cp_len)
+                .map(|(i, _)| i)
+                .collect();
+            let offsets: Vec<_> = after
+                .pieces
+                .iter()
+                .filter(|p| matches!(p.kind, PieceKind::Control { .. }))
+                .enumerate()
+                .filter(|(i, _)| selected.contains(i))
+                .map(|(_, p)| {
+                    after
+                        .grapheme_cps
+                        .partition_point(|&cp| cp <= p.cp_start)
+                        .saturating_sub(1)
+                })
+                .collect();
+            d.diags.push(
+                Diagnostic::error(
+                    Code::ControlsPreserved,
+                    Stage::Apply,
+                    "controls retained in original XML order",
+                )
+                .with_target(target)
+                .with_detail(serde_json::json!({"count":controls.len(),"offsets":offsets})),
+            );
+        }
     }
     d.anchor(&para2);
     let path = d.doc.doc_of(&para2).path(para2.el);
@@ -414,6 +591,7 @@ pub(crate) fn cell_set_text(
     target: &str,
     text: Option<&str>,
     paragraphs: Option<&[String]>,
+    preserve: bool,
 ) -> Result<()> {
     let cell = d.node(target, Some(Kind::Cell))?;
     if let Some(reason) = d.doc.cell_block_reason(&cell) {
@@ -456,7 +634,7 @@ pub(crate) fn cell_set_text(
         if pt.text.is_empty() && value.is_empty() {
             continue;
         }
-        text_replace(d, id, 0..pt.grapheme_len(), value)?;
+        text_replace(d, id, 0..pt.grapheme_len(), value, preserve)?;
     }
     d.changed.push(target.to_string());
     Ok(())

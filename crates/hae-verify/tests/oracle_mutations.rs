@@ -28,12 +28,14 @@ fn parse_oracle_op(op: &Value, candidate: &Archive) -> VerifyOperation {
                 path,
                 range: start..end,
                 replacement,
+                preserve: false,
             }
         }
         "cell.setText" => VerifyOperation::CellSetText {
             entry,
             path,
             text: op["text"].as_str().unwrap().to_string(),
+            preserve: false,
         },
         "paragraph.format" => {
             let alignment = op["alignment"].as_str().map(|s| match s {

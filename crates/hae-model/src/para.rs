@@ -233,6 +233,51 @@ impl ParaText {
         }
     }
 
+    /// Whether whole-paragraph preserve replacement has a supported existing
+    /// text fragment. Object subtrees stay opaque and are never interpreted.
+    pub fn preserve_replaceable(&self, doc: &XmlDoc) -> bool {
+        let len = self.text.chars().count();
+        if self.verification_barriers.iter().any(|&p| 0 < p && p < len) {
+            return false;
+        }
+        let mut text = false;
+        for p in &self.pieces {
+            if p.t.is_some_and(|t| !text_element_supported(doc, t)) {
+                return false;
+            }
+            match p.kind {
+                PieceKind::Text { .. } | PieceKind::Ref { .. } => {
+                    if self
+                        .text
+                        .chars()
+                        .skip(p.cp_start)
+                        .take(p.cp_len)
+                        .any(|c| ['\t', '\n', '\r'].contains(&c))
+                    {
+                        return false;
+                    }
+                    text |= p.cp_len > 0;
+                }
+                PieceKind::Control { .. } => {}
+                _ => return false,
+            }
+        }
+        text || doc
+            .el(self.para)
+            .children
+            .iter()
+            .copied()
+            .filter(|&r| is_hp(doc.el(r).ns.as_deref()) && doc.el(r).local == "run")
+            .any(|r| {
+                doc.el(r).children.iter().any(|&t| {
+                    is_hp(doc.el(t).ns.as_deref())
+                        && doc.el(t).local == "t"
+                        && doc.el(t).items.is_empty()
+                        && text_element_supported(doc, t)
+                })
+            })
+    }
+
     pub fn empty_insert_reason(&self, doc: &XmlDoc) -> Option<&'static str> {
         if !self.text.is_empty() || !self.verification_barriers.is_empty() {
             return Some("verify_unsupported_markup");

@@ -11,11 +11,17 @@ struct Scalar {
     t: Option<usize>,
     character: char,
     barrier: bool,
+    control: bool,
+    position: usize,
 }
 struct View {
+    para: usize,
     text: String,
     scalars: Vec<Scalar>,
     barriers: Vec<usize>,
+}
+fn scalar_before(s: &Scalar, at: usize) -> bool {
+    s.raw.as_ref().map_or(s.position < at, |r| r.start < at)
 }
 fn placeholder(doc: &XmlDoc, i: usize) -> char {
     match doc.el(i).local.as_str() {
@@ -29,6 +35,7 @@ fn placeholder(doc: &XmlDoc, i: usize) -> char {
 }
 fn view(doc: &XmlDoc, p: usize) -> View {
     let mut out = View {
+        para: p,
         text: String::new(),
         scalars: Vec::new(),
         barriers: Vec::new(),
@@ -62,6 +69,8 @@ fn view(doc: &XmlDoc, p: usize) -> View {
                                     t: Some(c),
                                     character: ch,
                                     barrier: false,
+                                    control: false,
+                                    position: 0,
                                 });
                             }
                         }
@@ -73,6 +82,8 @@ fn view(doc: &XmlDoc, p: usize) -> View {
                                     t: Some(c),
                                     character: ch,
                                     barrier: false,
+                                    control: false,
+                                    position: 0,
                                 });
                             }
                         }
@@ -84,6 +95,8 @@ fn view(doc: &XmlDoc, p: usize) -> View {
                                     t: Some(c),
                                     character: ch,
                                     barrier: true,
+                                    control: false,
+                                    position: 0,
                                 });
                             }
                             // Empty CDATA also represents an unsupported boundary.
@@ -97,6 +110,8 @@ fn view(doc: &XmlDoc, p: usize) -> View {
                                 t: Some(c),
                                 character: ch,
                                 barrier: true,
+                                control: hp(doc.el(*e), "tab") || hp(doc.el(*e), "lineBreak"),
+                                position: doc.el(*e).start.start,
                             });
                         }
                         Item::Comment(_) | Item::Pi(_) => out.barriers.push(out.scalars.len()),
@@ -109,6 +124,8 @@ fn view(doc: &XmlDoc, p: usize) -> View {
                     t: None,
                     character: '\u{fffc}',
                     barrier: true,
+                    control: true,
+                    position: doc.el(c).start.start,
                 });
             }
         }
@@ -144,6 +161,7 @@ pub(crate) fn replace(
     p: usize,
     range: Range<usize>,
     replacement: &str,
+    preserve: bool,
 ) -> Result<Option<(String, String)>> {
     new_text(replacement)?;
     let v = view(doc, p);
@@ -177,6 +195,7 @@ pub(crate) fn replace(
         v,
         boundaries[range.start]..boundaries[range.end],
         replacement,
+        preserve,
     )
 }
 fn replace_scalars(
@@ -186,6 +205,7 @@ fn replace_scalars(
     v: View,
     range: Range<usize>,
     replacement: &str,
+    preserve: bool,
 ) -> Result<Option<(String, String)>> {
     let covered = &v.scalars[range.clone()];
     if v.barriers.iter().any(|&b| range.start < b && b < range.end) {
@@ -193,6 +213,12 @@ fn replace_scalars(
     }
     let mut cuts: Vec<Splice> = Vec::new();
     for s in covered {
+        if s.control && preserve {
+            if let Some(t) = s.t {
+                plain_attrs(doc, t)?;
+            }
+            continue;
+        }
         if s.barrier || ['\t', '\n', '\r'].contains(&s.character) {
             return Err(unsupported(
                 "range covers control, opaque content, or CDATA",
@@ -209,19 +235,85 @@ fn replace_scalars(
         cuts.push((r.clone(), Vec::new()));
     }
     if cuts.is_empty() {
-        return Err(unsupported("empty replacement source"));
-    }
-    let old_selected: String = covered.iter().map(|s| s.character).collect();
-    if old_selected == replacement {
-        return Ok(None);
+        if !preserve {
+            return Err(unsupported("empty replacement source"));
+        }
+        // Existing empty hp:t, including a self-closing one, is a valid
+        // zero-width fragment. Never create one in a non-empty paragraph.
+        let mut found = None;
+        for &run in &doc.el(v.para).children {
+            if !hp(doc.el(run), "run") {
+                continue;
+            }
+            for &t in &doc.el(run).children {
+                let e = doc.el(t);
+                let cp = v
+                    .scalars
+                    .iter()
+                    .filter(|s| scalar_before(s, e.start.start))
+                    .count();
+                if hp(e, "t") && e.items.is_empty() && range.start <= cp && cp <= range.end {
+                    plain_attrs(doc, t)?;
+                    found = Some((t, cp));
+                    break;
+                }
+            }
+            if found.is_some() {
+                break;
+            }
+        }
+        if let Some((t, _)) = found {
+            let e = doc.el(t);
+            let cp = v
+                .scalars
+                .iter()
+                .filter(|s| scalar_before(s, e.start.start))
+                .count();
+            let mut wanted: String = v.text.chars().take(cp).collect();
+            wanted.push_str(replacement);
+            wanted.extend(v.text.chars().skip(cp));
+            if replacement.is_empty() {
+                return Ok(None);
+            }
+            let cut = if e.end.is_some() {
+                (e.inner(), escape_text(replacement).into_bytes())
+            } else {
+                let tag =
+                    std::str::from_utf8(doc.raw(e.start.clone())).map_err(|_| fail("invalid t"))?;
+                (
+                    e.outer(),
+                    format!(
+                        "{}>{}</{}>",
+                        tag.trim_end_matches('>').trim_end_matches('/').trim_end(),
+                        escape_text(replacement),
+                        e.qname
+                    )
+                    .into_bytes(),
+                )
+            };
+            change(state, entry, doc, vec![cut])?;
+            return Ok(Some((v.text, wanted)));
+        }
+        return Err(unsupported("preserve range has no text fragment"));
     }
     cuts[0].1 = escape_text(replacement).into_bytes();
     let mut wanted: String = v.scalars[..range.start]
         .iter()
         .map(|s| s.character)
         .collect();
-    wanted.push_str(replacement);
+    let mut inserted = false;
+    for s in covered {
+        if preserve && s.control {
+            wanted.push(s.character);
+        } else if !inserted {
+            wanted.push_str(replacement);
+            inserted = true;
+        }
+    }
     wanted.extend(v.scalars[range.end..].iter().map(|s| s.character));
+    if v.text == wanted {
+        return Ok(None);
+    }
     change(state, entry, doc, cuts)?;
     Ok(Some((v.text, wanted)))
 }
@@ -364,6 +456,7 @@ pub(crate) fn cell(
     tc: usize,
     text: Option<&str>,
     paragraphs: Option<&[String]>,
+    preserve: bool,
 ) -> Result<Vec<CellChange>> {
     if !hp(doc.el(tc), "tc") {
         return Err(fail("cell target is not hp:tc"));
@@ -404,7 +497,7 @@ pub(crate) fn cell(
             }
         } else {
             let len = v.scalars.len();
-            replace_scalars(state, entry, &current, v, 0..len, text)?
+            replace_scalars(state, entry, &current, v, 0..len, text, preserve)?
         };
         changes.push((p, changed));
     }

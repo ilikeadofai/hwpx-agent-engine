@@ -1018,12 +1018,14 @@ impl SessionExecutor {
                         target: p.target,
                         range: p.range.start..p.range.end,
                         text: p.text.clone(),
+                        preserve: p.controls.preserving(),
                     },
                     VerifyOperation::TextReplace {
                         entry,
                         path,
                         range: p.range.start..p.range.end,
                         replacement: p.text,
+                        preserve: p.controls.preserving(),
                     },
                 ))
             }
@@ -1086,10 +1088,12 @@ impl SessionExecutor {
                         (Some(text), None) => EditOp::CellSetText {
                             target: p.target.clone(),
                             text: text.clone(),
+                            preserve: p.controls.preserving(),
                         },
                         (None, Some(paragraphs)) => EditOp::CellSetParagraphs {
                             target: p.target.clone(),
                             paragraphs: paragraphs.clone(),
+                            preserve: p.controls.preserving(),
                         },
                         _ => {
                             return Err(wrap_err(EngineError::new(
@@ -1100,11 +1104,17 @@ impl SessionExecutor {
                         }
                     },
                     match (p.text, p.paragraphs) {
-                        (Some(text), None) => VerifyOperation::CellSetText { entry, path, text },
+                        (Some(text), None) => VerifyOperation::CellSetText {
+                            entry,
+                            path,
+                            text,
+                            preserve: p.controls.preserving(),
+                        },
                         (None, Some(paragraphs)) => VerifyOperation::CellSetParagraphs {
                             entry,
                             path,
                             paragraphs,
+                            preserve: p.controls.preserving(),
                         },
                         _ => unreachable!(),
                     },

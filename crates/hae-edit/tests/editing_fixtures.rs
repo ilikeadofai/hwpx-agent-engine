@@ -66,11 +66,13 @@ fn build_edit_op(doc: &Document, op: &Value, base_dir: &Path, limits: &Limits) -
                 target,
                 range: start..end,
                 text,
+                preserve: false,
             }
         }
         "cell.setText" => EditOp::CellSetText {
             target,
             text: args["text"].as_str().unwrap().to_string(),
+            preserve: false,
         },
         "paragraph.format" => {
             let alignment = args.get("alignment").and_then(Value::as_str).map(|s| {

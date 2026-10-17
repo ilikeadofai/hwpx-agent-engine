@@ -13,7 +13,7 @@ macro_rules! codes {
 
         impl Code {
             /// All codes in table order.
-            pub const ALL: [Code; 32] = [ $( Code::$variant, )* ];
+            pub const ALL: [Code; 33] = [ $( Code::$variant, )* ];
 
             /// The wire string of the code.
             pub fn as_str(self) -> &'static str {
@@ -57,6 +57,7 @@ codes! {
     InvalidRange => "INVALID_RANGE", Some("§6"), false;
     RangeCrossesControl => "RANGE_CROSSES_CONTROL", Some("§6"), false;
     UnsupportedContentInRange => "UNSUPPORTED_CONTENT_IN_RANGE", Some("§6"), false;
+    ControlsPreserved => "CONTROLS_PRESERVED", Some("0.2 §3"), true;
     FormatCollapsed => "FORMAT_COLLAPSED", Some("§6"), true;
     RendererUnavailable => "RENDERER_UNAVAILABLE", Some("§9"), false;
     PreviewPageLimit => "PREVIEW_PAGE_LIMIT", Some("§10"), true;

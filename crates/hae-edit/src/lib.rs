@@ -26,6 +26,7 @@ pub enum EditOp {
         target: String,
         range: Range<usize>,
         text: String,
+        preserve: bool,
     },
     ParagraphFormat {
         target: String,
@@ -35,10 +36,12 @@ pub enum EditOp {
     CellSetText {
         target: String,
         text: String,
+        preserve: bool,
     },
     CellSetParagraphs {
         target: String,
         paragraphs: Vec<String>,
+        preserve: bool,
     },
     ImageReplace {
         target: String,
@@ -228,13 +231,18 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
                 target,
                 range,
                 text,
-            } => text::text_replace(&mut d, target, range.clone(), text),
-            EditOp::CellSetText { target, text } => {
-                text::cell_set_text(&mut d, target, Some(text), None)
-            }
-            EditOp::CellSetParagraphs { target, paragraphs } => {
-                text::cell_set_text(&mut d, target, None, Some(paragraphs))
-            }
+                preserve,
+            } => text::text_replace(&mut d, target, range.clone(), text, *preserve),
+            EditOp::CellSetText {
+                target,
+                text,
+                preserve,
+            } => text::cell_set_text(&mut d, target, Some(text), None, *preserve),
+            EditOp::CellSetParagraphs {
+                target,
+                paragraphs,
+                preserve,
+            } => text::cell_set_text(&mut d, target, None, Some(paragraphs), *preserve),
             EditOp::ParagraphFormat {
                 target,
                 alignment,

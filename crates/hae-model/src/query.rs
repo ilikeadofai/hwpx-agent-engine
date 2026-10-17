@@ -223,7 +223,11 @@ impl Document {
         if let Some(r) = self.verification_block_reason(n) {
             return Some(r);
         }
-        if !spans.text_spans.is_empty() {
+        if !spans.text_spans.is_empty()
+            || self
+                .para_text(n)
+                .is_ok_and(|p| p.preserve_replaceable(self.doc_of(n)))
+        {
             return None;
         }
         Some(
@@ -311,6 +315,9 @@ impl Document {
         }
         let pt = self.para_text(para).ok()?;
         let doc = self.doc_of(para);
+        if !pt.text.is_empty() && pt.preserve_replaceable(doc) {
+            return None;
+        }
         let len = pt.text.chars().count();
         if pt
             .pieces
@@ -394,7 +401,11 @@ impl Document {
                     if self.para_text(n).is_ok_and(|p| p.text.is_empty()) {
                         vec!["insert".into()]
                     } else {
-                        vec!["replace".into(), "insert".into()]
+                        if spans.text_spans.is_empty() {
+                            vec!["replace".into()]
+                        } else {
+                            vec!["replace".into(), "insert".into()]
+                        }
                     }
                 } else {
                     vec![]

@@ -97,9 +97,24 @@ pub struct TextRangeParam {
     pub end: usize,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Controls {
+    #[default]
+    Reject,
+    Preserve,
+}
+impl Controls {
+    pub fn preserving(self) -> bool {
+        matches!(self, Self::Preserve)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TextReplaceParams {
+    #[serde(default)]
+    pub controls: Controls,
     pub target: String,
     pub range: TextRangeParam,
     pub text: String,
@@ -125,6 +140,8 @@ pub struct ParagraphFormatParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CellSetTextParams {
+    #[serde(default)]
+    pub controls: Controls,
     pub target: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
@@ -467,7 +484,7 @@ define_commands! {
         name: "cell.setText",
         cli: "cell-set-text",
         mcp: "cell_set_text",
-        summary: "Replace the full text of an unmerged single-paragraph table cell",
+        summary: "Replace existing cell paragraphs (merged allowed); use paragraphs with exact count; controls preserve keeps objects",
         category: Mutation,
         mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
         stage1: true, reason: None,

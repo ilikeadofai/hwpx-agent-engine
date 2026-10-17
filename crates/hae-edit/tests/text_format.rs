@@ -50,6 +50,7 @@ fn split_run_range_keeps_unselected_bytes_and_first_shape() {
             target: id.clone(),
             range: 1..5,
             text: "X".into(),
+            preserve: false,
         }],
     )
     .unwrap();
@@ -71,6 +72,7 @@ fn cdata_text_can_be_partially_replaced_without_losing_neighbors() {
             target: id.clone(),
             range: 4..7,
             text: "]]> &".into(),
+            preserve: false,
         }],
     )
     .unwrap();
@@ -88,6 +90,7 @@ fn cache_policy_clears_only_edited_tail_and_preserves_node_ids() {
             target: id,
             range: 0..6,
             text: "changed".into(),
+            preserve: false,
         }],
     )
     .unwrap();
@@ -108,11 +111,13 @@ fn invalid_second_batch_step_preserves_original_document() {
                 target: id.clone(),
                 range: 0..1,
                 text: "ok".into(),
+                preserve: false,
             },
             EditOp::TextReplace {
                 target: id,
                 range: 0..4,
                 text: "bad".into(),
+                preserve: false,
             },
         ],
     )
@@ -143,6 +148,7 @@ fn empty_cell_with_unknown_text_attribute_is_rejected() {
         &[EditOp::CellSetText {
             target: cell,
             text: "new".into(),
+            preserve: false,
         }],
     )
     .unwrap_err();
@@ -244,6 +250,7 @@ fn outline_capabilities_describe_existing_text_and_cell_boundaries() {
             target: para(&d, 0),
             range: 0..4,
             text: "X".into(),
+            preserve: false,
         }],
     )
     .unwrap_err();
@@ -273,6 +280,7 @@ fn unsupported_text_attributes_and_grapheme_edges_are_not_advertised() {
                 target: id.clone(),
                 range,
                 text: "X".into(),
+                preserve: false,
             }],
         )
         .unwrap();
@@ -323,6 +331,7 @@ fn spans_are_bounded_and_diagnostics_use_the_same_bound() {
             target: id,
             range: 0..2,
             text: "X".into(),
+            preserve: false,
         }],
     )
     .unwrap_err();
@@ -345,11 +354,7 @@ fn cell_capability_accounts_for_its_entire_content_and_empty_insertion_path() {
     for (inner, available, reason) in [
         ("<hp:run><hp:t>plain</hp:t></hp:run>", true, None),
         ("<hp:run><hp:t/></hp:run>", true, None),
-        (
-            "<hp:run><hp:t>a<hp:tab/>b</hp:t></hp:run>",
-            false,
-            Some("range_crosses_control"),
-        ),
+        ("<hp:run><hp:t>a<hp:tab/>b</hp:t></hp:run>", true, None),
         ("", false, Some("no_run")),
         (
             "<hp:run><hp:t x:unknown=\"v\"/></hp:run>",
@@ -375,6 +380,7 @@ fn cell_capability_accounts_for_its_entire_content_and_empty_insertion_path() {
             &[EditOp::CellSetText {
                 target: cell.id.clone(),
                 text: "X".into(),
+                preserve: true,
             }],
         );
         assert_eq!(result.is_ok(), available, "{inner}: {result:?}");
@@ -412,6 +418,7 @@ fn every_advertised_grapheme_subrange_is_supported_by_planner() {
                         target: id.clone(),
                         range: start..end,
                         text: "X".into(),
+                        preserve: false,
                     }],
                 );
                 if advertised {

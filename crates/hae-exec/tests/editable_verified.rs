@@ -471,3 +471,59 @@ fn v02_merged_multi_paragraph_cell_and_argument_guidance() {
     query(&mut exec, "document.export", json!({"path":out}));
     assert_eq!(fs::read(out).unwrap(), synthetic(&body));
 }
+
+#[test]
+fn v02_preserve_keeps_objects_in_order_reports_offsets_and_undo() {
+    for inner in [
+        "<hp:t>a<hp:tab/>b<hp:lineBreak/>c</hp:t><hp:equation/><hp:t>d</hp:t>",
+        "<hp:equation/><hp:t/>",
+    ] {
+        let h = Harness::new();
+        let original = synthetic(&p(inner));
+        let mut exec = h.open(&original);
+        let item = paragraphs(&mut exec).remove(0);
+        let len = query(&mut exec, "element.get", json!({"target":item["nodeId"]}))
+            ["graphemeCount"]
+            .clone();
+        let r=exec.call("text.replace",json!({"target":item["nodeId"],"range":{"start":0,"end":len},"text":"X","controls":"preserve"}),Some(0),false);
+        assert!(r.ok, "{:?}", r.diagnostics);
+        assert!(r
+            .diagnostics
+            .iter()
+            .any(|d| d.code.as_str() == "CONTROLS_PRESERVED"));
+        let got = query(&mut exec, "element.get", json!({"target":item["nodeId"]}));
+        assert_eq!(
+            got["text"],
+            if inner.starts_with("<hp:t>a") {
+                "X\t\n\u{fffc}"
+            } else {
+                "\u{fffc}X"
+            }
+        );
+        let r = exec.call("history.undo", json!({}), Some(1), false);
+        assert!(r.ok);
+        let out = h.0.join("undo.hwpx");
+        query(&mut exec, "document.export", json!({"path":out}));
+        assert_eq!(fs::read(out).unwrap(), original);
+    }
+}
+
+#[test]
+fn v02_preserve_still_rejects_unsupported_markup_and_equation_targets() {
+    for inner in [
+        "<hp:t>a<![CDATA[b]]><hp:tab/>c</hp:t>",
+        "<hp:t>a<!--c-->b<hp:tab/>c</hp:t>",
+        "<hp:t>a<?p x?>b<hp:tab/>c</hp:t>",
+        "<hp:t>a\tb<hp:tab/>c</hp:t>",
+        "<hp:t>a<hp:fwSpace/>b</hp:t>",
+    ] {
+        let h = Harness::new();
+        let mut exec = h.open(&synthetic(&p(inner)));
+        let item = paragraphs(&mut exec).remove(0);
+        let len = query(&mut exec, "element.get", json!({"target":item["nodeId"]}))
+            ["graphemeCount"]
+            .clone();
+        let r=exec.call("text.replace",json!({"target":item["nodeId"],"range":{"start":0,"end":len},"text":"X","controls":"preserve"}),Some(0),true);
+        assert!(!r.ok);
+    }
+}

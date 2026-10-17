@@ -21,8 +21,8 @@
 - `preserve`이면 범위 안의 개체·탭·줄바꿈·필드 경계를 원래 순서대로 남기고, 범위 안의 텍스트만 바꾼다.
   - 새 문자열 전체는 범위 안 첫 텍스트 조각에 들어가고 그 run의 글자 모양을 쓴다.
   - 범위 안 나머지 텍스트 조각은 비운다. 빈 hp:t와 run은 0.1 규칙대로 지우지 않는다.
-  - 결과적으로 보존된 개체는 새 텍스트 뒤에 원래 순서로 놓인다. 응답 진단 `CONTROLS_PRESERVED`에 개체 수와 새 grapheme 오프셋을 담는다.
-- 범위 양 끝은 textSpans 경계 규칙을 따른다. 즉 끝점이 개체 안을 가리킬 수 없다.
+  - 첫 텍스트 조각보다 앞에 있던 개체는 앞에 남는다. 나머지 보존된 개체는 새 텍스트 뒤에 원래 순서로 놓인다. 비어 있는 기존 hp:t만 있으면 범위 안 첫 빈 hp:t를 재사용하며 새 요소를 만들지 않는다. 텍스트 조각과 빈 hp:t가 모두 없으면 UNSUPPORTED_CONTENT_IN_RANGE(reason: `no_text_fragment`)다. 응답 진단 `CONTROLS_PRESERVED`에 개체 수와 새 grapheme 오프셋을 담는다.
+- 기본 reject와 삽입은 textSpans 규칙을 따른다. preserve는 문단의 grapheme 경계에서 개체 바로 앞·뒤를 끝점으로 삼을 수 있다. 개체를 포함한 grapheme의 내부를 끝점으로 삼을 수는 없다. textSpans는 reject 교체·삽입 구간이며 preserve 전체 범위를 나열하지 않는다. preserve만 가능한 문단은 textSpans가 비어 있어도 modes:["replace"]와 available:true를 보고한다.
 - 범위 안에 검증기가 지원하지 않는 표기(CDATA, 주석, PI, 리터럴 제어문자)나 해석하지 못한 속성이 있으면 0.1처럼 거절한다.
 - 수식·그림 등 개체 자체의 내용은 바꾸지 않는다. 수식 노드를 대상으로 지목하면 계속 거절한다.
 

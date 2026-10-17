@@ -102,7 +102,7 @@ fn local_documents_advertised_spans_match_real_dry_runs() {
                 if edits["cell.setText"]["available"] == true {
                     let r = exec.call(
                         "cell.setText",
-                        json!({"target":item["nodeId"],"paragraphs":vec!["X";children["matches"].as_array().unwrap().len()]}),
+                        json!({"target":item["nodeId"],"paragraphs":vec!["X";children["matches"].as_array().unwrap().len()],"controls":"preserve"}),
                         Some(0),
                         true,
                     );
@@ -122,6 +122,11 @@ fn local_documents_advertised_spans_match_real_dry_runs() {
             assert_eq!(
                 item["edits"]["text.replace"]["available"],
                 !spans.is_empty()
+                    || item["edits"]["text.replace"]["modes"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|m| m == "replace")
             );
             let len = got["graphemeCount"].as_u64().unwrap();
             let mut end = 0;

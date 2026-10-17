@@ -65,6 +65,7 @@ fn text_op(path: Vec<usize>, range: std::ops::Range<usize>, replacement: &str) -
         path,
         range,
         replacement: replacement.into(),
+        preserve: false,
     }
 }
 fn gate(
@@ -204,6 +205,7 @@ fn empty_cell_inserts_into_first_run_and_nested_cache_only() {
         entry: SECTION.into(),
         path: vec![0, 0, 0, 0, 0],
         text: "cell".into(),
+        preserve: false,
     }];
     let report = gate(&old, &new, &ops).unwrap();
     assert!(report.prv_text_stale);

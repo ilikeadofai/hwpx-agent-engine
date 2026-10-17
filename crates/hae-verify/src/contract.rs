@@ -49,18 +49,24 @@ pub enum VerifyOperation {
         path: Vec<usize>,
         range: Range<usize>,
         replacement: String,
+        #[serde(default)]
+        preserve: bool,
     },
     #[serde(rename = "cell.setText")]
     CellSetText {
         entry: String,
         path: Vec<usize>,
         text: String,
+        #[serde(default)]
+        preserve: bool,
     },
     #[serde(rename = "cell.setParagraphs")]
     CellSetParagraphs {
         entry: String,
         path: Vec<usize>,
         paragraphs: Vec<String>,
+        #[serde(default)]
+        preserve: bool,
     },
     #[serde(rename = "paragraph.format")]
     ParagraphFormat {
