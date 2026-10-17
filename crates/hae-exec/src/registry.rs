@@ -28,6 +28,7 @@ pub struct CommandDescriptor {
     pub summary: &'static str,
     pub category: CommandCategory,
     pub mutates_content: bool,
+    pub annotations: ToolAnnotations,
     pub requires_document: bool,
     pub requires_expected_version: bool,
     pub uses_request_sequence: bool,
@@ -41,6 +42,16 @@ pub struct CommandDescriptor {
     pub unsupported_reason: Option<&'static str>,
     pub input_schema: Value,
     pub output_schema: Value,
+}
+
+/// Conservative MCP hints, generated alongside command policies in the registry.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolAnnotations {
+    pub read_only_hint: bool,
+    pub destructive_hint: bool,
+    pub idempotent_hint: bool,
+    pub open_world_hint: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -179,6 +190,7 @@ pub struct ImageReplaceParams {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BatchStepParam {
     pub command: String,
+    #[schemars(with = "std::collections::BTreeMap<String, Value>")]
     pub params: Value,
 }
 
@@ -407,6 +419,15 @@ macro_rules! define_commands {
                         summary: $summary,
                         category: CommandCategory::$cat,
                         mutates_content: $mutates,
+                        annotations: {
+                            let read_only = matches!(CommandCategory::$cat, CommandCategory::Introspection | CommandCategory::Query);
+                            ToolAnnotations {
+                                read_only_hint: read_only,
+                                destructive_hint: $mutates || matches!(CommandCategory::$cat, CommandCategory::History | CommandCategory::Lifecycle),
+                                idempotent_hint: read_only,
+                                open_world_hint: false,
+                            }
+                        },
                         requires_document: $doc,
                         requires_expected_version: $ver,
                         uses_request_sequence: $seq,

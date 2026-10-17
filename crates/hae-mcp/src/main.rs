@@ -1,6 +1,6 @@
 //! `hae-mcp`: stdio MCP server (plan 2-2). Protocol on stdout, logs on stderr.
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use hae_diag::Limits;
 use hae_exec::SessionExecutor;
 use hae_mcp::McpServer;
@@ -16,11 +16,19 @@ use std::path::PathBuf;
 )]
 struct Cli {
     /// Root directory for HWPX/image inputs (must already exist)
-    #[arg(long, default_value = "/tmp")]
+    #[arg(long, global = true, default_value = "/tmp")]
     input_root: PathBuf,
     /// Root directory for exports and project saves (must already exist)
-    #[arg(long, default_value = "/tmp")]
+    #[arg(long, global = true, default_value = "/tmp")]
     output_root: PathBuf,
+    #[command(subcommand)]
+    command: Option<Action>,
+}
+
+#[derive(Subcommand)]
+enum Action {
+    /// Check preview executables, font directory and input/output roots; print JSON
+    Doctor,
 }
 
 /// Extra help line printed with `--help`: how `document.preview` gets its
@@ -34,6 +42,14 @@ Preview environment (used by document.preview):
 
 fn main() {
     let cli = Cli::parse();
+    if matches!(cli.command, Some(Action::Doctor)) {
+        let report = hae_mcp::doctor::report(&cli.input_root, &cli.output_root);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).expect("doctor JSON")
+        );
+        std::process::exit(if report["ok"] == true { 0 } else { 1 });
+    }
     let mut executor =
         match SessionExecutor::new(&cli.input_root, &cli.output_root, Limits::default()) {
             Ok(executor) => executor,

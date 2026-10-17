@@ -401,7 +401,12 @@ impl Document {
                 add("text.replace", self.text_replace_reason(n, spans));
                 add("paragraph.format", self.paragraph_format_block_reason(n));
                 let e = edits.get_mut("text.replace").unwrap();
-                if e.available && spans.text_spans.is_empty() {
+                if e.available
+                    && !spans.text_spans.iter().any(|span| span.start < span.end)
+                    && self.para_text(n).is_ok_and(|pt| {
+                        !pt.text.is_empty() && pt.preserve_replaceable(self.doc_of(n))
+                    })
+                {
                     e.requires = Some(BTreeMap::from([("controls".into(), "preserve".into())]));
                 }
                 e.modes = Some(if e.available {

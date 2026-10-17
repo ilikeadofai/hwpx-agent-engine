@@ -209,6 +209,10 @@ impl McpClient {
         );
         let text = result["content"][0]["text"].as_str().expect("text content");
         let envelope: Value = serde_json::from_str(text).expect("envelope JSON");
+        assert_eq!(
+            result["structuredContent"], envelope,
+            "text and structured result must agree"
+        );
         (envelope, result["isError"].as_bool().expect("isError"))
     }
 

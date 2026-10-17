@@ -7,20 +7,33 @@
 //! fails with `VERSION_CONFLICT` instead of being applied twice.
 
 pub mod descriptions;
+pub mod doctor;
+mod schemas;
+use schemas::{output_schema, portable_schema};
 
 use hae_diag::{Code, Diagnostic, EngineError, Stage};
 use hae_exec::{
-    command_list, CommandCategory, CommandDescriptor, RequestEnvelope, ResponseEnvelope,
-    SessionExecutor,
+    command_list, CommandDescriptor, RequestEnvelope, ResponseEnvelope, SessionExecutor,
 };
 use hae_jsonl::{
     read_line_limited, response_too_large, Line, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES,
 };
 use serde_json::{json, Map, Value};
 use std::io::{self, BufRead, Write};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
-/// Newest first. The first entry is offered when the client asks for an unknown version.
-pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
+/// Newest first. Modern negotiation is per request; legacy fallback uses index 1.
+pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
+    "2026-07-28",
+    "2025-11-25",
+    "2025-06-18",
+    "2025-03-26",
+    "2024-11-05",
+];
+const MODERN_VERSION: &str = "2026-07-28";
+const VERSION_META: &str = "io.modelcontextprotocol/protocolVersion";
+const CAPS_META: &str = "io.modelcontextprotocol/clientCapabilities";
+const INFO_META: &str = "io.modelcontextprotocol/serverInfo";
 
 const PARSE_ERROR: i64 = -32700;
 const INVALID_REQUEST: i64 = -32600;
@@ -30,6 +43,7 @@ const INVALID_PARAMS: i64 = -32602;
 struct RpcError {
     code: i64,
     message: String,
+    data: Option<Value>,
 }
 
 impl RpcError {
@@ -37,6 +51,7 @@ impl RpcError {
         Self {
             code,
             message: message.into(),
+            data: None,
         }
     }
 }
@@ -46,6 +61,9 @@ pub struct McpServer {
     writer_id: String,
     next_seq: u64,
     commands: Vec<CommandDescriptor>,
+    legacy_version: Option<String>,
+    initialized: bool,
+    faulted: bool,
 }
 
 impl McpServer {
@@ -56,25 +74,35 @@ impl McpServer {
             writer_id,
             next_seq: 1,
             commands: command_list(),
+            legacy_version: None,
+            initialized: false,
+            faulted: false,
         })
     }
 
     /// The `tools/list` result: one tool per registry command.
     pub fn tools_list(&self) -> Value {
+        self.tools_list_for(false)
+    }
+
+    fn tools_list_for(&self, modern: bool) -> Value {
         let tools: Vec<Value> = self
             .commands
             .iter()
             .map(|d| {
                 let description = descriptions::description(d.name).unwrap_or(d.summary);
-                let read_only = matches!(
-                    d.category,
-                    CommandCategory::Introspection | CommandCategory::Query
-                );
+                let mut input = input_schema(d);
+                if modern && d.requires_document {
+                    let root = input.as_object_mut().unwrap();
+                    root.entry("required").or_insert_with(|| json!([])).as_array_mut().unwrap().push(json!("documentId"));
+                    root["properties"]["documentId"]["description"] = json!("Required explicit handle returned by document_open; retained until document_close or server exit.");
+                }
                 json!({
                     "name": d.mcp_tool_name,
                     "description": description,
-                    "inputSchema": input_schema(d),
-                    "annotations": { "readOnlyHint": read_only },
+                    "inputSchema": input,
+                    "outputSchema": output_schema(d),
+                    "annotations": d.annotations,
                 })
             })
             .collect();
@@ -93,6 +121,62 @@ impl McpServer {
                 ))
             }
         };
+        if let Some(batch) = message.as_array() {
+            if self.legacy_version.as_deref() == Some("2025-03-26")
+                && self.initialized
+                && !batch.is_empty()
+                && batch.len() <= 256
+                && !batch
+                    .iter()
+                    .any(|item| item.get("method").and_then(Value::as_str) == Some("initialize"))
+            {
+                let mut replies = Vec::new();
+                let mut used_bytes = 0;
+                // Reserve half the wire budget for bounded error replies and
+                // their IDs (all IDs together fit in the 1MiB inbound line).
+                // Never collect 256 multi-megabyte results before checking size.
+                for item in batch {
+                    let reply = if item.is_array()
+                        || (item.get("id").is_some()
+                            && item
+                                .get("params")
+                                .and_then(|p| p.get("_meta"))
+                                .and_then(|m| m.get(VERSION_META))
+                                .is_some())
+                    {
+                        Some(rpc_error(
+                            item.get("id")
+                                .filter(|id| valid_id(id))
+                                .unwrap_or(&Value::Null),
+                            &RpcError::new(
+                                INVALID_REQUEST,
+                                "nested or modern request in a legacy batch is invalid",
+                            ),
+                        ))
+                    } else {
+                        self.handle_message(
+                            &serde_json::to_vec(item).expect("parsed JSON serializes"),
+                        )
+                    };
+                    if let Some(reply) = reply {
+                        let size = serde_json::to_vec(&reply).expect("reply serializes").len();
+                        if size > (MAX_RESPONSE_BYTES / 2).saturating_sub(used_bytes) {
+                            replies.push(rpc_error(
+                                reply.get("id").unwrap_or(&Value::Null),
+                                &RpcError::new(
+                                    -32603,
+                                    "RESOURCE_LIMIT: batch response budget exceeded",
+                                ),
+                            ));
+                        } else {
+                            used_bytes += size;
+                            replies.push(reply);
+                        }
+                    }
+                }
+                return (!replies.is_empty()).then_some(Value::Array(replies));
+            }
+        }
         let Some(object) = message.as_object() else {
             let what = if message.is_array() {
                 "JSON-RPC batches are not supported; send one message per line"
@@ -105,6 +189,15 @@ impl McpServer {
             ));
         };
         let id = object.get("id").cloned();
+        if id.as_ref().is_some_and(|id| !valid_id(id)) {
+            return Some(rpc_error(
+                &Value::Null,
+                &RpcError::new(
+                    INVALID_REQUEST,
+                    "id must be a string or integer, never null",
+                ),
+            ));
+        }
         let method = object.get("method").and_then(Value::as_str);
         let Some(method) = method else {
             // A response from the client to a server request; this server sends none.
@@ -123,20 +216,25 @@ impl McpServer {
             ));
         }
         let Some(id) = id else {
-            // Notification: act on it if we care, never answer.
+            // Serial execution means cancellation is read only after the active
+            // request has completed: completed/unknown request IDs are ignored.
+            if method == "notifications/initialized" && self.legacy_version.is_some() {
+                self.initialized = true;
+            }
             eprintln!("hae-mcp: notification {method}");
             return None;
         };
-        let params = object.get("params").cloned().unwrap_or(Value::Null);
-        let outcome = match method {
-            "initialize" => Ok(initialize_result(&params)),
-            "ping" => Ok(json!({})),
-            "tools/list" => Ok(self.tools_list()),
-            "tools/call" => self.tools_call(&params),
-            other => Err(RpcError::new(
-                METHOD_NOT_FOUND,
-                format!("method not found: {other}"),
-            )),
+        let params = object.get("params").cloned().unwrap_or_else(|| json!({}));
+        let outcome = guarded(|| self.dispatch(method, &params));
+        let outcome = match outcome {
+            Ok(result) => result,
+            Err(error) => {
+                // An unwind may leave executor state uncertain. Fail closed for
+                // further work; retain ping/EOF so the client can restart cleanly.
+                self.faulted = true;
+                eprintln!("hae-mcp: request panicked; executor quarantined");
+                Err(error)
+            }
         };
         Some(match outcome {
             Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
@@ -144,7 +242,123 @@ impl McpServer {
         })
     }
 
-    fn tools_call(&mut self, params: &Value) -> Result<Value, RpcError> {
+    fn dispatch(&mut self, method: &str, params: &Value) -> Result<Value, RpcError> {
+        if !params.is_object() {
+            return Err(RpcError::new(INVALID_PARAMS, "params must be an object"));
+        }
+        if self.faulted && method != "ping" {
+            return Err(RpcError::new(
+                -32603,
+                "executor quarantined after panic; restart server",
+            ));
+        }
+        let metadata = params.get("_meta");
+        if metadata.is_some_and(|m| !m.is_object()) {
+            return Err(RpcError::new(INVALID_PARAMS, "_meta must be an object"));
+        }
+        let modern =
+            metadata.is_some_and(|m| m.get(VERSION_META).is_some()) || method == "server/discover";
+        if modern {
+            let requested = metadata
+                .and_then(|m| m.get(VERSION_META))
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    RpcError::new(
+                        INVALID_PARAMS,
+                        "modern request requires _meta protocolVersion",
+                    )
+                })?;
+            if requested != MODERN_VERSION {
+                return Err(RpcError {
+                    code: -32022,
+                    message: "Unsupported protocol version".into(),
+                    data: Some(json!({"supported":[MODERN_VERSION],"requested":requested})),
+                });
+            }
+            if !metadata
+                .and_then(|m| m.get(CAPS_META))
+                .is_some_and(Value::is_object)
+            {
+                return Err(RpcError::new(
+                    INVALID_PARAMS,
+                    "modern request requires _meta clientCapabilities object",
+                ));
+            }
+            if metadata
+                .and_then(|m| m.get("io.modelcontextprotocol/clientInfo"))
+                .is_some_and(|v| {
+                    !v.get("name").is_some_and(Value::is_string)
+                        || !v.get("version").is_some_and(Value::is_string)
+                })
+            {
+                return Err(RpcError::new(
+                    INVALID_PARAMS,
+                    "clientInfo needs string name and version",
+                ));
+            }
+        }
+        let mut result = match method {
+            "initialize" if !modern => {
+                if self.legacy_version.is_some() {
+                    return Err(RpcError::new(INVALID_REQUEST, "already initialized"));
+                }
+                let requested = params
+                    .get("protocolVersion")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        RpcError::new(INVALID_PARAMS, "initialize requires protocolVersion")
+                    })?;
+                if !params.get("capabilities").is_some_and(Value::is_object)
+                    || !params.get("clientInfo").is_some_and(Value::is_object)
+                {
+                    return Err(RpcError::new(
+                        INVALID_PARAMS,
+                        "initialize requires capabilities and clientInfo objects",
+                    ));
+                }
+                // initialize is a legacy handshake. Modern clients use _meta.
+                let version = if SUPPORTED_PROTOCOL_VERSIONS[1..].contains(&requested) {
+                    requested
+                } else {
+                    SUPPORTED_PROTOCOL_VERSIONS[1]
+                };
+                self.legacy_version = Some(version.to_owned());
+                initialize_result(version)
+            }
+            "ping" => json!({}),
+            "server/discover" if modern => json!({
+                "supportedVersions": SUPPORTED_PROTOCOL_VERSIONS,
+                "capabilities": capabilities(),
+                "instructions": descriptions::server_instructions(),
+            }),
+            "tools/list" | "tools/call" => {
+                if !modern && !self.initialized {
+                    return Err(RpcError::new(
+                        INVALID_REQUEST,
+                        "initialize and notifications/initialized required before tools requests",
+                    ));
+                }
+                if method == "tools/list" {
+                    self.tools_list_for(modern)
+                } else {
+                    self.tools_call(params, modern)?
+                }
+            }
+            other => {
+                return Err(RpcError::new(
+                    METHOD_NOT_FOUND,
+                    format!("method not found: {other}"),
+                ))
+            }
+        };
+        if modern {
+            result["resultType"] = json!("complete");
+            result["_meta"] = json!({ INFO_META: server_info() });
+        }
+        Ok(result)
+    }
+
+    fn tools_call(&mut self, params: &Value, modern: bool) -> Result<Value, RpcError> {
         let name = params
             .get("name")
             .and_then(Value::as_str)
@@ -156,7 +370,7 @@ impl McpServer {
             .cloned()
             .ok_or_else(|| RpcError::new(INVALID_PARAMS, format!("unknown tool: {name}")))?;
         let arguments = match params.get("arguments") {
-            None | Some(Value::Null) => Map::new(),
+            None => Map::new(),
             Some(Value::Object(map)) => map.clone(),
             Some(_) => {
                 return Err(RpcError::new(
@@ -165,7 +379,17 @@ impl McpServer {
                 ))
             }
         };
-        let response = self.run_tool(&descriptor, arguments);
+        let response = if modern
+            && descriptor.requires_document
+            && !arguments.get("documentId").is_some_and(Value::is_string)
+        {
+            self.invalid_tool(
+                &descriptor,
+                "modern calls require an explicit documentId".into(),
+            )
+        } else {
+            self.run_tool(&descriptor, arguments)
+        };
         if response.ok {
             eprintln!("hae-mcp: {} ok", descriptor.name);
         } else {
@@ -179,14 +403,10 @@ impl McpServer {
         Ok(tool_result(response))
     }
 
-    fn run_tool(
-        &mut self,
-        d: &CommandDescriptor,
-        mut args: Map<String, Value>,
-    ) -> ResponseEnvelope {
-        let invalid = |this: &Self, message: String| ResponseEnvelope {
+    fn invalid_tool(&self, d: &CommandDescriptor, message: String) -> ResponseEnvelope {
+        ResponseEnvelope {
             schema_version: 1,
-            session_id: this.executor.session_id().to_string(),
+            session_id: self.executor.session_id().to_string(),
             request_id: None,
             command: d.name.to_string(),
             ok: false,
@@ -197,14 +417,20 @@ impl McpServer {
                 Stage::Request,
                 message,
             )],
-        };
+        }
+    }
 
+    fn run_tool(
+        &mut self,
+        d: &CommandDescriptor,
+        mut args: Map<String, Value>,
+    ) -> ResponseEnvelope {
         let mut document_id = None;
         if d.requires_document {
             match args.remove("documentId") {
                 None | Some(Value::Null) => {}
                 Some(Value::String(id)) => document_id = Some(id),
-                Some(_) => return invalid(self, "documentId must be a string".to_string()),
+                Some(_) => return self.invalid_tool(d, "documentId must be a string".to_string()),
             }
             // A missing id means "the open document"; each connection has at most one.
             if document_id.is_none() {
@@ -218,8 +444,8 @@ impl McpServer {
                 Some(value) => match value.as_u64() {
                     Some(v) => expected_version = Some(v),
                     None => {
-                        return invalid(
-                            self,
+                        return self.invalid_tool(
+                            d,
                             "expectedVersion must be a non-negative integer".to_string(),
                         )
                     }
@@ -231,7 +457,7 @@ impl McpServer {
             match args.remove("dryRun") {
                 None | Some(Value::Null) => {}
                 Some(Value::Bool(flag)) => dry_run = flag,
-                Some(_) => return invalid(self, "dryRun must be a boolean".to_string()),
+                Some(_) => return self.invalid_tool(d, "dryRun must be a boolean".to_string()),
             }
         }
 
@@ -258,15 +484,31 @@ impl McpServer {
     }
 }
 
-fn initialize_result(params: &Value) -> Value {
-    let requested = params.get("protocolVersion").and_then(Value::as_str);
-    let version = requested
-        .filter(|v| SUPPORTED_PROTOCOL_VERSIONS.contains(v))
-        .unwrap_or(SUPPORTED_PROTOCOL_VERSIONS[0]);
+fn valid_id(id: &Value) -> bool {
+    id.is_string()
+        || id.as_number().is_some_and(|n| {
+            let raw = n.to_string();
+            let digits = raw.strip_prefix('-').unwrap_or(&raw);
+            !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+        })
+}
+
+fn guarded<T>(work: impl FnOnce() -> T) -> Result<T, RpcError> {
+    catch_unwind(AssertUnwindSafe(work))
+        .map_err(|_| RpcError::new(-32603, "internal request panic; restart server"))
+}
+
+fn server_info() -> Value {
+    json!({"name":"hae-mcp","version":env!("CARGO_PKG_VERSION")})
+}
+fn capabilities() -> Value {
+    json!({"tools":{"listChanged":false}})
+}
+fn initialize_result(version: &str) -> Value {
     json!({
         "protocolVersion": version,
-        "capabilities": { "tools": { "listChanged": false } },
-        "serverInfo": { "name": "hae-mcp", "version": env!("CARGO_PKG_VERSION") },
+        "capabilities": capabilities(),
+        "serverInfo": server_info(),
         "instructions": descriptions::server_instructions(),
     })
 }
@@ -331,15 +573,20 @@ pub fn input_schema(d: &CommandDescriptor) -> Value {
     if required.is_empty() {
         root.remove("required");
     }
+    portable_schema(&mut schema);
     schema
 }
 
 fn rpc_error(id: &Value, error: &RpcError) -> Value {
-    json!({
+    let mut result = json!({
         "jsonrpc": "2.0",
         "id": id,
         "error": { "code": error.code, "message": error.message },
-    })
+    });
+    if let Some(data) = &error.data {
+        result["error"]["data"] = data.clone();
+    }
+    result
 }
 
 fn tool_result(mut response: ResponseEnvelope) -> Value {
@@ -351,6 +598,7 @@ fn tool_result(mut response: ResponseEnvelope) -> Value {
     json!({
         "content": [{ "type": "text", "text": text }],
         "isError": !response.ok,
+        "structuredContent": serde_json::to_value(&response).unwrap_or_else(|_| json!({})),
     })
 }
 
@@ -363,7 +611,7 @@ fn write_line<W: Write>(out: &mut W, value: &Value) -> io::Result<()> {
             .pointer("/result/content/0/text")
             .and_then(Value::as_str)
             .and_then(|s| serde_json::from_str::<ResponseEnvelope>(s).ok());
-        let limited = if let Some(response) = inner {
+        let mut limited = if let Some(response) = inner {
             json!({ "jsonrpc": "2.0", "id": value.get("id").unwrap_or(&Value::Null),
                 "result": tool_result(response_too_large(&response, text.len())) })
         } else {
@@ -375,6 +623,10 @@ fn write_line<W: Write>(out: &mut W, value: &Value) -> io::Result<()> {
                 ),
             )
         };
+        if value.pointer("/result/resultType").is_some() && limited.get("result").is_some() {
+            limited["result"]["resultType"] = json!("complete");
+            limited["result"]["_meta"] = value["result"]["_meta"].clone();
+        }
         text = serde_json::to_string(&limited).unwrap_or_default();
         if text.len() > MAX_RESPONSE_BYTES {
             return Err(io::Error::new(
@@ -414,5 +666,16 @@ pub fn serve<R: BufRead, W: Write>(
         if let Some(reply) = reply {
             write_line(out, &reply)?;
         }
+    }
+}
+
+#[cfg(test)]
+mod panic_tests {
+    use super::*;
+    #[test]
+    fn forced_unwind_becomes_internal_error() {
+        let result = guarded(|| panic!("synthetic handler panic"));
+        assert_eq!(result.unwrap_err().code, -32603);
+        assert!(guarded(|| 42).is_ok());
     }
 }

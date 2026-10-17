@@ -17,7 +17,7 @@ fn initialize_ping_and_tools_list_cover_every_registry_command() {
         json!({ "protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": {} }),
     );
     // An unknown requested version is answered with one the server supports.
-    assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
+    assert_eq!(init["result"]["protocolVersion"], "2025-11-25");
     assert_eq!(init["result"]["serverInfo"]["name"], "hae-mcp");
     assert!(init["result"]["capabilities"]["tools"].is_object());
 

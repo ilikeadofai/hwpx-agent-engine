@@ -50,7 +50,11 @@ cargo build --release
 ```text
 HWPX document engine MCP server (stdio, JSON-RPC 2.0, one message per line)
 
-Usage: hae-mcp [OPTIONS]
+Usage: hae-mcp [OPTIONS] [COMMAND]
+
+Commands:
+  doctor  Check preview executables, font directory and input/output roots; print JSON
+  help    Print help
 
 Options:
       --input-root <INPUT_ROOT>    Root directory for HWPX/image inputs (must already exist) [default: /tmp]
@@ -80,7 +84,7 @@ Preview environment (used by document.preview):
 
 ### MCP 설정 JSON 예시 (`hae-mcp`)
 
-사용 중인 MCP 클라이언트(예: Claude Desktop 설정 파일이나 Codex/에디터의 MCP 설정)에 아래와 같이 `command`, `args`, `env`를 등록합니다. 입출력 폴더는 미리 만들어 두고 본인의 환경에 맞는 절대 경로로 바꾸어 주세요.
+Claude Desktop처럼 `mcpServers` 형식을 쓰는 MCP 클라이언트에 아래와 같이 `command`, `args`, `env`를 등록합니다. 입출력 폴더는 미리 만들어 두고 본인의 환경에 맞는 절대 경로로 바꾸어 주세요.
 
 ```json
 {
@@ -105,6 +109,99 @@ Preview environment (used by document.preview):
 ```
 
 > **팁**: 프로젝트 파일(`.hwpwork`)을 저장했다가 나중에 다시 열려면 `--input-root`와 `--output-root`를 모두 지정해 두는 것이 편리합니다. 엔진은 이 두 폴더 바깥의 문서 파일에는 절대 접근하지 않습니다.
+
+### 설치·환경 점검
+
+별도 설치 폴더를 쓰려면 release 빌드 뒤 `hae-mcp`와 `hae-raster`를 같은 폴더에 복사합니다. 다음은 사용자 폴더에 설치하는 명령 예시입니다.
+
+```bash
+cargo build --release --locked -p hae-mcp -p hae-render-rhwp
+install -Dm755 target/release/hae-mcp "$HOME/.local/bin/hae-mcp"
+install -Dm755 target/release/hae-raster "$HOME/.local/bin/hae-raster"
+hae-mcp --version
+HAE_RHWP=/opt/rhwp/bin/rhwp hae-mcp doctor \
+  --input-root /home/user/Documents/hwpx-inputs \
+  --output-root /home/user/Documents/hwpx-outputs
+```
+
+`doctor`는 실행 파일·폴더·입출력 권한을 JSON으로 보고합니다. 모두 정상이면 종료 0, 빠진 항목이 있으면 1입니다. 렌더러가 없어도 조회·편집·내보내기는 쓸 수 있습니다. doctor는 렌더러나 한컴을 실행하지 않으므로 sandbox·한글 글꼴·실제 조판은 미리보기와 화면 확인으로 검증합니다.
+
+### Claude Code·Codex·opencode·Inspector 연결
+
+아래는 사용자가 선택해 적용하는 예시입니다. 이 작업에서는 전역 설정을 변경하지 않았습니다. 실행 파일과 입출력 폴더의 절대 경로를 본인 환경에 맞게 바꾸세요.
+
+Claude Code의 프로젝트 범위 등록([공식 안내](https://code.claude.com/docs/en/mcp)):
+
+```bash
+claude mcp add --scope project --transport stdio hwpx-engine \
+  -e HAE_RHWP=/opt/rhwp/bin/rhwp -e HAE_FONT_DIR=/usr/share/fonts \
+  -- /home/user/.local/bin/hae-mcp \
+  --input-root /home/user/Documents/hwpx-inputs \
+  --output-root /home/user/Documents/hwpx-outputs
+```
+
+Codex CLI 등록 명령([공식 OpenAI 안내](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)):
+
+```bash
+codex mcp add hwpx-engine \
+  --env HAE_RHWP=/opt/rhwp/bin/rhwp --env HAE_FONT_DIR=/usr/share/fonts \
+  -- /home/user/.local/bin/hae-mcp \
+  --input-root /home/user/Documents/hwpx-inputs \
+  --output-root /home/user/Documents/hwpx-outputs
+```
+
+Codex에서 프로젝트 설정 파일을 직접 관리할 경우 `.codex/config.toml` 예시는 다음과 같습니다. 위 CLI 등록과 이 파일 예시 중 하나를 선택합니다.
+
+```toml
+[mcp_servers.hwpx-engine]
+command = "/home/user/.local/bin/hae-mcp"
+args = ["--input-root", "/home/user/Documents/hwpx-inputs", "--output-root", "/home/user/Documents/hwpx-outputs"]
+startup_timeout_sec = 10
+tool_timeout_sec = 120
+
+[mcp_servers.hwpx-engine.env]
+HAE_RHWP = "/opt/rhwp/bin/rhwp"
+HAE_FONT_DIR = "/usr/share/fonts"
+```
+
+opencode는 프로젝트의 `opencode.json`에 local 서버를 지정합니다([공식 안내](https://opencode.ai/docs/mcp-servers/)).
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "hwpx-engine": {
+      "type": "local",
+      "command": ["/home/user/.local/bin/hae-mcp", "--input-root", "/home/user/Documents/hwpx-inputs", "--output-root", "/home/user/Documents/hwpx-outputs"],
+      "environment": {"HAE_RHWP": "/opt/rhwp/bin/rhwp", "HAE_FONT_DIR": "/usr/share/fonts"},
+      "enabled": true
+    }
+  }
+}
+```
+
+Inspector CLI는 전역 설치 없이 실제 서버의 도구 목록과 strict 스키마를 확인할 수 있습니다.
+
+```bash
+npx -y @modelcontextprotocol/inspector --cli /home/user/.local/bin/hae-mcp \
+  --input-root /home/user/Documents/hwpx-inputs \
+  --output-root /home/user/Documents/hwpx-outputs \
+  --method tools/list --strict
+npx -y @modelcontextprotocol/inspector --cli /home/user/.local/bin/hae-mcp \
+  --input-root /home/user/Documents/hwpx-inputs \
+  --output-root /home/user/Documents/hwpx-outputs \
+  --method tools/call --tool-name command_describe --tool-arg command=text.replace
+```
+
+`--strict`는 tools/list에서만 사용합니다. Inspector CLI는 실행마다 새 서버를 띄우므로 문서 열기 후 다른 CLI 호출에서 이어 편집할 수 없습니다. 연속 편집은 한 클라이언트 세션에서 실행합니다. Claude Code·Codex·opencode 예시는 연결 방법이며 해당 에이전트의 실제 세션 시험(M3) 결과와 구분합니다.
+
+### 프로토콜·오류·응답 규칙
+
+기존 클라이언트는 initialize → notifications/initialized 뒤 도구를 호출합니다(2025-11-25·2025-06-18·2025-03-26·2024-11-05). 초기화 전 도구 요청은 거절하고 ping은 허용합니다. 2026-07-28 클라이언트는 요청별 `_meta`에 버전과 clientCapabilities를 넣으며, 선택적으로 server/discover로 지원 버전을 확인합니다. 현대식 문서 도구에는 documentId가 필수입니다. 이 핸들은 문서 닫기 또는 서버 종료까지 유효합니다.
+
+모든 도구는 outputSchema·4종 annotations를 제공하며, structuredContent는 content[0].text의 JSON 봉투와 같습니다. 잘못된 JSON·메서드·tools/call 외형은 JSON-RPC error, 알려진 도구의 입력 값·업무 오류는 isError:true와 diagnostics로 반환합니다. 상세 리비전 근거와 시간 상한 판단은 [M1·M2 기록](decisions/mcp-m1-m2-2026-10-18.md)을 참고하세요.
+
+요청은 순차 처리하며 실행 도중 선점 취소와 전체 요청의 강제 시간 상한은 없습니다. 렌더러 한도는 기본 60초입니다. 클라이언트 대기 시간이 지난 경우 결과가 불명확할 수 있으므로, 프로세스 재시작 후 저장본을 열어 확인합니다. 내부 panic은 -32603을 반환하고 다음 편집은 차단하므로 서버를 재시작해야 합니다.
 
 ### CLI(`hae`) 및 JSON-lines(`hae-jsonl`) 실행 예시
 

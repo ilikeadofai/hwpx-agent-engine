@@ -30,8 +30,8 @@
 | 단계 | 내용 | 담당 | 상태 |
 |---|---|---|---|
 | M0 | 현황 감사: MCP 명세 대비 빠진 것 목록, Inspector CLI 실제 실행 결과 | Haiku 5.5 또는 GPT 6 Luna(max) | 완료 — [감사 결과](../../decisions/mcp-audit-m0-2026-10-18.md) |
-| M1 | 프로토콜·견고성 구현(1·2) | GPT 6.1 Sol(한도 시 Sonnet 5.5) | 대기 |
-| M2 | 배포·doctor·버전(4), 안내서 문구 | Sol 또는 Sonnet / 문구 Gemini 4 Argon | 대기 |
+| M1 | 프로토콜·견고성 구현(1·2) | GPT 6.1 Sol(한도 시 Sonnet 5.5) | 완료 — Rust 310·stdio 회귀 9/9·Inspector strict 0/0 |
+| M2 | 배포·doctor·버전(4), 안내서 문구 | Sol 또는 Sonnet / 문구 Gemini 4 Argon | 완료 — release 빌드·doctor 6/6·연결 예시 |
 | M3 | 실제 클라이언트 연결 시험(3) | Haiku 5.5 또는 Luna(max) | 대기 |
 | M4 | 독립 검증(게이트 재실행·반례) | 구현자와 다른 모델 | 대기 |
 
@@ -70,3 +70,9 @@
 ## 기록
 
 - 2026-10-18 04:2x: 계획 작성. 0.2 독립 검증(Sonnet)은 진행 중이다. Codex는 한도 상태(04:53경 해제)이고, Claude 5시간 사용률은 9%.
+
+- 2026-10-18, Sol 구현: 작업 A를 `32407a4`로 커밋했다. 총괄의 M0 감사·이 계획 문서를 첫 커밋에 포함했다. A 고정 소스 게이트는 check.sh 종료 0/Rust 298, oracle 98, MCP 146/146, editable_documents 3/3이다. 사용자 문서 속성은 시도 98·성공/Undo 92·필드 경계 거절 6(개체 문단 거절 5·셀 거절 1)으로 정정했고, 단계 4 성공 18 중 셀 9건은 paragraphs 적응 요청으로 분리했다. 첫 문단만 새 text로 바꾸고 나머지 텍스트를 유지하는 재시도도 같은 18/6/제외 1 결과였다. Linux 한컴에서 구역 첫 위치 삽입을 화면 확인했다.
+- 2026-10-18, Sol 구현: M1·M2 소스 구현 완료. 최신 리비전은 initialize 목록 추가로 끝내지 않고 현대식 요청 메타데이터·server/discover로 구현했다. 2025-03-26만의 batch 수신, id/알림/응답 예산 회귀까지 실제 stdio 시험 9개가 통과했다. Inspector release strict는 22개 도구 오류 0·경고 0, 별도 JSON Schema 검증은 전체 22개 응답 및 E2E 응답 97개 통과다. 요청 전체 강제 timeout과 선점 취소는 동기 executor의 commit/publish 안전성 때문에 보류하는 판단을 [M1·M2 기록](../../decisions/mcp-m1-m2-2026-10-18.md)에 남겼다. M3 실제 에이전트 세션·M4 독립 검증은 대기이며 Windows 확인은 최종 단계 원칙을 유지한다. push·main 반영·전역 클라이언트 설정 변경은 하지 않았다.
+- 중간 재개 지점(아래 최종 기록으로 대체): A 마지막 커밋은 `32407a4`. B 코드는 staged 상태로 고정했고 `/tmp/hae-task-b-frozen-check.log`의 전체 게이트가 진행 중이다. oracle 98/MCP 146/146/Inspector 0·0/doctor 6·6/release는 이미 통과했다. 전체 게이트 종료 코드와 Rust 합계를 확인한 뒤 이 기록과 M1 상태를 완료로 갱신하고 B를 커밋하면 된다. 코드는 최종 검증 중 변경하지 않는다.
+
+- 최종 기록(2026-10-18): 고정 소스 `bash scripts/check.sh` 종료 0, Rust **310개** 통과. oracle **98개**, MCP E2E **146/146**, editable_documents **3/3**, 실제 stdio 적합성 **9/9**, release Inspector strict **오류 0·경고 0**, doctor **6/6**, release build 종료 0이다. M1·M2를 완료로 갱신했다. 이 기록을 포함한 B 커밋 제목은 `feat: complete MCP protocol support and deployment diagnostics`이며 A 커밋은 `32407a4`다. 상세 근거·프로토콜 리비전 URL·panic/timeout/취소 판단은 [M1·M2 구현 기록](../../decisions/mcp-m1-m2-2026-10-18.md)에 있다. 남은 일은 M3 실제 에이전트 연결과 M4 독립 검증이며 담당 총괄이 이어 간다. push·main 반영 없음.

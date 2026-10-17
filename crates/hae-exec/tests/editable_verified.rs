@@ -775,3 +775,22 @@ fn preserve_only_edits_advertise_required_controls() {
     let r = exec.call("text.replace", json!({"target":item["nodeId"],"range":{"start":0,"end":1},"text":"T","controls":"preserve"}), Some(0), true);
     assert!(r.ok, "{:?}", r.diagnostics);
 }
+
+#[test]
+fn preserve_required_for_replace_mode_with_only_insertion_spans() {
+    let h = Harness::new();
+    let mut exec = h.open(&synthetic(&p("<hp:equation/><hp:t/>")));
+    let item = paragraphs(&mut exec).remove(0);
+    assert_eq!(
+        item["edits"]["text.replace"]["modes"],
+        json!(["replace", "insert"])
+    );
+    assert_eq!(
+        item["edits"]["text.replace"]["requires"],
+        json!({"controls":"preserve"})
+    );
+    for (start, end) in [(0, 1), (0, 0), (1, 1)] {
+        let r = exec.call("text.replace", json!({"target":item["nodeId"],"range":{"start":start,"end":end},"text":"T","controls":"preserve"}), Some(0), true);
+        assert!(r.ok, "{:?}", r.diagnostics);
+    }
+}
