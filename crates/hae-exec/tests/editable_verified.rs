@@ -568,3 +568,66 @@ fn v02_all_advertised_insertion_boundaries_survive_save_gate() {
         }
     }
 }
+
+#[test]
+fn v02_cell_intent_preserves_command_identity_and_paragraph_expectations() {
+    for multiple in [false, true] {
+        let body = if multiple {
+            cell("<hp:t>old</hp:t>").replace(
+                "</hp:subList>",
+                &format!("{}</hp:subList>", p("<hp:t>second</hp:t>")),
+            )
+        } else {
+            cell("<hp:t>old</hp:t>")
+        };
+        let h = Harness::new();
+        let mut exec = h.open(&synthetic(&body));
+        let c = query(&mut exec, "element.query", json!({"kind":"cell"}))["matches"][0].clone();
+        let params = if multiple {
+            json!({"target":c["nodeId"],"paragraphs":["NEW","NEXT"]})
+        } else {
+            json!({"target":c["nodeId"],"text":"NEW"})
+        };
+        let r = exec.call("cell.setText", params, Some(0), false);
+        assert!(r.ok);
+        let intents = &r.result.unwrap()["intents"];
+        assert_eq!(intents.as_array().unwrap().len(), 1);
+        assert_eq!(intents[0]["op"], "cell.setText");
+        if multiple {
+            assert_eq!(intents[0]["expectedParagraphs"], json!(["NEW", "NEXT"]));
+        } else {
+            assert_eq!(intents[0]["expectedText"], "NEW");
+        }
+    }
+}
+
+#[test]
+fn v02_preserve_does_not_skip_first_empty_fragment_with_unknown_attributes() {
+    let body = p("<hp:equation/><hp:t xmlns:x=\"urn:x\" x:opaque=\"v\"/><hp:t/>");
+    let h = Harness::new();
+    let mut exec = h.open(&synthetic(&body));
+    let item = paragraphs(&mut exec).remove(0);
+    assert_eq!(item["edits"]["text.replace"]["available"], false);
+    let r=exec.call("text.replace",json!({"target":item["nodeId"],"range":{"start":0,"end":1},"text":"X","controls":"preserve"}),Some(0),false);
+    assert!(!r.ok);
+    assert_eq!(
+        r.diagnostics[0].code,
+        hae_diag::Code::UnsupportedContentInRange
+    );
+}
+
+#[test]
+fn v02_cell_reports_preserve_only_child_paragraph_availability() {
+    let h = Harness::new();
+    let mut exec = h.open(&synthetic(&cell("<hp:equation/><hp:t/>")));
+    let c = query(&mut exec, "element.query", json!({"kind":"cell"}))["matches"][0].clone();
+    assert_eq!(c["childParagraphsEditable"], true);
+    assert_eq!(c["edits"]["cell.setText"]["available"], true);
+    let r = exec.call(
+        "cell.setText",
+        json!({"target":c["nodeId"],"text":"NEW","controls":"preserve"}),
+        Some(0),
+        true,
+    );
+    assert!(r.ok);
+}

@@ -262,20 +262,23 @@ impl ParaText {
                 _ => return false,
             }
         }
-        text || doc
-            .el(self.para)
+        if text {
+            return true;
+        }
+        // The first empty fragment is authoritative; do not bypass unknown
+        // attributes by silently choosing a later run/shape.
+        doc.el(self.para)
             .children
             .iter()
             .copied()
             .filter(|&r| is_hp(doc.el(r).ns.as_deref()) && doc.el(r).local == "run")
-            .any(|r| {
-                doc.el(r).children.iter().any(|&t| {
-                    is_hp(doc.el(t).ns.as_deref())
-                        && doc.el(t).local == "t"
-                        && doc.el(t).items.is_empty()
-                        && text_element_supported(doc, t)
-                })
+            .flat_map(|r| doc.el(r).children.iter().copied())
+            .find(|&t| {
+                is_hp(doc.el(t).ns.as_deref())
+                    && doc.el(t).local == "t"
+                    && doc.el(t).items.is_empty()
             })
+            .is_some_and(|t| text_element_supported(doc, t))
     }
 
     pub fn empty_insert_reason(&self, doc: &XmlDoc) -> Option<&'static str> {

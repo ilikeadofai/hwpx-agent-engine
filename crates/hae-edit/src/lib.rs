@@ -80,6 +80,13 @@ pub enum Intent {
         #[serde(rename = "expectedText")]
         expected_text: String,
     },
+    #[serde(rename = "cell.setText")]
+    CellSetParagraphs {
+        entry: String,
+        path: Vec<usize>,
+        #[serde(rename = "expectedParagraphs")]
+        expected_paragraphs: Vec<String>,
+    },
     #[serde(rename = "paragraph.format")]
     ParagraphFormat {
         entry: String,

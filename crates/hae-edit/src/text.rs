@@ -186,7 +186,6 @@ fn plan_replace(
                     && doc.el(t).items.is_empty()
                     && cps.start <= cp
                     && cp <= cps.end
-                    && hae_model::para::text_element_supported(doc, t)
                 {
                     empty.get_or_insert(t);
                 }
@@ -203,6 +202,14 @@ fn plan_replace(
             }
         }
         if let Some(t) = empty {
+            if !hae_model::para::text_element_supported(doc, t) {
+                return Err(EngineError::new(
+                    Code::UnsupportedContentInRange,
+                    Stage::Validate,
+                    "first empty text fragment has opaque attributes",
+                )
+                .with_target(&para.id));
+            }
             let el = doc.el(t);
             let cut = if el.end.is_some() {
                 (el.inner(), escape_text(new).into_bytes())
@@ -613,6 +620,7 @@ pub(crate) fn cell_set_text(
     for value in &values {
         check_new_text(value)?;
     }
+    let intent_start = d.intents.len();
     for (id, value) in paras.iter().zip(values) {
         let para = d.node(id, Some(Kind::Paragraph))?;
         let pt = d.doc.para_text(&para)?;
@@ -620,6 +628,29 @@ pub(crate) fn cell_set_text(
             continue;
         }
         text_replace(d, id, 0..pt.grapheme_len(), value, preserve)?;
+    }
+    if d.intents.len() > intent_start {
+        let c = d.doc.require(target, Some(Kind::Cell))?;
+        let entry = c.entry.clone();
+        let path = d.doc.doc_of(c).path(c.el);
+        let expected: Vec<_> = paras
+            .iter()
+            .map(|id| d.doc.para_text(d.doc.node(id).unwrap()).map(|p| p.text))
+            .collect::<Result<_>>()?;
+        d.intents.truncate(intent_start);
+        d.intents.push(if expected.len() == 1 {
+            Intent::CellSetText {
+                entry,
+                path,
+                expected_text: expected.into_iter().next().unwrap(),
+            }
+        } else {
+            Intent::CellSetParagraphs {
+                entry,
+                path,
+                expected_paragraphs: expected,
+            }
+        });
     }
     d.changed.push(target.to_string());
     Ok(())

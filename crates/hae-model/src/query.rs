@@ -617,9 +617,12 @@ impl Document {
             text_spans: (n.kind == Kind::Paragraph).then_some(spans.text_spans),
             text_spans_truncated: (n.kind == Kind::Paragraph).then_some(spans.text_spans_truncated),
             child_paragraphs_editable: (n.kind == Kind::Cell).then(|| {
-                self.children_deep(n, Kind::Paragraph)
-                    .iter()
-                    .any(|p| !self.paragraph_text_spans(p).text_spans.is_empty())
+                self.children_deep(n, Kind::Paragraph).iter().any(|p| {
+                    self.check_editable(p).is_ok()
+                        && self
+                            .text_replace_reason(p, &self.paragraph_text_spans(p))
+                            .is_none()
+                })
             }),
             not_editable_reason: block,
         }
