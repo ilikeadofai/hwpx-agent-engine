@@ -38,7 +38,7 @@
       "category": "text",
       "expect": "accept",
       "notes": "한 문단이 서로 다른 글자 모양의 run 3개로 나뉜 경우. 범위가 run 경계를 지날 때 첫 글자 run 의 모양을 쓰고 나머지는 FORMAT_COLLAPSED 로 보고한다. 범위 밖 run 은 남기고 비게 된 hp:t 도 지우거나 합치지 않는다.",
-      "bytes": 1432,
+      "bytes": 2351,
       "structure": {
         "entry": "Contents/section0.xml",
         "paragraphs": [
@@ -129,7 +129,7 @@
       "category": "text",
       "expect": "accept",
       "notes": "NFC 한 글자(가 U+AC00) 문단과 NFD 자모 두 코드포인트(ᄀ U+1100 + ᅡ U+1161) 문단. 원문을 정규화하지 않고 코드포인트로 일치시킨다. NFD 자모 하나만 찾으면 자소 경계 밖이라 unalignedMatches 로만 센다.",
-      "bytes": 1438,
+      "bytes": 2357,
       "structure": {
         "entry": "Contents/section0.xml",
         "paragraphs": [
@@ -232,7 +232,7 @@
       "category": "text",
       "expect": "accept",
       "notes": "e(run0) + U+0301 결합 악센트(run1) 로 자소 군집 하나가 run 경계를 지난다. 마찬가지로 한 run 안의 a + U+0301 도 자소 하나다. 자소 [0,1) 은 코드포인트 0..2 를 덮는다.",
-      "bytes": 1433,
+      "bytes": 2352,
       "structure": {
         "entry": "Contents/section0.xml",
         "paragraphs": [
@@ -290,7 +290,7 @@
       "category": "text",
       "expect": "accept",
       "notes": "ZWJ 이모지(👨‍👩)가 run0(👨+ZWJ) / run1(👩) 로 나뉜 문단과 한 run 의 가족 이모지. UAX#29 GB11 로 각각 자소 하나다. ZWJ(U+200D) 단독 검색은 자소 경계 밖이다.",
-      "bytes": 1451,
+      "bytes": 2370,
       "structure": {
         "entry": "Contents/section0.xml",
         "paragraphs": [
@@ -360,7 +360,7 @@
       "category": "text",
       "expect": "accept",
       "notes": "한 run 에 16진 문자 참조(&#xAC00;), &amp;, &lt;, CDATA(<![CDATA[ <raw> & ]]>), 일반 텍스트가 섞여 있다. 텍스트는 해석해 보여 주되 원문 표기는 보관한다. 참조 한 글자를 범위로 덮으면 참조 전체를, CDATA 안을 덮으면 CDATA 경계를 쪼개고 새 텍스트만 이스케이프한다.",
-      "bytes": 1464,
+      "bytes": 2383,
       "structure": {
         "entry": "Contents/section0.xml",
         "paragraphs": [
@@ -440,7 +440,7 @@
       "category": "text",
       "expect": "accept",
       "notes": "탭·줄바꿈(hp:tab·hp:lineBreak), 필드(hp:fieldBegin), 공백(hp:fwSpace)이 텍스트 사이에 있다. 범위가 탭·줄바꿈·필드를 지나면 RANGE_CROSSES_CONTROL, hp:t 안의 fwSpace 같은 다른 자식을 지나면 UNSUPPORTED_CONTENT_IN_RANGE, 새 텍스트에 탭·줄바꿈이 있으면 INVALID_REQUEST.",
-      "bytes": 1470,
+      "bytes": 2389,
       "structure": {
         "entry": "Contents/section0.xml",
         "paragraphs": [
@@ -606,7 +606,7 @@
       "category": "structure",
       "expect": "accept",
       "notes": "구역 두 개(Contents/section0.xml, Contents/section1.xml). 구역 번호는 content.hpf spine 순서를 따른다. 한 구역을 고쳐도 다른 구역 항목은 바뀌지 않아야 한다.",
-      "bytes": 1771,
+      "bytes": 2690,
       "structure": {
         "spine": [
           "Contents/header.xml",
@@ -679,7 +679,7 @@
       "category": "table",
       "expect": "accept",
       "notes": "1행 2열 표. (0,0) 셀은 문단 하나에 텍스트, (0,1) 셀은 빈 문단(run 안 자기닫힘 hp:t). cell.setText 는 문단 하나인 셀만 바꾸며, 빈 셀은 첫 run 에 텍스트를 넣는다.",
-      "bytes": 1510,
+      "bytes": 2429,
       "structure": {
         "entry": "Contents/section0.xml",
         "tables": [
@@ -783,7 +783,7 @@
       "category": "table",
       "expect": "accept",
       "notes": "2행 2열 표에서 (0,0) 이 rowSpan=2 로 병합되어 (1,0) 주소가 비어 있다. 병합 셀은 조회·보존 대상이며 cell.setText 는 UNSUPPORTED(merged_cell). (row,col) 조회는 병합 영역 전체를 덮는 셀을 돌려준다.",
-      "bytes": 1540,
+      "bytes": 2459,
       "structure": {
         "entry": "Contents/section0.xml",
         "tables": [
@@ -880,7 +880,7 @@
       "category": "table",
       "expect": "accept",
       "notes": "1행 2열 표. (0,0) 은 문단 하나, (0,1) 은 문단 둘. cell.setText 는 문단이 둘 이상인 셀을 UNSUPPORTED(cell_paragraph_count) 로 거절한다. 조회 텍스트는 셀 문단들을 '\\n' 로 잇는다.",
-      "bytes": 1529,
+      "bytes": 2448,
       "structure": {
         "entry": "Contents/section0.xml",
         "tables": [
@@ -962,7 +962,7 @@
       "category": "table",
       "expect": "accept",
       "notes": "바깥 표의 한 셀 안에 문단과 중첩 표가 있다. 중첩 표를 담은 셀은 cell.setText 를 UNSUPPORTED(nested_table) 로 거절한다. (table,row,col) 조회는 가장 가까운 표 조상을 기준으로 하므로 바깥 표 조회에 안쪽 셀이 섞이지 않는다.",
-      "bytes": 1517,
+      "bytes": 2436,
       "structure": {
         "entry": "Contents/section0.xml",
         "tables": [
@@ -1064,7 +1064,7 @@
       "category": "opaque",
       "expect": "accept",
       "notes": "외부 namespace(urn:example:opaque) 요소 x:reference 가 hp:p id=7 을, x:inline 이 문단 id=10 을 참조/포함한다. 해석 불가 요소는 수용하되 그 대상을 잠근다(각각 opaque_reference:<nodeId>, contains_opaque). hp:t 의 x:keep 같은 미해석 속성은 그 hp:t 를 덮는 text.replace 를 UNSUPPORTED_CONTENT_IN_RANGE 로 거절한다. 해석 불가 요소가 있다고 문서 전체가 읽기 전용이 되지는 않는다.",
-      "bytes": 1516,
+      "bytes": 2435,
       "structure": {
         "entry": "Contents/section0.xml",
         "paragraphs": [
@@ -1191,7 +1191,7 @@
       "category": "media",
       "expect": "accept",
       "notes": "그림 3개가 미디어 2개를 공유한다(그림0·그림1 -> image1, 그림2 -> image2). image.replace 는 대상 그림의 참조만 새 미디어 항목으로 바꾸므로 공유하던 다른 그림과 원래 BinData 는 그대로 남는다.",
-      "bytes": 2394,
+      "bytes": 3313,
       "structure": {
         "entry": "Contents/section0.xml",
         "pictures": [
@@ -1288,7 +1288,7 @@
       "category": "media",
       "expect": "accept",
       "notes": "그림0 은 imgClip left=10 으로 잘려 있고, 그림1 은 클립(0,0,1440,720)이 그림 크기와 같아 자르기로 보지 않는다. 자르기가 있는 그림은 image.replace 를 UNSUPPORTED(cropped) 로 거절한다.",
-      "bytes": 2190,
+      "bytes": 3109,
       "structure": {
         "entry": "Contents/section0.xml",
         "pictures": [
@@ -1349,7 +1349,7 @@
       "category": "media",
       "expect": "accept",
       "notes": "그림0 은 hp:effects(glow), 그림1 은 hc:img effect=GRAY_SCALE, 그림2 는 bright=5 로 효과가 있다. 효과가 있는 그림은 image.replace 를 UNSUPPORTED(effects) 로 거절한다. 그림3 은 효과가 없어 바꿀 수 있다.",
-      "bytes": 2241,
+      "bytes": 3160,
       "structure": {
         "entry": "Contents/section0.xml",
         "pictures": [
@@ -1444,7 +1444,7 @@
       "category": "object",
       "expect": "accept",
       "notes": "문단 안에 hp:equation(수식)이 있다. 0.1 은 수식을 조회·보존만 하고 편집하지 않는다(조회 결과 editable=false, equation_edit_unsupported). 수식을 지나는 text.replace 는 RANGE_CROSSES_CONTROL, 그 앞 텍스트만 덮으면 적용된다.",
-      "bytes": 1468,
+      "bytes": 2387,
       "structure": {
         "entry": "Contents/section0.xml",
         "paragraphs": [
@@ -1515,7 +1515,7 @@
       "category": "format",
       "expect": "accept",
       "notes": "문단 3개가 모두 paraPrIDRef=0 을 쓴다. 헤더 paraPr 에는 해석 불가 속성(x:keep)과 자식(x:untouched)이 있다. paragraph.format 은 문단 모양을 복제할 때 이런 원문을 그대로 옮기고, 같은 값의 모양이 이미 있으면 새로 만들지 않고 재사용한다(resourceChanges action=reused).",
-      "bytes": 1579,
+      "bytes": 2140,
       "structure": {
         "entry": "Contents/section0.xml",
         "header": "Contents/header.xml",

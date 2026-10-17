@@ -10,9 +10,17 @@ HWPX 엔진 0.1 시험 자료 2차(**구현 계획 1-2b**). 편집 경계 자료
 - 전부 **합성**이다. 개인 문서·제3자 자산을 쓰지 않는다. 교체용 이미지는 이 합성기가
   직접 만든 바이트(JPEG 는 자체 생성 1x1 grayscale)다.
 - 패키지 골격(mimetype STORED 첫 항목, `META-INF/container.xml`·`Contents/content.hpf`·
-  `Contents/header.xml`·`Contents/section0.xml` 배치)은
-  `tests/fixtures/adversarial/valid_base.hwpx` 에서 그대로 가져오고 사례마다 구역·manifest·
-  미디어만 바꾼다. 그 파일과 나머지 시험 자료는 수정하지 않는다.
+  `Contents/section0.xml` 배치)은 `tests/fixtures/adversarial/valid_base.hwpx` 에서 그대로
+  가져오고 사례마다 구역·manifest·미디어만 바꾼다. 그 파일과 나머지 시험 자료는 수정하지 않는다.
+- `Contents/header.xml` 만은 골격을 그대로 쓰지 않고 **합성기가 최소·정확한 기본 머리말**을
+  만든다. 실제 HWPX 처럼 `fontfaces`, `borderFills`(id=1), `charProperties`(id=0..3),
+  `paraProperties`(`paraPr id=0`, 정렬 + 퍼센트 줄간격)를 정의해 구역의
+  `paraPrIDRef="0"`·`charPrIDRef`·`borderFillIDRef="1"` 참조가 모두 풀리게 한다. 빈
+  `refList` 로 두면 `hae-verify` 가 `unresolved paraPrIDRef: 0` 으로 거절해 CLI/MCP
+  편집이 막힌다(직접 `hae-edit` 단위 시험만 통과하던 틈). 모양 근거는
+  `tests/fixtures/corpus/bodojaryo-reference.hwpx` 와 공개 모델 `OWPML/Class/Head` 이며
+  한컴 바이트를 그대로 옮기지 않는다. 예외로 `para_format.hwpx` 는 문단 모양 복제를
+  시험하므로 해석 불가 속성(`x:keep`)·자식(`x:untouched`)을 가진 `paraPr` 를 그대로 쓴다.
 - 무작위 `nodeId`(설계서 §5) 때문에 기대표의 대상은 ID 가 아니라 **구조 선택자**로 적는다.
 - 실제 엔진으로 결과를 확인했지만, 이 자료의 확정 주체는 총괄이며 `expected.json` 이 계약이다.
 
@@ -20,8 +28,8 @@ HWPX 엔진 0.1 시험 자료 2차(**구현 계획 1-2b**). 편집 경계 자료
 
 | 경로 | 내용 |
 |---|---|
-| `gen_editing.py` | 합성기(Python 3 표준 라이브러리 전용, 결정적). 사례마다 결함/구조를 생성 시점에 assert 하고, 자소 군집·코드포인트·검색 oracle 로 기대 텍스트를 검산한다. |
-| `*.hwpx` | 편집 경계 패키지 17개(약 27KB). |
+| `gen_editing.py` | 합성기(Python 3 표준 라이브러리 전용, 결정적). 사례마다 결함/구조를 생성 시점에 assert 하고, 자소 군집·코드포인트·검색 oracle 로 기대 텍스트를 검산하며, 머리말 참조(`paraPr`·`charPr`·`style`·`borderFill`) 해소도 확인한다. |
+| `*.hwpx` | 편집 경계 패키지 17개(약 42KB). 각 패키지에 합성 기본 머리말(`header.xml`) 포함. |
 | `inputs/*` | `image.replace` 검증용 교체 이미지 8개(정적 PNG/JPEG, 거대 IHDR·SOF, APNG, 잘린 이미지, 이미지 아님). |
 | `editing_expected.json` | 사례별 `structure`(파서로 계산한 관찰 값)·`operations`(기대 outcome·코드·reason·보존)·`inputs`. |
 
@@ -65,6 +73,10 @@ HWPX 엔진 0.1 시험 자료 2차(**구현 계획 1-2b**). 편집 경계 자료
 ```sh
 python3 -I tests/fixtures/editing/gen_editing.py tests/fixtures/editing
 ```
+
+이 명령은 `*.hwpx` 17개(합성 기본 머리말 포함), `inputs/*` 8개, `editing_expected.json` 을
+모두 다시 쓴다. 머리말 정의를 바꾸면 패키지 바이트와 `editing_expected.json` 의
+`bytes` 값이 함께 바뀐다(구조·operation 기대는 그대로).
 
 같은 zlib 구현이면 출력 바이트가 같다(두 번 실행해 대조함). 결정성만 빠르게 확인하려면:
 

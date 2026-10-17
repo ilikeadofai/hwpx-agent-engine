@@ -306,6 +306,97 @@ def hpf_sec(items_extra=None, spine_extra=None):
     return hpf(items, spine)
 
 
+# ------------------------------------------------------------------ 머리말(header.xml)
+
+# 실제 HWPX 는 refList 안에 fontfaces·borderFills·charProperties·paraProperties 를
+# 정의하고, 구역 문단은 paraPrIDRef="0", run 은 charPrIDRef(여기서는 0..3),
+# 테두리 참조는 borderFillIDRef="1" 을 쓴다. 빈 refList 로 두면 hae-verify 의
+# validate_refs 가 "unresolved paraPrIDRef: 0" 으로 거절해 CLI/MCP 편집이 막힌다.
+# 여기서는 실제 파일을 그대로 베끼지 않고, tests/fixtures/corpus/bodojaryo-reference.hwpx
+# 관찰과 /tmp/opencode/owpml OWPML/Class/Head 모델에 맞춘 최소·정확한 정의를 합성한다.
+
+FONTFACE_LANGS = ("HANGUL", "LATIN", "HANJA", "JAPANESE", "OTHER", "SYMBOL", "USER")
+FONTCORE_LANGS = ("hangul", "latin", "hanja", "japanese", "other", "symbol", "user")
+
+
+def _fontfaces_xml():
+    faces = "".join(
+        '<hh:fontface lang="%s" fontCnt="1">'
+        '<hh:font id="0" face="함초롬바탕" type="TTF" isEmbedded="0"/>'
+        "</hh:fontface>" % lang
+        for lang in FONTFACE_LANGS
+    )
+    return '<hh:fontfaces itemCnt="%d">%s</hh:fontfaces>' % (len(FONTFACE_LANGS), faces)
+
+
+def _border_fills_xml():
+    edges = "".join(
+        '<hh:%s type="NONE" width="0.1 mm" color="#000000"/>' % border
+        for border in ("leftBorder", "rightBorder", "topBorder", "bottomBorder", "diagonal")
+    )
+    return (
+        '<hh:borderFills itemCnt="1">'
+        '<hh:borderFill id="1" threeD="0" shadow="0" centerLine="NONE" breakCellSeparateLine="0">'
+        '<hh:slash type="NONE" Crooked="0" isCounter="0"/>'
+        '<hh:backSlash type="NONE" Crooked="0" isCounter="0"/>'
+        "%s</hh:borderFill></hh:borderFills>" % edges
+    )
+
+
+def _char_pr_xml(cid):
+    zero = " ".join('%s="0"' % k for k in FONTCORE_LANGS)
+    hundred = " ".join('%s="100"' % k for k in FONTCORE_LANGS)
+    return (
+        '<hh:charPr id="%d" height="1000" textColor="#000000" shadeColor="none"'
+        ' useFontSpace="0" useKerning="0" symMark="NONE" borderFillIDRef="1">'
+        '<hh:fontRef %s/><hh:ratio %s/><hh:spacing %s/><hh:relSz %s/><hh:offset %s/>'
+        '<hh:underline type="NONE" shape="SOLID" color="#000000"/>'
+        '<hh:strikeout shape="NONE" color="#000000"/>'
+        '<hh:outline type="NONE"/>'
+        '<hh:shadow type="NONE" color="#C0C0C0" offsetX="10" offsetY="10"/>'
+        "</hh:charPr>" % (cid, zero, hundred, zero, hundred, zero)
+    )
+
+
+def _char_properties_xml(ids):
+    return '<hh:charProperties itemCnt="%d">%s</hh:charProperties>' % (
+        len(ids), "".join(_char_pr_xml(i) for i in ids))
+
+
+def _para_properties_xml(para_prs):
+    return '<hh:paraProperties itemCnt="%d">%s</hh:paraProperties>' % (
+        len(para_prs), "".join(para_prs))
+
+
+def header_xml(para_prs, char_ids=(0, 1, 2, 3), extra_ns=""):
+    """refList 에 fontfaces·borderFills·charProperties·paraProperties 를 갖춘 머리말."""
+    body = (_fontfaces_xml() + _border_fills_xml()
+            + _char_properties_xml(char_ids) + _para_properties_xml(para_prs))
+    return (DECL + '<hh:head %s version="1.2" secCnt="1"><hh:refList>%s</hh:refList></hh:head>'
+            % (root_ns(("hh", "hp", "hs", "hc"), extra=extra_ns), body)).encode("utf-8")
+
+
+DEFAULT_PARA_PR = (
+    '<hh:paraPr id="0" tabPrIDRef="0" condense="0" fontLineHeight="0" snapToGrid="1"'
+    ' suppressLineNumbers="0" checked="0">'
+    '<hh:align horizontal="JUSTIFY" vertical="BASELINE"/>'
+    '<hh:heading type="NONE" idRef="0" level="0"/>'
+    '<hh:breakSetting breakLatinWord="KEEP_WORD" breakNonLatinWord="BREAK_WORD"'
+    ' widowOrphan="0" keepWithNext="0" keepLines="0" pageBreakBefore="0" lineWrap="BREAK"/>'
+    '<hh:autoSpacing eAsianEng="0" eAsianNum="0"/>'
+    '<hh:margin><hc:intent value="0" unit="HWPUNIT"/><hc:left value="0" unit="HWPUNIT"/>'
+    '<hc:right value="0" unit="HWPUNIT"/><hc:prev value="0" unit="HWPUNIT"/>'
+    '<hc:next value="0" unit="HWPUNIT"/></hh:margin>'
+    '<hh:lineSpacing type="PERCENT" value="160" unit="HWPUNIT"/>'
+    '<hh:border borderFillIDRef="1" offsetLeft="0" offsetRight="0" offsetTop="0"'
+    ' offsetBottom="0" connect="0" ignoreMargin="0"/>'
+    '</hh:paraPr>')
+
+
+def default_header():
+    return header_xml([DEFAULT_PARA_PR])
+
+
 # ------------------------------------------------------------------ PNG/JPEG 합성
 
 def _zchunk(tag, data):
@@ -384,8 +475,7 @@ def build(section, header=None, hpf_bytes=None, container=None, extra=()):
     # SEED_ORDER 를 따르되 section0.xml 을 새 구역으로, 나머지는 SEED/override.
     payload = dict(SEED)
     payload["Contents/section0.xml"] = section
-    if header is not None:
-        payload["Contents/header.xml"] = header
+    payload["Contents/header.xml"] = header if header is not None else default_header()
     if hpf_bytes is not None:
         payload["Contents/content.hpf"] = hpf_bytes
     if container is not None:
@@ -399,8 +489,7 @@ def build2(sec0, sec1, header=None):
     base = dict(SEED)
     base["Contents/section0.xml"] = sec0
     base["Contents/section1.xml"] = sec1
-    if header is not None:
-        base["Contents/header.xml"] = header
+    base["Contents/header.xml"] = header if header is not None else default_header()
     base["Contents/content.hpf"] = hpf_sec([("section1", "Contents/section1.xml", "application/xml")],
                                            ["section1"])
     files = [(n, base[n], m) for n, m in SEED_ORDER]
@@ -523,7 +612,27 @@ def pictures_of(section_bytes):
 
 def check_package(files):
     assert "Contents/section0.xml" in files
+    _assert_refs_resolved(files)
     return files
+
+
+def _assert_refs_resolved(files):
+    """구역의 paraPr·charPr·style·borderFill 참조가 머리말 정의로 풀리는지 확인한다.
+
+    hae-verify::validate_refs 와 같은 규칙이다. 여기서 걸러 두지 않으면 합성기는
+    통과하지만 CLI/MCP 편집이 "unresolved paraPrIDRef: 0" 으로 막힌다.
+    """
+    head = ET.fromstring(files["Contents/header.xml"])
+    sections = sorted(n for n in files if n.startswith("Contents/section"))
+    for definition, reference in [("paraPr", "paraPrIDRef"), ("charPr", "charPrIDRef"),
+                                  ("style", "styleIDRef"), ("borderFill", "borderFillIDRef")]:
+        ids = {e.get("id") for e in head.iter("{%s}%s" % (NS["hh"], definition))
+               if e.get("id") is not None}
+        for name in sections:
+            for e in ET.fromstring(files[name]).iter():
+                r = e.get(reference)
+                if r is not None and r not in ids:
+                    raise AssertionError("%s: unresolved %s: %s" % (name, reference, r))
 
 
 # ------------------------------------------------------------------ 검증 헬퍼
@@ -1240,11 +1349,17 @@ case(
 
 
 # ===== 17. 문단 서식 =====
-HDR_PARA = ('%s<hh:head %s version="1.2" secCnt="1"><hh:refList><hh:paraProperties itemCnt="1">'
-            '<hh:paraPr id="0" x:keep="preserve"><hh:align horizontal="LEFT" vertical="BASELINE"/>'
-            '<hh:lineSpacing type="PERCENT" value="160"/><x:untouched>opaque</x:untouched>'
-            '</hh:paraPr></hh:paraProperties></hh:refList></hh:head>'
-            % (DECL, root_ns(("hh", "hp", "hs"), extra=' xmlns:x="urn:opaque"'))).encode("utf-8")
+# para_format 은 문단 모양 복제·재사용을 시험하므로 paraPr 에는 해석 불가 속성
+# (x:keep)과 자식(x:untouched)을 남기되, charPr/ borderFill 참조도 함께 정의해
+# hae-verify validate_refs 를 통과시키고 의미는 그대로 둔다.
+PARA_FORMAT_PARA_PR = (
+    '<hh:paraPr id="0" x:keep="preserve">'
+    '<hh:align horizontal="LEFT" vertical="BASELINE"/>'
+    '<hh:lineSpacing type="PERCENT" value="160"/>'
+    '<x:untouched>opaque</x:untouched>'
+    '</hh:paraPr>')
+
+HDR_PARA = header_xml([PARA_FORMAT_PARA_PR], extra_ns=' xmlns:x="urn:opaque"')
 
 
 def c_para_format():
