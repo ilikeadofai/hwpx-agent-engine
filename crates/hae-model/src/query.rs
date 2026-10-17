@@ -234,9 +234,19 @@ impl Document {
                         }
                     }
                 }
-                "effects" | "shadow" | "glow" | "softEdge" | "reflection" => {
-                    return Some("effects".into())
+                "effects" => {
+                    // Native Hancom writes an empty effects container for a plain image.
+                    if !e.children.is_empty()
+                        || !e.attrs.is_empty()
+                        || e.items
+                            .iter()
+                            .filter_map(|i| i.text())
+                            .any(|t| !t.trim().is_empty())
+                    {
+                        return Some("effects".into());
+                    }
                 }
+                "shadow" | "glow" | "softEdge" | "reflection" => return Some("effects".into()),
                 _ => {}
             }
         }

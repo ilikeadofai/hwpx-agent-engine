@@ -317,6 +317,31 @@ fn replaces_only_target_reference_and_appends_media_preserving_shared_old_bytes(
 }
 
 #[test]
+fn empty_native_effects_is_editable_and_replacement_preserves_geometry() {
+    let d = document(
+        r#"<hp:imgClip left="0" top="0" right="1440" bottom="720"/><hp:effects/>"#,
+        r#"effect="REAL_PIC" bright="0" contrast="0" alpha="0""#,
+    );
+    let id = target(&d);
+    let node = d.node(&id).unwrap();
+    assert_eq!(d.edit_block_reason(node), None);
+    let image = ImageBytes::from_bytes(JPEG.to_vec(), &d.limits).unwrap();
+    let outcome = apply(&d, &[EditOp::ImageReplace { target: id, image }]).unwrap();
+    let out = String::from_utf8(
+        outcome
+            .doc
+            .payload("Contents/section0.xml")
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(
+        out.contains(r#"<hp:imgClip left="0" top="0" right="1440" bottom="720"/><hp:effects/>"#)
+    );
+    assert!(out.contains(r#"<hp:sz width="1440" height="720"/>"#));
+}
+
+#[test]
 fn rejects_crop_effect_and_missing_target_without_changing_original() {
     for (extra, attrs) in [
         (
@@ -328,6 +353,8 @@ fn rejects_crop_effect_and_missing_target_without_changing_original() {
             "",
         ),
         ("<hp:effects><hp:glow/></hp:effects>", ""),
+        ("<hp:effects unknown=\"1\"/>", ""),
+        ("<hp:effects>uninterpreted</hp:effects>", ""),
         ("", r#"effect="GRAY_SCALE""#),
         ("", r#"contrast="5""#),
     ] {

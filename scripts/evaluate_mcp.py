@@ -12,8 +12,8 @@
   → redo(편집 payload 동일) → project 저장 → 편집 export → close → project 재열기(ID·revision 유지)
 
 경계:
-  * 개인 문서를 쓰지 않는다. 시험 문서는 이 스크립트가 합성한다(그림 요소 구조는
-    tests/fixtures/editing/shared_media.hwpx 를, 교체 이미지는 editing/inputs/ok.png 를 쓴다).
+  * 개인 문서를 쓰지 않는다. 시험 문서는 공개 MIT ref_empty.hwpx의 완전한 기본 구조에 합성 본문을 넣는다.
+    교체 이미지는 tests/fixtures/editing/inputs/ok.png 를 쓴다.
   * 한컴 조판 호환을 주장하지 않는다. summary.nativeComparison 은 항상 `not_checked`다.
   * 기존 근거를 덮어쓰지 않는다. 출력 디렉터리는 비어 있어야 하며 매 실행 새 경로를 쓴다.
   * 실행이 실패해도 summary.json 을 쓰고 0이 아닌 코드로 끝난다. 엔진 소스는 바꾸지 않는다.
@@ -45,104 +45,89 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>'
 MAX_INLINE_BYTES = 4 * 1024 * 1024  # 인라인 PNG/SVG 추출 상한
 
-# 합성 문서 골격. 그림 요소 구조는 tests/fixtures/editing/shared_media.hwpx 를 그대로 따른다.
-CONTENT_HPF = DECL + (
-    '<opf:package xmlns:opf="http://www.idpf.org/2007/opf/" '
-    'xmlns:hpf="http://www.hancom.co.kr/schema/2011/hpf" version="" unique-identifier="" id="">'
-    "<opf:metadata><opf:title/><opf:language>ko</opf:language></opf:metadata>"
-    "<opf:manifest>"
-    '<opf:item id="header" href="Contents/header.xml" media-type="application/xml"/>'
-    '<opf:item id="section0" href="Contents/section0.xml" media-type="application/xml"/>'
-    '<opf:item id="image1" href="BinData/image1.png" media-type="image/png" isEmbeded="1"/>'
-    "</opf:manifest>"
-    "<opf:spine><opf:itemref idref=\"header\"/><opf:itemref idref=\"section0\"/></opf:spine>"
-    "</opf:package>"
-)
-CONTAINER = DECL + (
-    '<ocf:container xmlns:ocf="urn:oasis:names:tc:opendocument:xmlns:container" '
-    'xmlns:hpf="http://www.hancom.co.kr/schema/2011/hpf"><ocf:rootfiles>'
-    '<ocf:rootfile full-path="Contents/content.hpf" media-type="application/hwpml-package+xml"/>'
-    "</ocf:rootfiles></ocf:container>"
-)
-HEADER = DECL + (
-    '<hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head" '
-    'xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph" '
-    'xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" version="1.2" secCnt="1">'
-    '<hh:refList>'
-    # 표 테두리(실선)용 borderFill. 표·셀의 borderFillIDRef 가 이 id 를 가리킨다.
-    '<hh:borderFills itemCnt="1"><hh:borderFill id="1" threeD="0" shadow="0" centerLine="NONE" breakCellSeparateLine="0">'
+# Public MIT corpus seed: tests/fixtures/corpus/manifest.json records provenance/hash.
+# Keep complete native reference tables and section defaults; never read user_fixtures here.
+PUBLIC_SEED = REPO_ROOT / "tests/fixtures/corpus/ref_empty.hwpx"
+P_ATTRS = ('id="{id}" paraPrIDRef="0" styleIDRef="0" '
+           'pageBreak="0" columnBreak="0" merged="0"')
+BORDER_FILL = (
+    '<hh:borderFill id="3" threeD="0" shadow="0" centerLine="NONE" breakCellSeparateLine="0">'
     '<hh:slash type="NONE" Crooked="0" isCounter="0"/><hh:backSlash type="NONE" Crooked="0" isCounter="0"/>'
-    '<hh:leftBorder type="SOLID" width="0.12 mm" color="#000000"/><hh:rightBorder type="SOLID" width="0.12 mm" color="#000000"/>'
-    '<hh:topBorder type="SOLID" width="0.12 mm" color="#000000"/><hh:bottomBorder type="SOLID" width="0.12 mm" color="#000000"/>'
-    "</hh:borderFill></hh:borderFills>"
-    '<hh:paraProperties itemCnt="1"><hh:paraPr id="0">'
-    '<hh:align horizontal="LEFT" vertical="BASELINE"/>'
-    '<hh:lineSpacing type="PERCENT" value="160"/>'
-    "</hh:paraPr></hh:paraProperties>"
-    '<hh:charProperties itemCnt="1"><hh:charPr id="0" height="1000" textColor="#000000"/></hh:charProperties>'
-    "</hh:refList></hh:head>"
-)
-
-
-# 쪽 설정(secPr/pagePr)은 코퍼스 문서 tests/fixtures/corpus/ilban-gian.hwpx 의 A4 세로·여백 값을
-# 그대로 쓴다. 이 값이 없으면 rhwp 는 여백 0·표/그림 크기 0 으로 조판해 첫 쪽 상단 약 15px 에
-# 내용이 몰리고 글자가 y=0 에 닿는다(docs/decisions/stage3-setb-clipping.md).
-SEC_PR = (
-    '<hp:secPr id="" textDirection="HORIZONTAL" spaceColumns="0" tabStop="8000" tabStopVal="4000" '
-    'tabStopUnit="HWPUNIT" outlineShapeIDRef="0" memoShapeIDRef="0" textVerticalWidthHead="0" masterPageCnt="0">'
-    '<hp:grid lineGrid="0" charGrid="0" wonggojiFormat="0"/>'
-    '<hp:startNum pageStartsOn="BOTH" page="0" pic="0" tbl="0" equation="0"/>'
-    '<hp:visibility hideFirstHeader="0" hideFirstFooter="0" hideFirstMasterPage="0" border="SHOW_ALL" '
-    'fill="SHOW_ALL" hideFirstPageNum="0" hideFirstEmptyLine="0" showLineNumber="0"/>'
-    '<hp:lineNumberShape restartType="0" countBy="0" distance="0" startNumber="0"/>'
-    '<hp:pagePr landscape="WIDELY" width="59528" height="84188" gutterType="LEFT_ONLY">'
-    '<hp:margin header="4252" footer="4252" gutter="0" left="8504" right="8504" top="5669" bottom="4252"/>'
-    "</hp:pagePr>"
-    "</hp:secPr>"
-    '<hp:ctrl><hp:colPr id="" type="NEWSPAPER" layout="LEFT" colCount="1" sameSz="1" sameGap="0"/></hp:ctrl>'
+    '<hh:leftBorder type="SOLID" width="0.12 mm" color="#000000"/>'
+    '<hh:rightBorder type="SOLID" width="0.12 mm" color="#000000"/>'
+    '<hh:topBorder type="SOLID" width="0.12 mm" color="#000000"/>'
+    '<hh:bottomBorder type="SOLID" width="0.12 mm" color="#000000"/>'
+    '<hh:diagonal type="SOLID" width="0.1 mm" color="#000000"/></hh:borderFill>'
 )
 
 
 def table_cell_xml(col: int, text: str) -> str:
     return (
-        '<hp:tc name="" header="0" hasMargin="0" protect="0" editable="0" dirty="0" borderFillIDRef="1">'
+        '<hp:tc name="" header="0" hasMargin="0" protect="0" editable="0" dirty="0" borderFillIDRef="3">'
         '<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER" '
         'linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">'
-        f'<hp:p paraPrIDRef="0"><hp:run charPrIDRef="0"><hp:t>{text}</hp:t></hp:run></hp:p></hp:subList>'
-        f'<hp:cellAddr rowAddr="0" colAddr="{col}"/><hp:cellSpan rowSpan="1" colSpan="1"/>'
+        f'<hp:p {P_ATTRS.format(id=10 + col)}><hp:run charPrIDRef="0"><hp:t>{text}</hp:t></hp:run></hp:p>'
+        '</hp:subList>'
+        f'<hp:cellAddr colAddr="{col}" rowAddr="0"/><hp:cellSpan colSpan="1" rowSpan="1"/>'
         '<hp:cellSz width="21000" height="2400"/>'
         '<hp:cellMargin left="141" right="141" top="141" bottom="141"/></hp:tc>'
     )
 
 
-def section_xml() -> str:
-    """쪽 설정 + 문단 하나 + 편집 가능한 단일 문단 셀 2개 + 자르기·효과 없는 그림 하나."""
-    return DECL + (
-        '<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" '
-        'xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph" '
-        'xmlns:hc="http://www.hancom.co.kr/hwpml/2011/core">'
-        # 쪽 설정을 담은 첫 문단(실제 한컴 문서와 같은 위치)
-        f'<hp:p paraPrIDRef="0"><hp:run charPrIDRef="0">{SEC_PR}</hp:run></hp:p>'
-        # 문단 서식 대상
-        '<hp:p paraPrIDRef="0"><hp:run charPrIDRef="0"><hp:t>평가 문단 하나</hp:t></hp:run></hp:p>'
-        # 표 셀 텍스트 대상: 1x2, 병합 없음, 셀마다 문단 하나. 글자처럼 취급, 크기·안여백 명시
-        '<hp:p paraPrIDRef="0"><hp:run charPrIDRef="0"><hp:tbl rowCnt="1" colCnt="2" cellSpacing="0" '
-        'borderFillIDRef="1" noAdjust="0">'
+def table_xml() -> str:
+    return (
+        '<hp:tbl id="1001" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" '
+        'textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="1" '
+        'rowCnt="1" colCnt="2" cellSpacing="0" borderFillIDRef="3" noAdjust="0">'
         '<hp:sz width="42000" widthRelTo="ABSOLUTE" height="2400" heightRelTo="ABSOLUTE" protect="0"/>'
         '<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" '
         'vertRelTo="PARA" horzRelTo="PARA" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
         '<hp:outMargin left="283" right="283" top="283" bottom="283"/>'
         '<hp:inMargin left="141" right="141" top="141" bottom="141"/>'
-        f'<hp:tr>{table_cell_xml(0, "셀가")}{table_cell_xml(1, "셀나")}</hp:tr>'
-        "</hp:tbl></hp:run></hp:p>"
-        # 그림 교체 대상: 자르기(imgClip)·효과(effects) 없음. 글자처럼 취급하는 실제 크기(약 51x25mm)
-        '<hp:p paraPrIDRef="0"><hp:run charPrIDRef="0"><hp:pic id="1">'
-        '<hp:sz width="14400" height="7200"/><hp:pos treatAsChar="1"/>'
-        '<hp:imgDim dimwidth="14400" dimheight="7200"/>'
-        '<hc:img binaryItemIDRef="image1"/>'
-        "</hp:pic></hp:run></hp:p>"
-        "</hs:sec>"
+        f'<hp:tr>{table_cell_xml(0, "셀가")}{table_cell_xml(1, "셀나")}</hp:tr></hp:tbl>'
     )
+
+
+def picture_xml() -> str:
+    # Fields/order observed in public bodojaryo-reference.hwpx and native saved files.
+    # Identity transforms, full clip, empty effects: a plain inline picture.
+    return (
+        '<hp:pic id="1002" zOrder="1" numberingType="PICTURE" textWrap="SQUARE" '
+        'textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" href="" groupLevel="0" instid="1002" reverse="0">'
+        '<hp:offset x="0" y="0"/><hp:orgSz width="14400" height="7200"/>'
+        '<hp:curSz width="0" height="0"/><hp:flip horizontal="0" vertical="0"/>'
+        '<hp:rotationInfo angle="0" centerX="7200" centerY="3600" rotateimage="1"/>'
+        '<hp:renderingInfo>'
+        '<hc:transMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/>'
+        '<hc:scaMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/>'
+        '<hc:rotMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/></hp:renderingInfo>'
+        '<hc:img binaryItemIDRef="image1" bright="0" contrast="0" effect="REAL_PIC" alpha="0"/>'
+        '<hp:imgRect><hc:pt0 x="0" y="0"/><hc:pt1 x="14400" y="0"/>'
+        '<hc:pt2 x="14400" y="7200"/><hc:pt3 x="0" y="7200"/></hp:imgRect>'
+        '<hp:imgClip left="0" right="75" top="0" bottom="75"/>'
+        '<hp:inMargin left="0" right="0" top="0" bottom="0"/>'
+        '<hp:imgDim dimwidth="75" dimheight="75"/><hp:effects/>'
+        '<hp:sz width="14400" widthRelTo="ABSOLUTE" height="7200" heightRelTo="ABSOLUTE" protect="0"/>'
+        '<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" '
+        'vertRelTo="PARA" horzRelTo="PARA" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
+        '<hp:outMargin left="0" right="0" top="0" bottom="0"/></hp:pic>'
+    )
+
+
+def section_xml(*, table: bool = True, picture: bool = True) -> str:
+    """Complete public-seed section defaults plus synthetic, explicitly sized content."""
+    with zipfile.ZipFile(PUBLIC_SEED) as z:
+        section = z.read("Contents/section0.xml").decode("utf-8")
+    # Retain the native first paragraph/secPr/colPr and all namespace declarations.
+    # Cached geometry belongs to the old empty text and is deliberately removed.
+    section = re.sub(r"<hp:linesegarray>.*?</hp:linesegarray>", "", section, flags=re.S)
+    section = section.replace('<hp:t/>', '<hp:t>평가 문단 하나</hp:t>', 1)
+    extras = ""
+    for pid, content in [(2, table_xml() if table else ""), (3, picture_xml() if picture else "")]:
+        if content:
+            extras += (f'<hp:p {P_ATTRS.format(id=pid)}><hp:run charPrIDRef="0">'
+                       f'{content}<hp:t/></hp:run></hp:p>')
+    return section.replace('</hs:sec>', extras + '</hs:sec>')
 
 
 def synth_png(width: int, height: int, rgb: bool) -> bytes:
@@ -168,17 +153,32 @@ def synth_png(width: int, height: int, rgb: bool) -> bytes:
     )
 
 
-def build_hwpx(dest: Path, original_png: bytes) -> None:
-    files = [
-        ("mimetype", b"application/hwp+zip", 0),
-        ("META-INF/container.xml", CONTAINER.encode(), 8),
-        ("Contents/content.hpf", CONTENT_HPF.encode(), 8),
-        ("Contents/header.xml", HEADER.encode(), 8),
-        ("Contents/section0.xml", section_xml().encode(), 8),
-        ("BinData/image1.png", original_png, 0),
-    ]
+def build_hwpx(dest: Path, original_png: bytes, *, table: bool = True, picture: bool = True) -> None:
+    """Build from a public native package, preserving complete header/defaults.
+
+    The generated text/media are synthetic. Native compatibility remains not_checked
+    until these exact bytes are opened and resaved on Windows.
+    """
+    with zipfile.ZipFile(PUBLIC_SEED) as seed:
+        files = {i.filename: (seed.read(i), i.compress_type) for i in seed.infolist()}
+    header = files["Contents/header.xml"][0].decode("utf-8")
+    header = header.replace('<hh:borderFills itemCnt="2">', '<hh:borderFills itemCnt="3">')
+    header = header.replace('</hh:borderFills>', BORDER_FILL + '</hh:borderFills>')
+    files["Contents/header.xml"] = (header.encode(), 8)
+    files["Contents/section0.xml"] = (section_xml(table=table, picture=picture).encode(), 8)
+    # Remove public author/date metadata; do not copy private document metadata.
+    hpf = files["Contents/content.hpf"][0].decode("utf-8")
+    hpf = re.sub(r'<opf:metadata>.*?</opf:metadata>',
+                 '<opf:metadata><opf:title>Engine evaluation</opf:title><opf:language>ko</opf:language></opf:metadata>',
+                 hpf, flags=re.S)
+    if picture:
+        hpf = hpf.replace('</opf:manifest>',
+                          '<opf:item id="image1" href="BinData/image1.png" media-type="image/png" isEmbeded="1"/></opf:manifest>')
+        files["BinData/image1.png"] = (original_png, 0)
+    files["Contents/content.hpf"] = (hpf.encode(), 8)
+    files["Preview/PrvText.txt"] = ("평가 문단 하나\r\n".encode("utf-8"), 8)
     with zipfile.ZipFile(dest, "w") as z:
-        for name, data, method in files:
+        for name, (data, method) in files.items():
             zi = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
             zi.compress_type = method
             zi.create_system = 0
@@ -805,7 +805,7 @@ def write_summary(runner, status, failure=None):
         "document": {
             "kind": "synthetic-combined",
             "notes": ("합성 문서: 문단 하나 + 병합 없는 단일 문단 셀 2개 + 자르기·효과 없는 그림 하나. "
-                      "그림 요소 구조는 tests/fixtures/editing/shared_media.hwpx, "
+                      "공개 MIT ref_empty.hwpx 패키지·헤더·구역 기본값과 완전한 그림 필드를 사용하며, "
                       "교체 이미지는 tests/fixtures/editing/inputs/ok.png 를 쓴다. 개인 문서를 쓰지 않는다."),
             "path": runner.hashes.get("document", {}).get("path"),
             "sha256": runner.hashes.get("document", {}).get("sha256"),
