@@ -11,6 +11,17 @@ use std::process::Command;
 
 fn parse_oracle_op(op: &Value, candidate: &Archive) -> VerifyOperation {
     let kind = op["op"].as_str().unwrap();
+    if kind == "text.replaceAll" {
+        return VerifyOperation::TextReplaceAll {
+            find: op["find"].as_str().unwrap().to_string(),
+            replacement: op["text"].as_str().unwrap().to_string(),
+            scope: op.get("scope").map(|s| hae_verify::VerifyScope {
+                entry: s["entry"].as_str().unwrap().to_string(),
+                path: serde_json::from_value(s["path"].clone()).unwrap(),
+            }),
+            max_matches: op["maxMatches"].as_u64().unwrap_or(1000) as usize,
+        };
+    }
     let entry = op["entry"].as_str().unwrap().to_string();
     let path: Vec<usize> = op["path"]
         .as_array()
@@ -182,6 +193,7 @@ fn v02_independent_python_candidates_pass_and_all_mutants_fail() {
             rejected += 1;
         }
     }
-    assert_eq!(rejected, 14);
+    // 14 earlier mutants + 11 whole-document and 5 scoped replaceAll mutants.
+    assert_eq!(rejected, 30);
     fs::remove_dir_all(out).unwrap();
 }

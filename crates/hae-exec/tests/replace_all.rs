@@ -389,3 +389,111 @@ fn replace_all_validates_arguments_versions_and_replays() {
     undo.expected_version = Some(2);
     assert_eq!(h.exec.execute(undo).diagnostics[0].code, Code::HistoryEmpty);
 }
+
+#[test]
+fn replace_all_output_equals_the_hand_written_bytes_the_gate_tests_expect() {
+    // Same document and expectation as crates/hae-verify/tests/replace_all_gate.rs.
+    const CACHE: &str = "<hp:linesegarray/>";
+    let pp = |attrs: &str, inner: &str| {
+        format!("<hp:p {attrs} paraPrIDRef=\"0\"><hp:run charPrIDRef=\"0\">{inner}</hp:run>{CACHE}</hp:p>")
+    };
+    let cell = format!(
+        "<hp:tbl><hp:tr><hp:tc><hp:subList>{}</hp:subList></hp:tc></hp:tr></hp:tbl>",
+        pp("id=\"c\"", "<hp:t>cat in cell</hp:t>")
+    );
+    let body=[pp("id=\"p0\"","<hp:t>cat dog cat</hp:t>"),
+  format!("<hp:p id=\"p1\" paraPrIDRef=\"0\"><hp:run charPrIDRef=\"0\"><hp:t>xca</hp:t></hp:run><hp:run charPrIDRef=\"1\"><hp:t>t y &amp;cat</hp:t></hp:run>{CACHE}</hp:p>"),
+  pp("id=\"p2\"","<hp:t>cat<![CDATA[x]]>cat</hp:t>"),pp("id=\"p3\"","<hp:t>cat</hp:t><hp:equation id=\"E\"/><hp:t>cat</hp:t>"),
+  format!("<hp:p id=\"p4\" paraPrIDRef=\"0\"><hp:run charPrIDRef=\"0\">{cell}</hp:run>{CACHE}</hp:p>"),
+  pp("id=\"p5\"","<hp:t>cat&#x301; cat</hp:t>"),pp("id=\"ref\"","<hp:t>cat</hp:t>")+"<x:ref xmlns:x=\"urn:x\" to=\"ref\"/>",pp("id=\"p7\"","<hp:t>tail cat</hp:t>")].concat();
+    let mut want = body.clone();
+    for (a, b) in [
+        ("cat dog cat", "lion dog lion"),
+        ("<hp:t>xca</hp:t>", "<hp:t>xlion</hp:t>"),
+        ("<hp:t>t y &amp;cat</hp:t>", "<hp:t> y &amp;lion</hp:t>"),
+        ("cat<![CDATA[x]]>cat", "lion<![CDATA[x]]>lion"),
+        (
+            "<hp:t>cat</hp:t><hp:equation id=\"E\"/><hp:t>cat</hp:t>",
+            "<hp:t>lion</hp:t><hp:equation id=\"E\"/><hp:t>lion</hp:t>",
+        ),
+        ("cat in cell", "lion in cell"),
+        ("cat&#x301; cat", "cat&#x301; lion"),
+        ("tail cat", "tail lion"),
+    ] {
+        assert!(want.contains(a), "{a}");
+        want = want.replacen(a, b, 1);
+    }
+    want = want.replace(CACHE, "");
+    let mut h = Harness::new(&body);
+    let r = h.exec.call(
+        "text.replaceAll",
+        json!({"find":"cat","text":"lion"}),
+        Some(0),
+        false,
+    );
+    assert!(r.ok, "{:?}", r.diagnostics);
+    let v = r.result.unwrap();
+    assert_eq!(v["replacementCount"], 11);
+    assert_eq!(v["skippedCount"], 2);
+    let out = h.dir.join("out.hwpx");
+    q(&mut h.exec, "document.export", json!({"path":out}));
+    let a = hae_zip::Archive::open(fs::read(&out).unwrap(), &Limits::default()).unwrap();
+    let section =
+        String::from_utf8(a.get("Contents/section0.xml").unwrap().payload().to_vec()).unwrap();
+    let expected=format!("<hs:sec xmlns:hs=\"http://www.hancom.co.kr/hwpml/2011/section\" xmlns:hp=\"http://www.hancom.co.kr/hwpml/2011/paragraph\">{want}</hs:sec>");
+    assert_eq!(section, expected);
+}
+
+#[test]
+fn replace_all_exports_pass_the_independent_python_oracle() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let dir = std::env::temp_dir().join(hae_model::new_id("hae-replace-all-oracle-").unwrap());
+    fs::create_dir(&dir).unwrap();
+    let st = std::process::Command::new("python3")
+        .arg("-I")
+        .arg(root.join("tests/oracle/fixtures_v02.py"))
+        .arg(&dir)
+        .status()
+        .unwrap();
+    assert!(st.success());
+    for kind in ["replace_all", "replace_all_scope"] {
+        let request: Value =
+            serde_json::from_slice(&fs::read(dir.join(format!("{kind}.request.json"))).unwrap())
+                .unwrap();
+        let op = &request["operations"][0];
+        let mut exec = SessionExecutor::new(&dir, &dir, Limits::default()).unwrap();
+        q(
+            &mut exec,
+            "document.open",
+            json!({"path":dir.join(format!("{kind}.original.hwpx"))}),
+        );
+        let mut params = json!({"find":op["find"],"text":op["text"]});
+        if op.get("scope").is_some() {
+            let all = q(&mut exec, "element.query", json!({"kind":"paragraph"}));
+            params["scope"] = all["matches"][4]["nodeId"].clone();
+        }
+        let r = exec.call("text.replaceAll", params, Some(0), false);
+        assert!(r.ok, "{kind}: {:?}", r.diagnostics);
+        let out = dir.join(format!("{kind}.engine.hwpx"));
+        q(&mut exec, "document.export", json!({"path":out}));
+        let intents = r.result.unwrap()["intents"].clone();
+        let mut checked = request.clone();
+        checked["intents"] = intents;
+        let req = dir.join(format!("{kind}.checked.json"));
+        fs::write(&req, serde_json::to_vec(&checked).unwrap()).unwrap();
+        let o = std::process::Command::new("python3")
+            .arg("-I")
+            .arg(root.join("tests/oracle/oracle.py"))
+            .arg(dir.join(format!("{kind}.original.hwpx")))
+            .arg(&out)
+            .arg(&req)
+            .output()
+            .unwrap();
+        assert!(
+            o.status.success(),
+            "{kind}: oracle rejected engine output: {}",
+            String::from_utf8_lossy(&o.stdout)
+        );
+    }
+    fs::remove_dir_all(dir).unwrap();
+}

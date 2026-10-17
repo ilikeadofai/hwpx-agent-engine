@@ -516,6 +516,146 @@ def replace_v02(paragraph,start,end,replacement,preserve=False,empty_cell=False)
     return v02_text(paragraph)!=original
 
 
+KNOWN_NS = (HP, HP16, HS, HH, HC)
+IDENTITY = ('p', 'tbl', 'tc', 'pic', 'equation')
+
+
+def known_tag(tag):
+    return '}' in tag and tag.split('}')[0] in KNOWN_NS
+
+
+def entry_policy(root):
+    """Opaque-reference facts for replaceAll, derived from the tree alone."""
+    nodes, parent = [], {}
+
+    def visit(node, up, path):
+        nodes.append((node, path))
+        parent[id(node)] = up
+        for i, child in enumerate(node.children):
+            visit(child, node, path + (i,))
+    visit(root, None, ())
+    tokens, blocked, values = set(), set(), set()
+    for node, _ in nodes:
+        foreign = not known_tag(node.tag)
+        for name, value in node.attrs.items():
+            if foreign or ('}' in name and name.split('}')[0] not in KNOWN_NS):
+                tokens.update(value.split())
+        up = parent[id(node)]
+        if foreign and (up is None or known_tag(up.tag)):
+            owner = up
+            while owner is not None and not (owner is root or any(hp(owner, l) for l in IDENTITY)):
+                owner = parent[id(owner)]
+            if owner is not None and hp(owner, 'p'):
+                blocked.add(id(owner))
+            for inner in node.walk():
+                values.update(inner.attrs.values())
+    return nodes, parent, tokens, blocked, values
+
+
+def replace_all_allowed(root, para, policy):
+    _, parent, tokens, blocked, values = policy
+    if id(para) in blocked or para.attrs.get('id') in values:
+        return False
+    top = para
+    while parent[id(top)] is not None and parent[id(top)] is not root:
+        top = parent[id(top)]
+    if not hp(top, 'p'):
+        return False
+    around = [para]
+    up = parent[id(para)]
+    while up is not None:
+        around.append(up)
+        up = parent[id(up)]
+    around.extend(n for n in para.walk() if n is not para)
+    return not tokens & {n.attrs['id'] for n in around if 'id' in n.attrs}
+
+
+def replace_all_matches(text, find):
+    result, position = [], 0
+    while True:
+        index = text.find(find, position)
+        if index < 0:
+            return result
+        result.append((index, index + len(find)))
+        position = index + len(find)
+
+
+def replace_all(original, candidate, expected, op, touched, anchors):
+    """text.replaceAll over the expected tree. Returns (changed paragraph count, replacement count, entries)."""
+    schema(op, ('op', 'find', 'text'), ('scope', 'maxMatches'))
+    find, text = op['find'], op['text']
+    need(isinstance(find, str) and find, 'INVALID_REQUEST', 'find must be a non-empty string')
+    plain_text(text)
+    limit = op.get('maxMatches', 1000)
+    need(type(limit) is int and 1 <= limit <= 10000, 'INVALID_ARGUMENT', 'maxMatches must be 1..10000')
+    scope = op.get('scope')
+    if scope is not None:
+        schema(scope, ('entry', 'path'))
+        need(scope['entry'] in original.sections and isinstance(scope['path'], list)
+             and all(type(i) is int and i >= 0 for i in scope['path']), 'INVALID_TARGET', 'scope must identify an element')
+    entries = [scope['entry']] if scope else list(original.sections)
+    if find == text:
+        return 0, 0, []
+    replaced = changed_paragraphs = 0
+    touched_entries = []
+    for entry in entries:
+        root = expected.xml[entry].root
+        policy = entry_policy(root)
+        in_scope = None
+        if scope:
+            in_scope = {id(n) for n in root.at(scope['path']).walk()}
+        for node, path in policy[0]:
+            if not hp(node, 'p') or (in_scope is not None and id(node) not in in_scope):
+                continue
+            flat = ''.join(t.text for t in node.walk() if hp(t, 't'))
+            if find not in flat or not replace_all_allowed(root, node, policy):
+                continue
+            try:
+                scalars, _, _ = v02_view(node)
+            except OracleError as exc:
+                if not exc.code.startswith('UNSUPPORTED'):
+                    raise
+                raise OracleError('UNSUPPORTED_REPLACE_ALL_PARAGRAPH',
+                                  'a paragraph with a possible match is outside the oracle text model') from exc
+            original_text = ''.join(x[4] for x in scalars)
+            matches = replace_all_matches(original_text, find)
+            if not matches:
+                continue
+            simple_graphemes(original_text.replace('\t', '').replace('\n', ''))
+            chosen = []
+            for a, b in matches:
+                covered = scalars[a:b]
+                if all(t is not None and ch not in '\t\r\n' for t, _, _, _, ch in covered):
+                    chosen.append((a, b))
+            if not chosen:
+                continue
+            replaced += len(chosen)
+            need(replaced <= limit, 'RESOURCE_LIMIT', 'more replaceable matches than maxMatches')
+            key = (entry, id(node))
+            need(key not in touched, 'UNSUPPORTED', 'multiple operations on same paragraph/picture')
+            touched.add(key)
+            cuts = {}
+            for a, b in chosen:
+                for n, (t, g, x, y, ch) in enumerate(scalars[a:b]):
+                    cuts.setdefault((id(t), g), (t, []))[1].append((x, y, xml_text(text) if n == 0 else b''))
+            for (_, g), (t, parts) in cuts.items():
+                raw = t.gaps[g]
+                for x, y, value in reversed(parts):
+                    raw = raw[:x] + value + raw[y:]
+                t.gaps[g] = raw
+                t.changed_gaps = True
+            for t in {id(t): t for t, _ in cuts.values()}.values():
+                t.text = ''.join(ch for gap in t.gaps for _, _, ch in decode_gap(gap))
+            changed_paragraphs += 1
+            top = path[0]
+            slot = anchors.setdefault(entry, {'first': top, 'nested': []})
+            slot['first'] = min(slot['first'], top)
+            if len(path) > 1:
+                slot['nested'].append(node)
+            touched_entries.append(entry)
+    return changed_paragraphs, replaced, touched_entries
+
+
 def xml_text(value):
     return value.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').encode()
 
@@ -624,6 +764,13 @@ def expected_state(original, candidate, request):
     for op in ops:
         need(isinstance(op, dict), 'INVALID_REQUEST', 'operation must be object')
         kind = op.get('op')
+        if kind == 'text.replaceAll':
+            count, replaced, entries = replace_all(original, candidate, expected, op, touched, anchors)
+            if replaced:
+                intents.append({'op': kind, 'find': op['find'], 'replacement': op['text'],
+                                'replacementCount': replaced, 'paragraphCount': count})
+                changes.append({'op': kind, 'entry': entries[0], 'path': []})
+            continue
         requirements = {
             'text.replace': (('range', 'text'), ('controls',)),
             'cell.setText': ((), ('text','paragraphs','controls')),

@@ -7,12 +7,12 @@ from fixtures_v02 import scenario, mutants
 
 class V02Tests(unittest.TestCase):
     def test_new_behaviors_have_independent_expected_candidates(self):
-        for kind in ['insert','empty','preserve','object_empty','cell']:
+        for kind in ['insert','empty','preserve','object_empty','cell','replace_all','replace_all_scope']:
             with self.subTest(kind=kind):
                 a,b,r,_=scenario(kind);result=check(a,b,r)
                 self.assertTrue(result['ok'],result)
     def test_new_behavior_mutations_are_rejected(self):
-        for kind in ['insert','empty','preserve','object_empty','cell']:
+        for kind in ['insert','empty','preserve','object_empty','cell','replace_all','replace_all_scope']:
             a,b,r,payload=scenario(kind)
             candidates=mutants(kind,payload)
             for mutant in candidates:
@@ -38,3 +38,48 @@ class Phase71Tests(unittest.TestCase):
             result=check(archive(original),archive(candidate),r)
             self.assertFalse(result['ok'])
             self.assertIn('field_boundary_in_range',result['diagnostics'][0]['message'])
+
+
+class ReplaceAllTests(unittest.TestCase):
+    P=staticmethod(lambda inner,cache=True:'<hp:p paraPrIDRef="0"><hp:run charPrIDRef="0">'+inner+'</hp:run>'+(CACHE if cache else '')+'</hp:p>')
+    def case(self,old,new,**op):
+        from fixtures_v02 import custom_replace_all
+        return custom_replace_all(old,new,{'op':'text.replaceAll',**op})
+    def test_greedy_non_overlapping_deletion_and_exact_bytes(self):
+        P=self.P
+        a,b,r,_=self.case(P('<hp:t>aaaa</hp:t>'),P('<hp:t>XX</hp:t>',False),find='aa',text='X')
+        self.assertTrue(check(a,b,r)['ok'])
+        a,b,r,_=self.case(P('<hp:t>aaaa</hp:t>'),P('<hp:t>XXa</hp:t>',False),find='aa',text='X')
+        self.assertFalse(check(a,b,r)['ok'])
+        a,b,r,_=self.case(P('<hp:t>abcb</hp:t>'),P('<hp:t>ac</hp:t>',False),find='b',text='')
+        self.assertTrue(check(a,b,r)['ok'])
+    def test_limits_and_invalid_requests(self):
+        P=self.P
+        a,b,r,_=self.case(P('<hp:t>aa</hp:t>'),P('<hp:t>XX</hp:t>',False),find='a',text='X',maxMatches=1)
+        result=check(a,b,r);self.assertFalse(result['ok']);self.assertEqual(result['diagnostics'][0]['code'],'RESOURCE_LIMIT')
+        for op in [dict(find='',text='X'),dict(find='a',text='\t'),dict(find='a',text='X',maxMatches=0),dict(find='a',text='X',extra=1)]:
+            a,b,r,_=self.case(P('<hp:t>aa</hp:t>'),P('<hp:t>XX</hp:t>',False),**op)
+            self.assertFalse(check(a,b,r)['ok'],op)
+    def test_no_match_and_identical_replacement_must_leave_bytes_untouched(self):
+        P=self.P
+        for op in [dict(find='zzz',text='X'),dict(find='aa',text='aa')]:
+            a,_,r,_=self.case(P('<hp:t>aa</hp:t>'),P('<hp:t>aa</hp:t>'),**op)
+            self.assertTrue(check(a,a,r)['ok'],op)
+            _,b,_,_=self.case(P('<hp:t>aa</hp:t>'),P('<hp:t>XX</hp:t>',False),**op)
+            self.assertFalse(check(a,b,r)['ok'],op)
+    def test_paragraphs_outside_the_text_model_are_reported_unsupported_not_guessed(self):
+        P=self.P
+        # CDATA, and a combining mark: the oracle's conservative model cannot judge these.
+        a,b,r,_=self.case(P('<hp:t>a<![CDATA[b]]>a</hp:t>'),P('<hp:t>X<![CDATA[b]]>X</hp:t>',False),find='a',text='X')
+        self.assertEqual(check(a,b,r)['status'],'unsupported')
+        a,b,r,_=self.case(P('<hp:t>e\u0301</hp:t>'),P('<hp:t>X\u0301</hp:t>',False),find='e',text='X')
+        self.assertEqual(check(a,b,r)['status'],'unsupported')
+        # A paragraph with no possible match is not an obstacle.
+        a,b,r,_=self.case(P('<hp:t>a<![CDATA[b]]>a</hp:t>')+P('<hp:t>cat</hp:t>'),P('<hp:t>a<![CDATA[b]]>a</hp:t>')+P('<hp:t>lion</hp:t>',False),find='cat',text='lion')
+        self.assertTrue(check(a,b,r)['ok'],check(a,b,r))
+    def test_entity_text_and_reported_intents(self):
+        P=self.P
+        a,b,r,_=self.case(P('<hp:t>a&amp;b a&amp;b</hp:t>'),P('<hp:t>&lt;&amp;&gt; &lt;&amp;&gt;</hp:t>',False),find='a&b',text='<&>')
+        result=check(a,b,r);self.assertTrue(result['ok'],result)
+        r['intents']=result['expectedIntents'];self.assertTrue(check(a,b,r)['ok'])
+        r['intents']=[{**result['expectedIntents'][0],'replacementCount':1}];self.assertFalse(check(a,b,r)['ok'])
