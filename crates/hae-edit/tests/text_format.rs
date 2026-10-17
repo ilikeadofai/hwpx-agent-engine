@@ -194,7 +194,7 @@ fn object_only_paragraph_can_format_but_has_no_text_replacement() {
     let v = serde_json::to_value(d.outline(d.node(&id).unwrap())).unwrap();
     assert_eq!(
         v["edits"]["text.replace"],
-        serde_json::json!({"available":false,"reason":"no_text_span"})
+        serde_json::json!({"available":false,"reason":"no_text_span","modes":[]})
     );
     assert_eq!(
         v["edits"]["paragraph.format"],
@@ -228,8 +228,8 @@ fn outline_capabilities_describe_existing_text_and_cell_boundaries() {
     assert_eq!(first["edits"]["text.replace"]["available"], true);
     let empty = &values[2];
     assert_eq!(
-        empty["edits"]["text.replace"]["reason"],
-        "empty_paragraph_insert_unsupported"
+        empty["edits"]["text.replace"]["modes"],
+        serde_json::json!(["insert"])
     );
     assert_eq!(empty["editable"], true);
     let cells: Vec<_> = values.iter().filter(|v| v["kind"] == "cell").collect();
@@ -299,7 +299,11 @@ fn readonly_and_locked_nodes_disable_every_advertised_edit() {
     for command in ["text.replace", "paragraph.format"] {
         assert_eq!(
             v["edits"][command],
-            serde_json::json!({"available":false,"reason":"document_readonly"})
+            if command == "text.replace" {
+                serde_json::json!({"available":false,"reason":"document_readonly","modes":[]})
+            } else {
+                serde_json::json!({"available":false,"reason":"document_readonly"})
+            }
         );
     }
     d.permissions.readonly_reasons.clear();

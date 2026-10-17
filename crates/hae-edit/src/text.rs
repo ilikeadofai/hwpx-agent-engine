@@ -161,6 +161,187 @@ fn plan_replace(
     Ok((out, diag))
 }
 
+fn empty_insert(d: &Draft, para: &Node, new: &str) -> Result<Vec<Splice>> {
+    let pt = d.doc.para_text(para)?;
+    if let Some(reason) = pt.empty_insert_reason(d.doc.doc_of(para)) {
+        return Err(EngineError::new(
+            if reason == "no_run" {
+                Code::Unsupported
+            } else {
+                Code::UnsupportedContentInRange
+            },
+            Stage::Validate,
+            "empty paragraph cannot accept text",
+        )
+        .with_reason(reason)
+        .with_target(&para.id));
+    }
+    let target = &para.id;
+    let doc = d.doc.doc_of(para);
+    Ok({
+        let run = doc
+            .el(para.el)
+            .children
+            .iter()
+            .copied()
+            .find(|&c| is_hp(doc.el(c).ns.as_deref()) && doc.el(c).local == "run")
+            .ok_or_else(|| {
+                EngineError::new(
+                    Code::Unsupported,
+                    Stage::Validate,
+                    "empty cell paragraph has no run",
+                )
+                .with_target(target)
+                .with_reason("no_run")
+            })?;
+        let r = doc.el(run);
+        let t = r
+            .children
+            .iter()
+            .copied()
+            .find(|&c| is_hp(doc.el(c).ns.as_deref()) && doc.el(c).local == "t");
+        let prefix = r
+            .qname
+            .split_once(':')
+            .map(|(p, _)| format!("{p}:"))
+            .unwrap_or_default();
+        match t {
+            Some(t) => {
+                let te = doc.el(t);
+                if te.attrs.iter().any(|a| {
+                    !(a.qname == "xmlns" || a.qname.starts_with("xmlns:"))
+                        && (a.ns.is_some() || !T_ATTRS.contains(&a.local.as_str()))
+                }) {
+                    return Err(EngineError::new(
+                        Code::UnsupportedContentInRange,
+                        Stage::Validate,
+                        "empty hp:t has uninterpreted attributes",
+                    )
+                    .with_target(target));
+                }
+                if te.end.is_none() {
+                    // <hp:t/> → <hp:t ...>text</hp:t>
+                    let tag = std::str::from_utf8(&doc.bytes()[te.start.clone()]).unwrap_or("");
+                    let open = tag.trim_end_matches('>').trim_end_matches('/').trim_end();
+                    vec![(
+                        te.start.clone(),
+                        format!("{open}>{}</{}>", escape_text(new), te.qname).into_bytes(),
+                    )]
+                } else {
+                    vec![(te.inner(), escape_text(new).into_bytes())]
+                }
+            }
+            None => {
+                if r.end.is_none() {
+                    let tag = std::str::from_utf8(&doc.bytes()[r.start.clone()]).unwrap();
+                    let open = tag.trim_end_matches('>').trim_end_matches('/').trim_end();
+                    return Ok(vec![(
+                        r.start.clone(),
+                        format!(
+                            "{open}><{prefix}t>{}</{prefix}t></{}>",
+                            escape_text(new),
+                            r.qname
+                        )
+                        .into_bytes(),
+                    )]);
+                }
+                let at = r.inner().end;
+                vec![(
+                    at..at,
+                    format!("<{prefix}t>{}</{prefix}t>", escape_text(new)).into_bytes(),
+                )]
+            }
+        }
+    })
+}
+
+fn plan_insert(
+    d: &Draft,
+    para: &Node,
+    pt: &ParaText,
+    pos: usize,
+    new: &str,
+) -> Result<Vec<Splice>> {
+    if pt.text.is_empty() {
+        return empty_insert(d, para, new);
+    }
+    // Use the complete span set, not the public 64-span response page.
+    let cp = pt.grapheme_cps[pos];
+    let doc = d.doc.doc_of(para);
+    let safe = |p: &&hae_model::Piece| {
+        matches!(p.kind, PieceKind::Text { .. } | PieceKind::Ref { .. })
+            && p.t
+                .is_some_and(|t| hae_model::para::text_element_supported(doc, t))
+    };
+    let right = pt
+        .pieces
+        .iter()
+        .filter(safe)
+        .find(|p| p.cp_start <= cp && cp < p.cp_start + p.cp_len);
+    let left = pt
+        .pieces
+        .iter()
+        .filter(safe)
+        .rev()
+        .find(|p| p.cp_start < cp && cp <= p.cp_start + p.cp_len);
+    let piece = right.or(left).ok_or_else(|| {
+        EngineError::new(
+            Code::InvalidRange,
+            Stage::Validate,
+            "position is outside textSpans",
+        )
+        .with_target(&para.id)
+    })?;
+    // Require the adjacent whole grapheme to be in a safe span. A truncated
+    // public span list does not bound the actual command's valid positions.
+    let a = if right.is_some() { pos } else { pos - 1 };
+    let probe = pt.cp_range(a..a + 1).unwrap();
+    if pt
+        .verification_barriers
+        .iter()
+        .any(|&b| probe.start < b && b < probe.end)
+        || pt
+            .pieces
+            .iter()
+            .filter(|p| p.cp_start < probe.end && probe.start < p.cp_start + p.cp_len)
+            .any(|p| {
+                !safe(&p)
+                    || pt
+                        .text
+                        .chars()
+                        .skip(p.cp_start.max(probe.start))
+                        .take((p.cp_start + p.cp_len).min(probe.end) - p.cp_start.max(probe.start))
+                        .any(|c| ['\t', '\n', '\r'].contains(&c))
+            })
+    {
+        return Err(EngineError::new(
+            Code::InvalidRange,
+            Stage::Validate,
+            "position is outside textSpans",
+        )
+        .with_target(&para.id));
+    }
+    let at = match &piece.kind {
+        PieceKind::Text { raw } => {
+            raw.start
+                + std::str::from_utf8(&doc.bytes()[raw.clone()])
+                    .unwrap()
+                    .char_indices()
+                    .nth(cp - piece.cp_start)
+                    .map_or(raw.len(), |(i, _)| i)
+        }
+        PieceKind::Ref { raw } => {
+            if cp == piece.cp_start {
+                raw.start
+            } else {
+                raw.end
+            }
+        }
+        _ => unreachable!(),
+    };
+    Ok(vec![(at..at, escape_text(new).into_bytes())])
+}
+
 pub(crate) fn text_replace(
     d: &mut Draft,
     target: &str,
@@ -170,11 +351,11 @@ pub(crate) fn text_replace(
     let para = d.node(target, Some(Kind::Paragraph))?;
     check_new_text(new)?;
     let pt = d.doc.para_text(&para)?;
-    if range.start >= range.end {
+    if range.start > range.end || (range.start == range.end && new.is_empty()) {
         return Err(EngineError::new(
             Code::InvalidRange,
             Stage::Validate,
-            "empty range (insertion is not supported)",
+            "reversed range or empty insertion",
         )
         .with_target(target));
     }
@@ -191,7 +372,11 @@ pub(crate) fn text_replace(
         )
         .with_target(target)
     })?;
-    let (splices, diag) = plan_replace(d, &para, &pt, cps.clone(), new)?;
+    let (splices, diag) = if range.start == range.end {
+        (plan_insert(d, &para, &pt, range.start, new)?, None)
+    } else {
+        plan_replace(d, &para, &pt, cps.clone(), new)?
+    };
     let old_text = pt.text.clone();
     let mut expected: String = pt.text.chars().take(cps.start).collect();
     expected.push_str(new);
@@ -258,78 +443,8 @@ pub(crate) fn cell_set_text(d: &mut Draft, target: &str, new: &str) -> Result<()
     if old_text == new {
         return Ok(());
     }
-    let doc = d.doc.doc_of(&para).clone();
     let splices = if pt.pieces.is_empty() {
-        // Empty cell: write into the first run (spec §6).
-        let run = doc
-            .el(para.el)
-            .children
-            .iter()
-            .copied()
-            .find(|&c| is_hp(doc.el(c).ns.as_deref()) && doc.el(c).local == "run")
-            .ok_or_else(|| {
-                EngineError::new(
-                    Code::Unsupported,
-                    Stage::Validate,
-                    "empty cell paragraph has no run",
-                )
-                .with_target(target)
-                .with_reason("no_run")
-            })?;
-        let r = doc.el(run);
-        let t = r
-            .children
-            .iter()
-            .copied()
-            .find(|&c| is_hp(doc.el(c).ns.as_deref()) && doc.el(c).local == "t");
-        let prefix = r
-            .qname
-            .split_once(':')
-            .map(|(p, _)| format!("{p}:"))
-            .unwrap_or_default();
-        match t {
-            Some(t) => {
-                let te = doc.el(t);
-                if te.attrs.iter().any(|a| {
-                    !(a.qname == "xmlns" || a.qname.starts_with("xmlns:"))
-                        && (a.ns.is_some() || !T_ATTRS.contains(&a.local.as_str()))
-                }) {
-                    return Err(EngineError::new(
-                        Code::UnsupportedContentInRange,
-                        Stage::Validate,
-                        "empty hp:t has uninterpreted attributes",
-                    )
-                    .with_target(target));
-                }
-                if te.end.is_none() {
-                    // <hp:t/> → <hp:t ...>text</hp:t>
-                    let tag = std::str::from_utf8(&doc.bytes()[te.start.clone()]).unwrap_or("");
-                    let open = tag.trim_end_matches('>').trim_end_matches('/').trim_end();
-                    vec![(
-                        te.start.clone(),
-                        format!("{open}>{}</{}>", escape_text(new), te.qname).into_bytes(),
-                    )]
-                } else {
-                    vec![(te.inner(), escape_text(new).into_bytes())]
-                }
-            }
-            None => {
-                if r.end.is_none() {
-                    return Err(EngineError::new(
-                        Code::Unsupported,
-                        Stage::Validate,
-                        "empty run element",
-                    )
-                    .with_target(target)
-                    .with_reason("no_run"));
-                }
-                let at = r.start.end;
-                vec![(
-                    at..at,
-                    format!("<{prefix}t>{}</{prefix}t>", escape_text(new)).into_bytes(),
-                )]
-            }
-        }
+        empty_insert(d, &para, new)?
     } else {
         let all = 0..pt.text.chars().count();
         let (s, diag) = plan_replace(d, &para, &pt, all, new)?;

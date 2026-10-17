@@ -444,7 +444,7 @@ define_commands! {
         name: "text.replace",
         cli: "text-replace",
         mcp: "text_replace",
-        summary: "Replace a non-empty grapheme range within a paragraph",
+        summary: "Replace a grapheme range or insert non-empty text at a zero-length range",
         category: Mutation,
         mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
         stage1: true, reason: None,

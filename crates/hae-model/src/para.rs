@@ -233,10 +233,41 @@ impl ParaText {
         }
     }
 
+    pub fn empty_insert_reason(&self, doc: &XmlDoc) -> Option<&'static str> {
+        if !self.text.is_empty() || !self.verification_barriers.is_empty() {
+            return Some("verify_unsupported_markup");
+        }
+        let run = doc
+            .el(self.para)
+            .children
+            .iter()
+            .copied()
+            .find(|&i| is_hp(doc.el(i).ns.as_deref()) && doc.el(i).local == "run");
+        let Some(run) = run else {
+            return Some("no_run");
+        };
+        for &t in &doc.el(run).children {
+            if is_hp(doc.el(t).ns.as_deref()) && doc.el(t).local == "t" {
+                if !text_element_supported(doc, t) {
+                    return Some("unsupported_content_in_range");
+                }
+                if !doc.el(t).items.is_empty() {
+                    return Some("verify_unsupported_markup");
+                }
+                break;
+            }
+        }
+        None
+    }
+
     /// Maximal editable intervals, rounded inward to whole graphemes. A grapheme
     /// touching a control or uninterpreted hp:t is excluded in its entirety.
     pub fn replaceable_spans(&self, doc: &XmlDoc) -> TextSpans {
         let mut result = TextSpans::default();
+        if self.text.is_empty() && self.empty_insert_reason(doc).is_none() {
+            result.text_spans.push(TextSpan { start: 0, end: 0 });
+            return result;
+        }
         let mut start = None;
         let mut end = 0;
         let emit = |start: usize, end: usize, result: &mut TextSpans| {

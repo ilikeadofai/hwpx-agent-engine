@@ -59,6 +59,8 @@ pub struct EditAvailability {
     pub available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modes: Option<Vec<String>>,
 }
 
 impl EditAvailability {
@@ -66,6 +68,7 @@ impl EditAvailability {
         Self {
             available: reason.is_none(),
             reason,
+            modes: None,
         }
     }
 }
@@ -225,7 +228,10 @@ impl Document {
         }
         Some(
             if self.para_text(n).is_ok_and(|p| p.grapheme_len() == 0) {
-                "empty_paragraph_insert_unsupported"
+                self.para_text(n)
+                    .ok()
+                    .and_then(|p| p.empty_insert_reason(self.doc_of(n)))
+                    .unwrap_or("no_run")
             } else {
                 "no_text_span"
             }
@@ -381,6 +387,16 @@ impl Document {
             Kind::Paragraph => {
                 add("text.replace", self.text_replace_reason(n, spans));
                 add("paragraph.format", self.paragraph_format_block_reason(n));
+                let e = edits.get_mut("text.replace").unwrap();
+                e.modes = Some(if e.available {
+                    if self.para_text(n).is_ok_and(|p| p.text.is_empty()) {
+                        vec!["insert".into()]
+                    } else {
+                        vec!["replace".into(), "insert".into()]
+                    }
+                } else {
+                    vec![]
+                });
             }
             Kind::Cell => add("cell.setText", self.cell_set_text_block_reason(n)),
             Kind::Picture => add("image.replace", self.picture_block_reason(n)),

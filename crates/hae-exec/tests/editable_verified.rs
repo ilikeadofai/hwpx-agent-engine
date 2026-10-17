@@ -354,3 +354,66 @@ fn every_editing_fixture_and_synthetic_advertisement_survives_executor_verificat
     assert!(checked > 100);
     eprintln!("VERIFIED_ADVERTISEMENT_PROPERTY editing_fixtures=17 synthetic_cases={} text_dry_runs={checked}", cases.len()*2);
 }
+
+#[test]
+fn v02_insertion_selects_following_run_then_preceding_run() {
+    let body = r#"<hp:p paraPrIDRef="0"><hp:run charPrIDRef="0"><hp:t>ab</hp:t></hp:run><hp:run charPrIDRef="0"><hp:t>cd</hp:t></hp:run></hp:p>"#;
+    for (pos, expected) in [
+        (0, "<hp:t>Xab</hp:t>"),
+        (2, "<hp:t>Xcd</hp:t>"),
+        (4, "<hp:t>cdX</hp:t>"),
+    ] {
+        let h = Harness::new();
+        let mut exec = h.open(&synthetic(body));
+        let item = paragraphs(&mut exec).remove(0);
+        assert_eq!(
+            item["edits"]["text.replace"]["modes"],
+            json!(["replace", "insert"])
+        );
+        let r = exec.call(
+            "text.replace",
+            json!({"target":item["nodeId"],"range":{"start":pos,"end":pos},"text":"X"}),
+            Some(0),
+            false,
+        );
+        assert!(r.ok, "{:?}", r.diagnostics);
+        let path = h.0.join("out.hwpx");
+        query(&mut exec, "document.export", json!({"path":path}));
+        let d = hae_model::Document::open(fs::read(path).unwrap(), &Limits::default()).unwrap();
+        assert!(
+            std::str::from_utf8(d.payload("Contents/section0.xml").unwrap())
+                .unwrap()
+                .contains(expected)
+        );
+        let r = exec.call("history.undo", json!({}), Some(1), false);
+        assert!(r.ok, "{:?}", r.diagnostics);
+        let path = h.0.join("undo.hwpx");
+        query(&mut exec, "document.export", json!({"path":path}));
+        assert_eq!(fs::read(path).unwrap(), synthetic(body));
+    }
+}
+
+#[test]
+fn v02_empty_paragraph_insertion_appends_t_after_existing_children() {
+    for inner in ["", "<hp:t/>", "<hp:t></hp:t>", "<hp:secPr/>"] {
+        let h = Harness::new();
+        let mut exec = h.open(&synthetic(&p(inner)));
+        let item = paragraphs(&mut exec).remove(0);
+        assert_eq!(item["textSpans"], json!([{"start":0,"end":0}]));
+        assert_eq!(item["edits"]["text.replace"]["modes"], json!(["insert"]));
+        assert!(dry(&mut exec, &item, 0, 0, "새 & 글"));
+        assert!(!dry(&mut exec, &item, 0, 0, ""));
+    }
+    for inner in [
+        "<hp:t x:unknown=\"1\"/>",
+        "<hp:t><![CDATA[]]></hp:t>",
+        "<hp:t><!--c--></hp:t>",
+    ] {
+        let h = Harness::new();
+        let body = p(inner).replace("<hp:p ", "<hp:p xmlns:x=\"urn:x\" ");
+        let mut exec = h.open(&synthetic(&body));
+        let item = paragraphs(&mut exec).remove(0);
+        assert_eq!(item["edits"]["text.replace"]["available"], false);
+        assert!(!dry(&mut exec, &item, 0, 0, "X"));
+    }
+}

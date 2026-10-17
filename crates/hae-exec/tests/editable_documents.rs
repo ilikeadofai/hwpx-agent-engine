@@ -128,7 +128,7 @@ fn local_documents_advertised_spans_match_real_dry_runs() {
             for span in spans {
                 let a = span["start"].as_u64().unwrap();
                 let b = span["end"].as_u64().unwrap();
-                assert!(a >= end && a < b && b <= len);
+                assert!(a >= end && a <= b && b <= len);
                 end = b;
                 let r = exec.call(
                     "text.replace",
@@ -185,9 +185,10 @@ fn local_documents_advertised_spans_match_real_dry_runs() {
                     Some(0),
                     true,
                 );
-                assert!(!r.ok);
-                assert_eq!(r.diagnostics[0].code, Code::InvalidRange);
-                rejects += 1;
+                assert_eq!(r.ok, !spans.is_empty());
+                if !r.ok {
+                    rejects += 1;
+                }
             }
             if edits["paragraph.format"]["available"] == true {
                 let alignment = exec.call(

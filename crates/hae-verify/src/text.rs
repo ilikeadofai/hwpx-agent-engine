@@ -153,8 +153,22 @@ pub(crate) fn replace(
             Some(*cp)
         }))
         .collect();
-    if range.start >= range.end || range.end >= boundaries.len() {
+    if range.start > range.end
+        || range.end >= boundaries.len()
+        || (range.start == range.end && replacement.is_empty())
+    {
         return Err(fail("invalid original grapheme range"));
+    }
+    if range.start == range.end {
+        return insert(
+            state,
+            entry,
+            doc,
+            p,
+            v,
+            boundaries[range.start],
+            replacement,
+        );
     }
     replace_scalars(
         state,
@@ -212,6 +226,136 @@ fn replace_scalars(
     Ok(Some((v.text, wanted)))
 }
 
+fn insert(
+    state: &mut PackageState,
+    entry: &str,
+    doc: &XmlDoc,
+    p: usize,
+    v: View,
+    cp: usize,
+    text: &str,
+) -> Result<Option<(String, String)>> {
+    if !v.scalars.is_empty() {
+        let valid = |s: &Scalar| {
+            !s.barrier && !['\t', '\n', '\r'].contains(&s.character) && s.raw.is_some()
+        };
+        let right = v.scalars.get(cp).filter(|s| valid(s));
+        let left = cp
+            .checked_sub(1)
+            .and_then(|i| v.scalars.get(i))
+            .filter(|s| valid(s));
+        let s = right
+            .or(left)
+            .ok_or_else(|| unsupported("insertion has no adjacent text"))?;
+        // The selected adjacent grapheme must be entirely supported.
+        let offsets: Vec<usize> = std::iter::once(0)
+            .chain(v.text.graphemes(true).scan(0, |n, g| {
+                *n += g.chars().count();
+                Some(*n)
+            }))
+            .collect();
+        let g = offsets
+            .binary_search(&cp)
+            .map_err(|_| fail("not a grapheme boundary"))?;
+        let (a, b) = if right.is_some() {
+            (cp, offsets[g + 1])
+        } else {
+            (offsets[g - 1], cp)
+        };
+        if v.barriers.iter().any(|&i| a < i && i < b) || v.scalars[a..b].iter().any(|s| !valid(s)) {
+            return Err(unsupported("insertion outside safe span"));
+        }
+        for s in &v.scalars[a..b] {
+            plain_attrs(doc, s.t.ok_or_else(|| unsupported("missing t"))?)?;
+        }
+        let r = s.raw.as_ref().unwrap();
+        let at = if right.is_some() { r.start } else { r.end };
+        let mut wanted: String = v.text.chars().take(cp).collect();
+        wanted.push_str(text);
+        wanted.extend(v.text.chars().skip(cp));
+        change(
+            state,
+            entry,
+            doc,
+            vec![(at..at, escape_text(text).into_bytes())],
+        )?;
+        return Ok(Some((v.text, wanted)));
+    }
+    let run = doc
+        .el(p)
+        .children
+        .iter()
+        .copied()
+        .find(|&i| hp(doc.el(i), "run"))
+        .ok_or_else(|| unsupported("empty cell lacks first run"))?;
+    if !v.barriers.is_empty() {
+        return Err(unsupported("empty cell has opaque content"));
+    }
+    let t = doc
+        .el(run)
+        .children
+        .iter()
+        .copied()
+        .find(|&i| hp(doc.el(i), "t"));
+    let cuts = if let Some(t) = t {
+        plain_attrs(doc, t)?;
+        let e = doc.el(t);
+        if !e.items.is_empty() {
+            return Err(unsupported("empty text element has non-text content"));
+        }
+        if e.end.is_some() {
+            vec![(e.inner(), escape_text(text).into_bytes())]
+        } else {
+            let tag =
+                std::str::from_utf8(doc.raw(e.start.clone())).map_err(|_| fail("non-UTF-8 t"))?;
+            let open = tag
+                .strip_suffix('>')
+                .and_then(|s| s.strip_suffix('/'))
+                .ok_or_else(|| fail("invalid empty t"))?;
+            vec![(
+                e.outer(),
+                format!("{}>{}</{}>", open.trim_end(), escape_text(text), e.qname).into_bytes(),
+            )]
+        }
+    } else {
+        let r = doc.el(run);
+        if r.end.is_none() {
+            let tag =
+                std::str::from_utf8(doc.raw(r.start.clone())).map_err(|_| fail("non-UTF-8 run"))?;
+            let open = tag.trim_end_matches('>').trim_end_matches('/').trim_end();
+            let prefix = r
+                .qname
+                .split_once(':')
+                .map_or(String::new(), |(p, _)| format!("{p}:"));
+            change(
+                state,
+                entry,
+                doc,
+                vec![(
+                    r.start.clone(),
+                    format!(
+                        "{open}><{prefix}t>{}</{prefix}t></{}>",
+                        escape_text(text),
+                        r.qname
+                    )
+                    .into_bytes(),
+                )],
+            )?;
+            return Ok(Some((String::new(), text.into())));
+        }
+        let prefix = r
+            .qname
+            .split_once(':')
+            .map_or(String::new(), |(p, _)| format!("{p}:"));
+        vec![(
+            r.inner().end..r.inner().end,
+            format!("<{prefix}t>{}</{prefix}t>", escape_text(text)).into_bytes(),
+        )]
+    };
+    change(state, entry, doc, cuts)?;
+    Ok(Some((String::new(), text.into())))
+}
+
 type CellChange = (usize, Option<(String, String)>);
 pub(crate) fn cell(
     state: &mut PackageState,
@@ -251,59 +395,8 @@ pub(crate) fn cell(
         let len = v.scalars.len();
         return Ok((p, replace_scalars(state, entry, doc, v, 0..len, text)?));
     }
-    let run = doc
-        .el(p)
-        .children
-        .iter()
-        .copied()
-        .find(|&i| hp(doc.el(i), "run"))
-        .ok_or_else(|| unsupported("empty cell lacks first run"))?;
     if text.is_empty() {
         return Ok((p, None));
     }
-    if !v.barriers.is_empty() {
-        return Err(unsupported("empty cell has opaque content"));
-    }
-    let t = doc
-        .el(run)
-        .children
-        .iter()
-        .copied()
-        .find(|&i| hp(doc.el(i), "t"));
-    let cuts = if let Some(t) = t {
-        plain_attrs(doc, t)?;
-        let e = doc.el(t);
-        if !e.items.is_empty() {
-            return Err(unsupported("empty text element has non-text content"));
-        }
-        if e.end.is_some() {
-            vec![(e.inner(), escape_text(text).into_bytes())]
-        } else {
-            let tag =
-                std::str::from_utf8(doc.raw(e.start.clone())).map_err(|_| fail("non-UTF-8 t"))?;
-            let open = tag
-                .strip_suffix('>')
-                .and_then(|s| s.strip_suffix('/'))
-                .ok_or_else(|| fail("invalid empty t"))?;
-            vec![(
-                e.outer(),
-                format!("{}>{}</{}>", open.trim_end(), escape_text(text), e.qname).into_bytes(),
-            )]
-        }
-    } else {
-        let r = doc.el(run);
-        if r.end.is_none() {
-            return Err(unsupported("self-closing empty run"));
-        }
-        let prefix = r
-            .qname
-            .split_once(':')
-            .map_or(String::new(), |(p, _)| format!("{p}:"));
-        vec![(
-            r.start.end..r.start.end,
-            format!("<{prefix}t>{}</{prefix}t>", escape_text(text)).into_bytes(),
-        )]
-    };
-    change(state, entry, doc, cuts)?;
-    Ok((p, Some((String::new(), text.into()))))
+    Ok((p, insert(state, entry, doc, p, v, 0, text)?))
 }
