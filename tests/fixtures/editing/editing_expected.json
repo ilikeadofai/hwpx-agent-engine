@@ -972,7 +972,8 @@
           },
           "expect": "applied",
           "resultText": "첫째 변경\n둘째 변경",
-          "diagnostics": []
+          "diagnostics": [],
+          "sourceText": "문단1\n문단2"
         }
       ]
     },

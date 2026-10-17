@@ -1100,7 +1100,7 @@ case(
          "matches": [{"table": 0, "row": 0, "col": 1}], "unalignedMatches": 0},
         {"op":"cell.setText", "target":{"table":0,"row":0,"col":1},
          "args":{"paragraphs":["첫째 변경","둘째 변경"]},"expect":"applied",
-         "resultText":"첫째 변경\n둘째 변경","diagnostics":[]},
+         "sourceText":"문단1\n문단2", "resultText":"첫째 변경\n둘째 변경","diagnostics":[]},
     ])
 
 
@@ -1543,7 +1543,7 @@ def validate_op(op):
     if op.get("op") in ("text.replace", "cell.setText") and op.get("expect") == "applied":
         src = op["sourceText"]
         if op["op"] == "cell.setText":
-            result = op["args"]["text"]
+            result = "\n".join(op["args"]["paragraphs"]) if "paragraphs" in op["args"] else op["args"]["text"]
         else:
             result = simulate_replace(src, op["args"]["range"], op["args"]["text"])
         eq(result, op["resultText"], "oracle %s %r" % (op.get("op"), op.get("args")))
