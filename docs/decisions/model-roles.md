@@ -8,11 +8,12 @@
 |---|---|---|---|
 | 오케스트레이터 | **GPT 6.1 Sol (codex)** | 전체 진행 관리, 작업 분해·모델 배정, 결과 수용, 통합·구현·커밋. Codex·Claude 한도를 확인하며 배정 조절 | 멀티모달 작업 자제. 자신이 구현한 결과의 독립 최종 검증은 다른 담당에게 배정 |
 | 계획 전용 | **Claude Opus 5.5** | 복잡한 설계·계획 수립과 계획 검토가 필요할 때만 호출 | 구현·작업 배정·오케스트레이션·반복 검증·커밋 담당으로 호출하지 않는다 |
-| 구현 계획 수행 | **Claude Sonnet 5.5** (주력, Sol과 사용 한도에 따라 분담) | 총괄이 넘긴 구현 계획의 실행: 엔진 기능 구현, 시험, 중간 난도 조사 | 범위 변경 결정 |
+| 구현 | **GPT 6.1 Sol** (codex) | 구현 비중이 큰 작업: 엔진 기능 구현, 결함 수정, 원인 분석 뒤 수정, 시험 추가 | 범위 변경 결정 |
+| 구현 계획 수행 | **Claude Sonnet 5.5** | 구현 비중이 작은 작업: 보조 스크립트, 중간 난도 조사, 문서와 묶은 정리, Sol 구현의 독립 검증 | 범위 변경 결정 |
 | 구현 계획 수행 | **Gemini 4 Argon** (opencode-go) | 사용자가 실제로 경험하는 부분: CLI·MCP 도구 설명과 응답 문구, 오류 메시지, 사용 안내서, 미리보기 산출물의 사용자 표시 | 핵심 보존·트랜잭션 코드 |
 | 세부·단순 작업 | **DeepSeek V4.1 Flash** (opencode-go) | 정해진 시그니처와 시험이 있는 코드, 보조 스크립트, 반복 작업. Gemini 3.8 Flash와 나눠 맡는다 | 원본 보존 XML 편집, 트랜잭션·이력, 격리 정책의 설계 |
 | 세부·단순 작업 | **Gemini 3.8 Flash (High)** (antigravity) | 비전 등 멀티모달 작업(미리보기 이미지 판독, 렌더링 비교, 스크린샷 확인). 그 밖의 단순 작업은 DeepSeek와 나눠 맡는다 | 설계 판단 |
-| 세부·단순 작업 | **Claude Haiku 5.5**, 사용 불가 시 **GPT 6 Luna** | 에이전틱 작업: 여러 명령을 돌리며 확인하는 일(빌드·시험 반복, 파일 대조, 환경 점검) | 판단이 필요한 설계 |
+| 세부·단순 작업 | **GPT 6 Luna (reasoning max)** 우선, **Claude Haiku 5.5** 보조 | 에이전틱 작업: 여러 명령을 돌리며 확인하는 일(빌드·시험 반복, 파일 대조, 환경 점검, 결과 분석). 둘을 비슷한 용도로 쓰되 Luna를 더 자주 배정 | 판단이 필요한 설계 |
 | 세부·단순 작업 | **Muse Spark 1.3** (opencode-go) | 빠른 처리가 필요한 짧은 작업 | 긴 구현 |
 
 호출하지 않는 모델: Claude Fable, GPT-6 Astra. OpenRouter 경로는 쓰지 않는다. OpenCode 모델은 opencode-go 모델 id로 부른다.
@@ -35,7 +36,7 @@
 |---|---|
 | Sonnet 5.5, Haiku 5.5 | T3 delegate_task(providerInstanceId=claudeAgent) 또는 Claude Code 하위 에이전트(model=sonnet/haiku) |
 | GPT 6.1 Sol | T3 delegate_task(providerInstanceId=codex, model=gpt-6.1-sol) |
-| GPT 6 Luna (Haiku 대체) | T3 delegate_task(providerInstanceId=codex, model=gpt-6-luna) |
+| GPT 6 Luna | T3 delegate_task(providerInstanceId=codex, model=gpt-6-luna, options.reasoningEffort=max) |
 | Gemini 4 Argon | T3 delegate_task(providerInstanceId=opencode, model=opencode-go/gemini-4-argon-contributor) |
 | DeepSeek V4.1 Flash | T3 delegate_task(providerInstanceId=opencode, model=opencode-go/deepseek-v4.1-flash) |
 | Muse Spark 1.3 | T3 delegate_task(providerInstanceId=opencode, model=opencode-go/muse-spark-1.3-contributor) |
@@ -58,3 +59,4 @@
 - ocx-deepseek 유형으로 맡긴 작업이 Haiku로 실행된 사례의 결과물은 채택하지 않고 spikes/work/discarded_haiku/에 두었다.
 
 - 2026-10-17: 사용자 지시로 GPT 6.1 Sol을 상시 오케스트레이터로 지정하고 Opus 5.5는 계획 전용으로 제한했다. Claude 5시간 한도 해제 확인 후 재개하며 Codex·Claude 사용률을 함께 보고 배정한다. 이전 총괄 배정은 현재 지시를 대체하지 않는다.
+- 2026-10-17 저녁: 사용자 지시로 Sonnet 몫 중 구현 비중이 큰 작업을 GPT 6.1 Sol로 옮기고, 에이전틱 작업은 GPT 6 Luna(reasoning max)를 Haiku보다 자주 배정한다. 이 세션의 진행 관리는 Opus가 맡되 직접 작업은 줄인다.

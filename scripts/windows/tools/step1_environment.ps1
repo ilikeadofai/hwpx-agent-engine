@@ -129,7 +129,9 @@ try {
         Add-Line '기본 프린터: 확인불가'
         Add-Line '기본 용지: 확인불가'
     } else {
-        Add-Line ('기본 프린터: ' + $printerName)
+        # 괄호 안 장치 식별자(시리얼/MAC 유사값)는 기록하지 않는다.
+        $printerLabel = $printerName -replace '\s*\([^()]*\)', ''
+        Add-Line ('기본 프린터: ' + $printerLabel)
         $paper = '확인불가'
         try {
             Add-Type -AssemblyName System.Drawing
