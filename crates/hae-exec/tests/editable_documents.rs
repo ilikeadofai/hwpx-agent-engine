@@ -368,6 +368,8 @@ fn v02_retry_24_recorded_stage4_rejections_and_undo_exactly() {
     let out = OutputDir(std::env::temp_dir().join(hae_model::new_id("hae-v02-retry-").unwrap()));
     fs::create_dir(&out.0).unwrap();
     let (mut seen, mut retried, mut expanded, mut excluded) = (0, 0, 0, 0);
+    let mut field_rejected = 0;
+    let mut no_fragment_rejected = 0;
     let mut paths: Vec<_> = fs::read_dir(root.join("runs"))
         .unwrap()
         .map(|e| e.unwrap().path())
@@ -453,6 +455,11 @@ fn v02_retry_24_recorded_stage4_rejections_and_undo_exactly() {
                     r.diagnostics
                 );
                 expanded += 1;
+                match r.diagnostics[0].reason.as_deref() {
+                    Some("field_boundary_in_range") => field_rejected += 1,
+                    Some("no_text_fragment") => no_fragment_rejected += 1,
+                    other => panic!("unexpected rejection reason {other:?}"),
+                }
                 let output = out.0.join("rejected-unchanged.hwpx");
                 query(&mut exec, "document.export", json!({"path":output}));
                 assert!(fs::read(&output).unwrap() == original);
@@ -476,5 +483,5 @@ fn v02_retry_24_recorded_stage4_rejections_and_undo_exactly() {
         }
     }
     assert_eq!((seen, retried + expanded, excluded), (25, 24, 1));
-    eprintln!("V02_STAGE4_RETRY recorded={seen} succeeded={retried} equation_excluded={excluded} exact_request_rejected={expanded} undo_exact={retried}");
+    eprintln!("V02_STAGE4_RETRY recorded={seen} succeeded={retried} equation_excluded={excluded} exact_request_rejected={expanded} field_rejected={field_rejected} no_text_fragment={no_fragment_rejected} undo_exact={retried}");
 }
