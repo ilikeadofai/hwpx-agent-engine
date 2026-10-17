@@ -14,7 +14,7 @@ fn fixture(body: &str) -> Document {
         r#"<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph" xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head" xmlns:x="urn:test:opaque">{body}</hs:sec>"#
     );
     state.set("Contents/section0.xml", Arc::from(section.into_bytes()));
-    state.set("Contents/header.xml", Arc::from(br#"<hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head" xmlns:x="urn:opaque"><hh:refList><hh:paraProperties itemCnt="1"><hh:paraPr id="0" x:keep="preserve"><hh:align horizontal="LEFT" vertical="BASELINE"/><hh:lineSpacing type="PERCENT" value="160"/><x:untouched>opaque</x:untouched></hh:paraPr></hh:paraProperties></hh:refList></hh:head>"#.to_vec()));
+    state.set("Contents/header.xml", Arc::from(br#"<hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head" xmlns:x="urn:opaque"><hh:refList><hh:charProperties itemCnt="2"><hh:charPr id="0"/><hh:charPr id="1"/></hh:charProperties><hh:paraProperties itemCnt="1"><hh:paraPr id="0" x:keep="preserve"><hh:align horizontal="LEFT" vertical="BASELINE"/><hh:lineSpacing type="PERCENT" value="160"/><x:untouched>opaque</x:untouched></hh:paraPr></hh:paraProperties></hh:refList></hh:head>"#.to_vec()));
     let plan = hae_package::zip_plan(&archive, &state).unwrap();
     Document::open(hae_zip::write(&archive, &plan).unwrap(), &limits).unwrap()
 }
@@ -266,10 +266,10 @@ fn unsupported_text_attributes_and_grapheme_edges_are_not_advertised() {
     let v = serde_json::to_value(d.outline(d.node(&id).unwrap())).unwrap();
     assert_eq!(
         v["textSpans"],
-        serde_json::json!([{"start":0,"end":1},{"start":2,"end":3},{"start":9,"end":12}])
+        serde_json::json!([{"start":0,"end":1},{"start":2,"end":3},{"start":10,"end":12}])
     );
     assert_eq!(v["edits"]["paragraph.format"]["available"], false);
-    for range in [0..1, 2..3, 9..12] {
+    for range in [0..1, 2..3, 10..12] {
         apply(
             &d,
             &[EditOp::TextReplace {
@@ -381,9 +381,10 @@ fn cell_capability_accounts_for_its_entire_content_and_empty_insertion_path() {
 }
 
 #[test]
-fn every_grapheme_subrange_agrees_with_advertised_spans() {
+fn every_advertised_grapheme_subrange_is_supported_by_planner() {
     // Independently enumerate all possible non-empty ranges and execute the
-    // existing mutation planner; no expected span is derived from that planner.
+    // existing mutation planner. The stricter save-gate contract is checked
+    // through SessionExecutor in hae-exec/tests/editable_verified.rs.
     for inner in [
         "ab<hp:tab/>cd",
         "é&amp;<![CDATA[xy]]>👨‍👩",
@@ -412,7 +413,9 @@ fn every_grapheme_subrange_agrees_with_advertised_spans() {
                         text: "X".into(),
                     }],
                 );
-                assert_eq!(result.is_ok(), advertised, "{inner} {start}..{end}");
+                if advertised {
+                    assert!(result.is_ok(), "{inner} {start}..{end}");
+                }
             }
         }
     }

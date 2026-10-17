@@ -9,6 +9,7 @@ use crate::is_hp;
 use hae_xml::{Item, XmlDoc};
 use schemars::JsonSchema;
 use serde::Serialize;
+use std::collections::BTreeSet;
 use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -72,6 +73,8 @@ pub struct ParaText {
     pub pieces: Vec<Piece>,
     /// Codepoint offset of each grapheme boundary (len = graphemes + 1).
     pub grapheme_cps: Vec<usize>,
+    /// Zero-width lexical barriers, independently enforced by the save gate.
+    pub verification_barriers: BTreeSet<usize>,
 }
 
 fn placeholder(name: &str) -> char {
@@ -87,6 +90,7 @@ impl ParaText {
         let mut text = String::new();
         let mut pieces = Vec::new();
         let mut cp = 0usize;
+        let mut verification_barriers = BTreeSet::new();
         let push = |text: &mut String,
                     pieces: &mut Vec<Piece>,
                     cp: &mut usize,
@@ -110,7 +114,16 @@ impl ParaText {
             if !(is_hp(r.ns.as_deref()) && r.local == "run") {
                 continue;
             }
-            for &c in &r.children {
+            for item in &r.items {
+                let Item::Element(c) = item else {
+                    if item.text().is_some_and(|s| !s.trim().is_empty())
+                        || matches!(item, Item::Comment(_) | Item::Pi(_))
+                    {
+                        verification_barriers.insert(cp);
+                    }
+                    continue;
+                };
+                let c = *c;
                 let ce = doc.el(c);
                 if is_hp(ce.ns.as_deref()) && ce.local == "t" {
                     for it in &ce.items {
@@ -133,15 +146,18 @@ impl ParaText {
                                 run,
                                 Some(c),
                             ),
-                            Item::CData { raw, text: s } => push(
-                                &mut text,
-                                &mut pieces,
-                                &mut cp,
-                                s,
-                                PieceKind::CData { raw: raw.clone() },
-                                run,
-                                Some(c),
-                            ),
+                            Item::CData { raw, text: s } => {
+                                push(
+                                    &mut text,
+                                    &mut pieces,
+                                    &mut cp,
+                                    s,
+                                    PieceKind::CData { raw: raw.clone() },
+                                    run,
+                                    Some(c),
+                                );
+                                verification_barriers.insert(cp);
+                            }
                             Item::Element(e) => {
                                 let ee = doc.el(*e);
                                 let name = ee.local.clone();
@@ -177,7 +193,9 @@ impl ParaText {
                                     Some(c),
                                 );
                             }
-                            Item::Comment(_) | Item::Pi(_) => {}
+                            Item::Comment(_) | Item::Pi(_) => {
+                                verification_barriers.insert(cp);
+                            }
                         }
                     }
                 } else {
@@ -211,6 +229,7 @@ impl ParaText {
             text,
             pieces,
             grapheme_cps,
+            verification_barriers,
         }
     }
 
@@ -234,21 +253,28 @@ impl ParaText {
                 }
             }
         };
+        let chars: Vec<_> = self.text.chars().collect();
         for piece in &self.pieces {
-            if piece.cp_len == 0 {
-                continue;
-            }
-            let safe = matches!(
-                piece.kind,
-                PieceKind::Text { .. } | PieceKind::Ref { .. } | PieceKind::CData { .. }
-            ) && piece.t.is_some_and(|t| text_element_supported(doc, t));
-            if safe {
-                start.get_or_insert(piece.cp_start);
-                end = piece.cp_start + piece.cp_len;
-            } else if let Some(a) = start.take() {
-                emit(a, end, &mut result);
-                if result.text_spans_truncated {
-                    return result;
+            let safe = matches!(piece.kind, PieceKind::Text { .. } | PieceKind::Ref { .. })
+                && piece.t.is_some_and(|t| text_element_supported(doc, t));
+            for (cp, ch) in chars
+                .iter()
+                .enumerate()
+                .skip(piece.cp_start)
+                .take(piece.cp_len)
+            {
+                let safe = safe && !['\t', '\n', '\r'].contains(ch);
+                if !safe || self.verification_barriers.contains(&cp) {
+                    if let Some(a) = start.take() {
+                        emit(a, end, &mut result);
+                        if result.text_spans_truncated {
+                            return result;
+                        }
+                    }
+                }
+                if safe {
+                    start.get_or_insert(cp);
+                    end = cp + 1;
                 }
             }
         }

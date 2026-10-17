@@ -120,6 +120,24 @@ fn num(s: Option<String>) -> Option<u32> {
 }
 
 impl Document {
+    /// Deterministic failures for material edits. No-op requests may bypass the
+    /// save gate; those do not constitute an editing capability.
+    fn verification_block_reason(&self, n: &Node) -> Option<String> {
+        if self.invalid_references {
+            return Some("verify_invalid_references".into());
+        }
+        let doc = self.doc_of(n);
+        let top = doc
+            .ancestors(n.el)
+            .find(|&a| doc.el(a).parent == Some(doc.root()));
+        let top = top.unwrap_or(n.el);
+        if !(n.kind == Kind::Section
+            || is_hp(doc.el(top).ns.as_deref()) && doc.el(top).local == "p")
+        {
+            return Some("verify_no_top_level_paragraph".into());
+        }
+        None
+    }
     /// Text of a node: paragraph text; for cells/tables the text of their paragraphs.
     pub fn node_text(&self, n: &Node) -> String {
         match n.kind {
@@ -187,7 +205,10 @@ impl Document {
     /// Geometry and content preconditions only; parameter validation and resource
     /// budgets still apply when the caller supplies an actual edit.
     pub fn paragraph_text_spans(&self, n: &Node) -> TextSpans {
-        if n.kind != Kind::Paragraph || self.check_editable(n).is_err() {
+        if n.kind != Kind::Paragraph
+            || self.check_editable(n).is_err()
+            || self.verification_block_reason(n).is_some()
+        {
             return TextSpans::default();
         }
         self.para_text(n)
@@ -196,6 +217,9 @@ impl Document {
     }
 
     fn text_replace_reason(&self, n: &Node, spans: &TextSpans) -> Option<String> {
+        if let Some(r) = self.verification_block_reason(n) {
+            return Some(r);
+        }
         if !spans.text_spans.is_empty() {
             return None;
         }
@@ -212,6 +236,9 @@ impl Document {
     /// At least one of alignment/lineSpacing must be changeable. Availability
     /// does not promise that every combination of formatting parameters works.
     pub fn paragraph_format_block_reason(&self, n: &Node) -> Option<String> {
+        if let Some(r) = self.verification_block_reason(n) {
+            return Some(r);
+        }
         let Some(header) = self.info.header.as_ref().and_then(|h| self.xml.get(h)) else {
             return Some("no_header".into());
         };
@@ -254,7 +281,17 @@ impl Document {
     }
 
     pub fn cell_set_text_block_reason(&self, n: &Node) -> Option<String> {
+        let doc = self.doc_of(n);
+        if doc
+            .ancestors(n.el)
+            .any(|a| is_hp(doc.el(a).ns.as_deref()) && doc.el(a).local == "tc")
+        {
+            return Some("nested_cell".into());
+        }
         if let Some(r) = self.cell_block_reason(n) {
+            return Some(r);
+        }
+        if let Some(r) = self.verification_block_reason(n) {
             return Some(r);
         }
         let Some(para) = self.children(&n.id).find(|p| p.kind == Kind::Paragraph) else {
@@ -265,6 +302,23 @@ impl Document {
         }
         let pt = self.para_text(para).ok()?;
         let doc = self.doc_of(para);
+        let len = pt.text.chars().count();
+        if pt
+            .pieces
+            .iter()
+            .any(|p| matches!(p.kind, PieceKind::CData { .. }))
+            || pt.text.contains(['\t', '\n', '\r'])
+                && !pt
+                    .pieces
+                    .iter()
+                    .any(|p| matches!(p.kind, PieceKind::Control { .. }))
+            || pt
+                .verification_barriers
+                .iter()
+                .any(|&b| len == 0 || (0 < b && b < len))
+        {
+            return Some("verify_unsupported_markup".into());
+        }
         if pt.pieces.is_empty() {
             let Some(run) = doc
                 .el(para.el)
@@ -314,7 +368,8 @@ impl Document {
         let global = self
             .check_editable(n)
             .err()
-            .map(|e| e.reason().unwrap_or("not_editable").to_string());
+            .map(|e| e.reason().unwrap_or("not_editable").to_string())
+            .or_else(|| self.verification_block_reason(n));
         let mut edits = BTreeMap::new();
         let mut add = |name: &str, reason: Option<String>| {
             edits.insert(

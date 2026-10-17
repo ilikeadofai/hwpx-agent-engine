@@ -179,6 +179,8 @@ pub struct Document {
     pub limits: Limits,
     /// Section entries whose layout cache was invalidated by edits.
     pub stale_layout: Vec<String>,
+    /// Cached discovery precondition; recomputed on every rebuild, not per node.
+    invalid_references: bool,
 }
 
 fn mimetype_stored(a: &Archive) -> bool {
@@ -320,6 +322,7 @@ impl Document {
                 "duplicate nodeId",
             ));
         }
+        let invalid_references = references_invalid(&info, &xml);
         let mut d = Document {
             document_id,
             original,
@@ -331,6 +334,7 @@ impl Document {
             permissions: Permissions::default(),
             limits,
             stale_layout,
+            invalid_references,
         };
         d.compute_permissions();
         Ok(d)
@@ -572,6 +576,38 @@ impl Document {
 }
 
 pub const NS_CORE: &str = NS_HC;
+
+// Deliberately independent of hae-verify::validate_refs. Executor property tests
+// cross-check discovery against that gate without adding a verifier dependency
+// on the mutation planner/model.
+fn references_invalid(info: &PackageInfo, xml: &XmlMap) -> bool {
+    let Some(header) = info.header.as_ref().and_then(|h| xml.get(h)) else {
+        return false;
+    };
+    for (definition, reference) in [
+        ("paraPr", "paraPrIDRef"),
+        ("charPr", "charPrIDRef"),
+        ("style", "styleIDRef"),
+        ("borderFill", "borderFillIDRef"),
+    ] {
+        let mut ids = HashSet::new();
+        for (_, e) in header.iter().filter(|(_, e)| e.is(NS_HH, definition)) {
+            if let Some(id) = e.attr_value("id") {
+                if !ids.insert(id) {
+                    return true;
+                }
+            }
+        }
+        if info.sections.iter().any(|s| {
+            xml[s]
+                .iter()
+                .any(|(_, e)| e.attr_value(reference).is_some_and(|r| !ids.contains(r)))
+        }) {
+            return true;
+        }
+    }
+    false
+}
 
 #[cfg(test)]
 mod tests;
