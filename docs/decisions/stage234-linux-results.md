@@ -60,3 +60,17 @@ Claude 5시간 한도는 2026-10-17 01:40 KST 초기화 후 01:40:52 조회에�
 GPT 6.1 Sol이 `bf555f1` + 수정 fixture·결과 문서 작업 트리에서 재실행했다. `bash scripts/check.sh` 종료 0(fmt·Clippy·래스터 작업자 빌드, Rust 244 passed·0 failed·0 ignored, Python 도우미 30개 OK), `python3 -m unittest discover -s tests/oracle` 88개 OK, `python3 scripts/evaluate_mcp.py --output-dir spikes/work/stage4-linux/2026-10-17-final-gate` 94 passed·0 failed다. 로컬 로그는 `/tmp/hae-final-wrap-{check,oracle,mcp}.log`다. 최종 MCP의 HWPX 4개·PNG 2개는 위 `2026-10-17-setb-fix` 인계 출처와 바이트 동일하다.
 
 Windows 인계 `engine_inputs/01–04`와 `linux_reference_png/{before,after}.png`를 수정 fixture 실행 산출물로 교체하고 안내 §3·`provenance.json`·`SHA256SUMS.txt`를 갱신했다. SHA-256으로 01=03, 02=04를 확인했다. `spikes/work/Windows_검증_인계_20261017.zip`은 `testzip()` 통과, 압축 파일과 원본 일치, 해시 목록 22개·빈 반환 폴더 4개 보존을 확인했다. ZIP SHA-256: `4dae3215788fee6b71ad28c7f0ee1a8945cef3e068181075014d04047b9a37da`. 인계 묶음과 실행 산출물은 기존 `spikes/work/` Git 무시 정책을 유지한다. Windows·한컴 비교는 계속 `not_checked`다.
+
+## Linux 범위 완료 판정 (2026-10-17)
+
+0.1에서 Linux로 수행 가능한 작업은 모두 완료했다. 단계 1·2·3의 완료 판정은 **예**이며, 단계 4의 Linux 범위도 실제 stdio MCP **94/94 통과**와 Gemini 3.8 Flash High의 실제 픽셀 판독에 따른 **세트 A·B 시각 PASS**로 완료했다. [단계 1 결과](stage1-results.md), [단계 2·3 최종 판정](code-review/gpt-6.1-sol-stage2-3.md), [시각 검토 기록](stage3-visual-check.md)을 근거로 한다.
+
+다음 항목은 **Linux 범위 밖이며 이번 완료 판정에 포함하지 않는다**.
+
+- Windows에서의 S4 한컴 재열기.
+- 한컴 출력과의 기준 조판 비교(`nativeComparison`).
+- 사용자 작성 한컴 fixture 확보·평가.
+- 한컴 SDK 분석.
+- `wip/stage1-model-edit`를 `main`에 병합할지에 대한 사용자 결정.
+
+위 Windows·한컴 검증 4개 항목의 인계 자료는 `spikes/work/Windows_검증_인계_20261017.zip`에 준비했다. ZIP SHA-256: `4dae3215788fee6b71ad28c7f0ee1a8945cef3e068181075014d04047b9a37da`. 준비 완료는 해당 검증의 실행 완료를 뜻하지 않는다. [설계 §13](../superpowers/specs/2026-10-16-hwpx-engine-0.1-design.md#13-검증과-완료-조건)에 따라 **Windows 결과가 돌아오기 전까지 0.1 전체의 최종 완료는 선언하지 않는다**.

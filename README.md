@@ -4,7 +4,7 @@ AI 에이전트와 사람이 같은 명령으로 HWPX 문서를 조회·편집·
 
 ## 현재 상태
 
-2026-10-17 기준, Linux 단계 0 선행 시험(S1~S3), 단계 1 코어, **단계 2 JSON-lines·stdio MCP 인터페이스**를 구현·검증했다. 단계 3의 `rhwp` 렌더링과 별도 `hae-raster` PNG 작업자에 bubblewrap 격리·시간 제한·프로세스별 주소 공간 제한을 적용했고, 단계 4의 Linux MCP 대표 시나리오를 검증했다. 최종 이미지 시각 판독은 `UNVERIFIED`, Windows 한컴 재열기(S4)·기준 조판 비교는 `not_checked`다.
+2026-10-17 기준, **0.1의 Linux 범위는 완료**했다. 단계 0 선행 시험(S1~S3)을 통과했고, 단계 1 코어·단계 2 JSON-lines·stdio MCP·단계 3 격리 렌더링의 완료 판정은 예이며, 단계 4 Linux 범위는 실제 stdio MCP 94/94와 세트 A·B 실제 픽셀 시각 판독 PASS로 완료했다. **Windows·한컴 검증은 대기 중**이며, S4 한컴 재열기·한컴 출력과의 `nativeComparison`·사용자 작성 한컴 fixture 평가·한컴 SDK 분석은 이번 완료 범위 밖이다. 설계 §13에 따라 Windows 결과 회수 전까지 0.1 전체의 최종 완료는 선언하지 않는다. `main` 병합 여부는 사용자 결정 사항이다. [Linux 범위 완료 판정](docs/decisions/stage234-linux-results.md#linux-범위-완료-판정-2026-10-17)을 따른다.
 
 - **단계 1 코어(10개 crate)**:
   - `hae-diag`: 진단·오류 코드(31종), 패키지 거절 사유(18종), `Limits` 상수, 자원 예산 타입
@@ -19,7 +19,7 @@ AI 에이전트와 사람이 같은 명령으로 HWPX 문서를 조회·편집·
   - `hae-cli`: `hae script`(단일 세션 스크립트 실행) 및 `hae run`(단발 실행, 일회성 Undo/Redo는 `SESSION_REQUIRED` 거절)
 - **추가 인터페이스·프리뷰 crate**: `hae-jsonl`(요청 1 MiB·응답 4 MiB), `hae-mcp`(레지스트리 기반 도구·실제 프로세스 동등성), `hae-render-rhwp`(bubblewrap 격리, 페이지 선택, SVG 검사, PNG 변환, 쪽 대응 검증).
 - **대형 프리뷰 전달**: 실제 JSON 및 MCP 이스케이프 예산을 초과하는 쪽은 출력 루트의 PNG/SVG 파일로 제공한다. 원본·기존 파일을 덮어쓰지 않고 해시와 경로를 반환한다.
-- **검증 상태**: 최종 독립 Linux 관문은 fmt·Clippy와 Rust 243개, 독립 Python oracle 88개, 사용량 도우미 시험 30개를 통과했다. 실제 stdio MCP 대표 시나리오도 86개 검증을 통과했다. [최종 결과와 재현 명령](docs/decisions/stage234-linux-results.md)에 범위를 기록했다. 이 수치는 임의 문서의 한컴 조판 호환성이나 전체 프로세스 RSS 보장을 의미하지 않는다.
+- **검증 상태**: 최종 Linux 관문은 fmt·Clippy와 Rust 244개, 독립 Python oracle 88개, 사용량 도우미 시험 30개를 통과했다. 실제 stdio MCP 대표 시나리오도 94개 검증을 통과했다. [최종 결과와 재현 명령](docs/decisions/stage234-linux-results.md)에 범위를 기록했다. 이 수치는 임의 문서의 한컴 조판 호환성이나 전체 프로세스 RSS 보장을 의미하지 않는다.
 - **사용 안내**: [설치·MCP 연결·편집·프리뷰 안내서](docs/user-guide.md). 별도 `rhwp`·`hae-raster` 실행 파일, `bwrap`, 제한된 폰트 폴더가 필요하다.
 
 

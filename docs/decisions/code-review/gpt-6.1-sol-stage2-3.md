@@ -49,3 +49,5 @@ R1/R2는 정적 SVG 어휘·CSS/MIME 제한과 내장 래스터 헤더·누적 �
 ## 2026-10-17 단계 3 최종 판정 (R1–R9 수정·최종 관문 반영)
 
 R1–R9 수정과 격리 PNG 작업자 반영 후의 최종 Linux 관문은 [stage234-linux-results.md](../stage234-linux-results.md)에 기록되어 있다. 해당 관문의 `scripts/check.sh` 종료 0, Rust 243개·사용량 도우미 30개·oracle 88개 통과와 실제 stdio MCP 86/86 통과를 근거로 단계 3 완료 조건 충족: **예(조건부)**. 남은 단일 조건: **시각 판정은 stage3-visual-check.md를 따른다**.
+
+단계 3 완료 조건 충족: 예 (2026-10-17, 남은 조건이던 시각 판정이 세트 A·B 모두 PASS로 충족됨)

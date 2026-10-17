@@ -74,3 +74,5 @@ Sol 검토 문서는 "단계 3 완료 조건 충족: 보강 검증 중"에서 �
 검증: `bash scripts/check.sh` 종료 0(fmt·Clippy·래스터 작업자 빌드, Rust 244개·Python 도우미 30개 통과), `python3 -m unittest discover -s tests/oracle` 88개 통과. 로그: `/tmp/hae-flow-check.log`, `/tmp/hae-flow-oracle.log`. 인계 ZIP의 CRC·원본 파일 일치·해시 목록 22개·빈 반환 폴더 4개를 확인했다. 새 ZIP SHA-256: `79f8040ec4f102b321c038ccf8c604af8320fd15b922e707522ebb45c98be41b`.
 
 8. **2-1**: Gemini 3.8 Flash High가 T3 첨부의 실제 픽셀로 세트 A·B를 모두 PASS로 판정했다(세트 B는 [합성 fixture 수정](stage3-setb-clipping.md) 후 재확인). [시각 검토 기록](stage3-visual-check.md)을 따르며 한컴 비교는 `not_checked`다.
+
+9. **Linux 범위 최종 판정**: [Linux 범위 완료 판정 (2026-10-17)](stage234-linux-results.md#linux-범위-완료-판정-2026-10-17)에 Linux 완료와 Windows·한컴 검증 및 사용자 병합 결정의 제외 범위를 확정했다.
