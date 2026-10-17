@@ -406,6 +406,7 @@ dependencies = [
  "hae-package",
  "hae-xml",
  "hae-zip",
+ "schemars",
  "serde",
  "serde_json",
  "sha2",

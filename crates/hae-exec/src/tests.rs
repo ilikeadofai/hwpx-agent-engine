@@ -493,3 +493,72 @@ fn history_100_unit_eviction_clear_and_snapshot_release_and_memory_budget() {
     let undo_empty = exec.call("history.undo", json!({}), Some(rev_before), false);
     assert_eq!(code_of(&undo_empty), Code::HistoryEmpty);
 }
+
+#[test]
+fn query_result_schemas_describe_real_outlines_and_capabilities() {
+    for (name, field) in [
+        ("document.inspect", "items"),
+        ("element.query", "matches"),
+        ("element.get", "outline"),
+    ] {
+        let schema = command_describe(name).unwrap().output_schema;
+        assert!(
+            schema["properties"][field].is_object(),
+            "{name}: missing result field"
+        );
+        let outline = &schema["$defs"]["Outline"];
+        for prop in [
+            "edits",
+            "editable",
+            "textSpans",
+            "textSpansTruncated",
+            "childParagraphsEditable",
+        ] {
+            assert!(
+                outline["properties"][prop].is_object(),
+                "{name}: missing {prop}: {schema}"
+            );
+        }
+    }
+}
+
+#[test]
+fn default_inspect_page_with_many_spans_stays_under_response_budget() {
+    let t = TempDir::new();
+    let limits = Limits::default();
+    let archive = hae_zip::Archive::open(rich_hwpx_bytes(), &limits).unwrap();
+    let mut state = hae_package::PackageState::from_archive(&archive);
+    let paragraph = format!(
+        r#"<hp:p paraPrIDRef="0"><hp:run><hp:t>{}</hp:t></hp:run></hp:p>"#,
+        "x<hp:tab/>".repeat(65)
+    );
+    let section = format!(
+        r#"<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph">{}</hs:sec>"#,
+        paragraph.repeat(100)
+    );
+    state.set(
+        "Contents/section0.xml",
+        std::sync::Arc::from(section.into_bytes()),
+    );
+    let source = t.0.join("many-spans.hwpx");
+    fs::write(
+        &source,
+        hae_zip::write(&archive, &hae_package::zip_plan(&archive, &state).unwrap()).unwrap(),
+    )
+    .unwrap();
+    let mut exec = SessionExecutor::new(&t.0, &t.0, limits).unwrap();
+    assert!(
+        exec.call("document.open", json!({"path":source}), None, false)
+            .ok
+    );
+    let response = exec.call("document.inspect", json!({}), None, false);
+    assert!(response.ok);
+    assert!(serde_json::to_vec(&response).unwrap().len() < limits.max_response_bytes as usize);
+    let result = response.result.unwrap();
+    assert_eq!(result["items"].as_array().unwrap().len(), 100);
+    assert!(result["nextCursor"].is_string());
+    for item in result["items"].as_array().unwrap().iter().skip(1) {
+        assert_eq!(item["textSpans"].as_array().unwrap().len(), 64);
+        assert_eq!(item["textSpansTruncated"], true);
+    }
+}

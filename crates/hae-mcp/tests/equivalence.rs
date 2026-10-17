@@ -306,6 +306,20 @@ impl Driver for Mcp {
 fn semantic(command: &str, response: &Value) -> Value {
     let result = &response["result"];
     let count = |value: &Value| value.as_array().map(Vec::len);
+    let capabilities = result["matches"].as_array().map(|items| {
+        items.iter().map(|item| {
+            assert!(item["edits"].is_object(), "discovery must report per-command edits");
+            if item["kind"] == "paragraph" {
+                assert!(item["textSpans"].is_array());
+                assert!(item["textSpansTruncated"].is_boolean());
+            }
+            json!({
+                "edits": item["edits"], "editable": item["editable"],
+                "textSpans": item["textSpans"], "textSpansTruncated": item["textSpansTruncated"],
+                "childParagraphsEditable": item["childParagraphsEditable"],
+            })
+        }).collect::<Vec<_>>()
+    });
     json!({
         "command": command,
         "ok": response["ok"],
@@ -317,6 +331,7 @@ fn semantic(command: &str, response: &Value) -> Value {
         "afterVersion": result["afterVersion"],
         "changedIds": count(&result["changedIds"]),
         "matches": count(&result["matches"]),
+        "capabilities": capabilities,
         "exportedVersion": result["exportedVersion"],
         "unmodifiedPassthrough": result["unmodifiedPassthrough"],
     })

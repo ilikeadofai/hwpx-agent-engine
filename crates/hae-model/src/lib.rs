@@ -20,7 +20,19 @@ use std::sync::Arc;
 pub use para::{ParaText, Piece, PieceKind};
 
 /// Kinds of elements that receive a nodeId (spec §5).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    PartialOrd,
+    Ord,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
     Section,

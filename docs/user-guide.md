@@ -162,11 +162,15 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
   "textContains": "탐구 보고서"
 }
 ```
-- **응답**: 조건에 맞는 요소들의 고유 ID(`nodeId`, 예: `"node-p1"`), 현재 텍스트, 편집 가능 여부(`editable: true`)가 반환됩니다.
+- **응답**: 조건에 맞는 요소의 고유 ID(`nodeId`), 텍스트 미리보기와 명령별 `edits`가 반환됩니다. **노드의 `editable`은 `edits` 중 하나라도 `available: true`라는 뜻**입니다. 텍스트 교체가 된다는 뜻으로 사용하지 마세요. 예를 들어 객체만 있는 문단도 `paragraph.format`이 가능하면 `editable: true`입니다.
+- 문단의 `edits["text.replace"].available`을 확인한 뒤, `textSpans`의 한 구간 안에서 길이가 0보다 큰 범위를 고릅니다. `textSpans`는 객체·제어 문자·해석 불가 텍스트 속성을 건드리지 않는 최대 구간이며, 기존 `range`와 같은 **extended grapheme cluster의 반열린 `[start,end)` 오프셋**을 사용합니다. 여러 run·문자 참조·CDATA에 걸친 안전한 텍스트는 한 구간이 될 수 있습니다.
+- 문단당 앞의 64개 구간까지 제공합니다. `textSpansTruncated: true`이면 뒤쪽 구간이 생략된 것이므로 목록 밖 전체를 편집 불가로 단정하지 마세요. 구간이 없으면 `no_text_span`, 빈 문단이면 `empty_paragraph_insert_unsupported`를 보고합니다. 문서 권한·노드 잠금이 막으면 명령이 모두 비활성화되고 `textSpans`는 빈 목록입니다.
+- 셀의 `cell.setText`가 `merged_cell` 또는 `cell_paragraph_count` 등으로 불가능해도 `childParagraphsEditable: true`일 수 있습니다. 이는 자손 문단 중 적어도 하나가 `text.replace` 가능하다는 뜻입니다. `ancestor: "<셀 nodeId>"`, `kind: "paragraph"`로 자손을 찾아 각 문단의 `edits`와 `textSpans`를 확인합니다.
+- 같은 개요 계약을 `document_inspect.items`, `element_query.matches`, `element_get.outline`에 제공합니다. inspect 기본 페이지는 100개(최대 500개)입니다. 조회 최상위 `editable`(inspect/open)은 문서 전체 권한을 뜻하며 개별 노드의 편집 가능성과 구분합니다. `available`은 현재 노드에 지원되는 편집 경로가 있다는 뜻으로, 잘못된 인자·버전·자원 한도까지 면제하지는 않습니다.
 - 표의 특정 칸을 찾을 때는 `kind: "cell"`, `table: "<표 nodeId>"`, `row: 0`, `col: 0`(0부터 시작하는 행·열 번호)으로 검색하거나 `element_get`으로 문단 전체 텍스트와 글자 수를 확인합니다.
 
 ### ③ 텍스트 교체 (`text_replace`)
-찾아낸 문단(`node-p1`)에서 앞의 5글자(`"탐구 보고서"`, 범위 `[0, 5)`)를 `"최종 연구 보고서"`로 바꿉니다. 편집 명령에는 항상 현재 버전 번호를 `expectedVersion`으로 함께 보냅니다.
+문단의 `edits["text.replace"].available`이 true이고 `[0,5)`가 한 `textSpans` 구간에 포함되는지 확인합니다. 찾아낸 문단(`node-p1`)에서 앞의 5글자(`"탐구 보고서"`, 범위 `[0, 5)`)를 `"최종 연구 보고서"`로 바꿉니다. 편집 명령에는 항상 현재 버전 번호를 `expectedVersion`으로 함께 보냅니다.
 ```json
 {
   "documentId": "doc-1",
@@ -303,3 +307,11 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 PNG 변환에는 같은 빌드의 `hae-raster`가 필요합니다. 저장소 루트에서 `cargo build --workspace --release`로 함께 빌드하고 `hae`·`hae-jsonl`·`hae-mcp`와 같은 폴더에 배치하세요. 다른 위치라면 `HAE_RASTER`에 절대 경로를 지정합니다. PATH는 검색하지 않습니다. 작업 파일이 없거나 실패했을 때 엔진 프로세스 안에서 PNG 변환을 대신 실행하지 않습니다.
 
 작업 파일은 읽기 전용 SVG·폰트 스냅샷을 받아 네트워크가 차단된 격리 안에서 실행하며, 프로세스별 주소 공간·시간·출력 상한을 적용합니다. 이 한도와 일반 엔진 메모리 회계값을 전체 시스템 RSS나 디스크 하드 quota로 해석하지 마세요. 실제 지원·실패 범위는 `docs/decisions/resumption-review/raster-worker.md`의 검증 기록을 따릅니다.
+
+### 텍스트 범위 거절 후 재시도
+
+`RANGE_CROSSES_CONTROL`의 진단 `detail`에는 해당 문단의 `textSpans`와
+`textSpansTruncated`가 포함됩니다. batch 오류에도 `detail.failedStep`과 함께 유지되며,
+실패 단계 직전 후보 상태의 오프셋입니다. batch가 롤백되면 현재 revision을 다시 조회한 뒤
+새 구간으로 요청합니다. 객체를 가로지르는 교체, 빈 문단 `text.replace` 삽입,
+다문단 셀의 `cell.setText`는 0.1에서 지원하지 않습니다.

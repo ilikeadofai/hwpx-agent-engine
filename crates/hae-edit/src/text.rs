@@ -29,7 +29,7 @@ fn check_new_text(text: &str) -> Result<()> {
 }
 
 /// Known attributes of hp:t; anything else is uninterpreted (spec §6).
-const T_ATTRS: &[&str] = &["charPrIDRef"];
+use hae_model::para::TEXT_ATTRS as T_ATTRS;
 
 type Splice = (Range<usize>, Vec<u8>);
 
@@ -55,7 +55,11 @@ fn plan_replace(
                     Stage::Validate,
                     format!("range crosses a {name} control"),
                 )
-                .with_target(&para.id));
+                .with_target(&para.id)
+                .with_detail(
+                    serde_json::to_value(d.doc.paragraph_text_spans(para))
+                        .expect("text spans serialize"),
+                ));
             }
             PieceKind::Other { name, .. } => {
                 return Err(EngineError::new(

@@ -214,6 +214,41 @@ pub struct GenericResultShape {
     pub revision: Option<u64>,
 }
 
+/// Discovery schemas describe the command result inside ResponseEnvelope.result.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct InspectResultShape {
+    pub document_id: String,
+    pub revision: u64,
+    /// Document-wide permission; node editability is in each Outline.edits.
+    pub editable: bool,
+    pub readonly_reasons: Vec<String>,
+    pub items: Vec<hae_model::query::Outline>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryResultShape {
+    pub document_id: String,
+    pub revision: u64,
+    pub matches: Vec<hae_model::query::Outline>,
+    pub unaligned_matches: usize,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GetResultShape {
+    pub document_id: String,
+    pub revision: u64,
+    pub outline: hae_model::query::Outline,
+    pub text: String,
+    pub grapheme_count: Option<usize>,
+    pub alignment: Option<String>,
+    pub line_spacing_percent: Option<u32>,
+    pub children: Vec<String>,
+}
+
 /// Parsed, strongly typed command enum. No arbitrary string-to-function dispatch.
 #[derive(Debug, Clone)]
 pub enum ParsedCommand {
@@ -373,7 +408,7 @@ define_commands! {
         category: Query,
         mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
         stage1: true, reason: None,
-        params: DocumentInspectParams, output: GenericResultShape,
+        params: DocumentInspectParams, output: InspectResultShape,
     },
     DocumentClose {
         name: "document.close",
@@ -393,7 +428,7 @@ define_commands! {
         category: Query,
         mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
         stage1: true, reason: None,
-        params: ElementQueryParams, output: GenericResultShape,
+        params: ElementQueryParams, output: QueryResultShape,
     },
     ElementGet {
         name: "element.get",
@@ -403,7 +438,7 @@ define_commands! {
         category: Query,
         mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
         stage1: true, reason: None,
-        params: ElementGetParams, output: GenericResultShape,
+        params: ElementGetParams, output: GetResultShape,
     },
     TextReplace {
         name: "text.replace",

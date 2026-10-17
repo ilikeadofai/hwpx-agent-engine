@@ -232,9 +232,11 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
             } => format::paragraph_format(&mut d, target, *alignment, *line_spacing),
             EditOp::ImageReplace { target, image } => image::image_replace(&mut d, target, image),
         };
-        r.map_err(|e| {
+        r.map_err(|mut e| {
             if ops.len() > 1 {
-                e.with_detail(serde_json::json!({ "failedStep": i }))
+                let mut detail = e.0.detail.take().unwrap_or_else(|| serde_json::json!({}));
+                detail["failedStep"] = serde_json::json!(i);
+                e.with_detail(detail)
             } else {
                 e
             }

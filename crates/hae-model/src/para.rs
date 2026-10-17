@@ -7,10 +7,36 @@
 
 use crate::is_hp;
 use hae_xml::{Item, XmlDoc};
+use schemars::JsonSchema;
+use serde::Serialize;
 use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
 
 pub const OBJECT_CHAR: char = '\u{FFFC}';
+/// Same hp:t attribute allowlist used by the mutation planner.
+pub const TEXT_ATTRS: &[&str] = &["charPrIDRef"];
+pub const MAX_TEXT_SPANS: usize = 64;
+
+pub fn text_element_supported(doc: &XmlDoc, t: usize) -> bool {
+    doc.el(t).attrs.iter().all(|a| {
+        a.qname == "xmlns"
+            || a.qname.starts_with("xmlns:")
+            || (a.ns.is_none() && TEXT_ATTRS.contains(&a.local.as_str()))
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct TextSpan {
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextSpans {
+    pub text_spans: Vec<TextSpan>,
+    pub text_spans_truncated: bool,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PieceKind {
@@ -186,6 +212,50 @@ impl ParaText {
             pieces,
             grapheme_cps,
         }
+    }
+
+    /// Maximal editable intervals, rounded inward to whole graphemes. A grapheme
+    /// touching a control or uninterpreted hp:t is excluded in its entirety.
+    pub fn replaceable_spans(&self, doc: &XmlDoc) -> TextSpans {
+        let mut result = TextSpans::default();
+        let mut start = None;
+        let mut end = 0;
+        let emit = |start: usize, end: usize, result: &mut TextSpans| {
+            let a = self.grapheme_cps.partition_point(|&cp| cp < start);
+            let b = self
+                .grapheme_cps
+                .partition_point(|&cp| cp <= end)
+                .saturating_sub(1);
+            if a < b {
+                if result.text_spans.len() == MAX_TEXT_SPANS {
+                    result.text_spans_truncated = true;
+                } else {
+                    result.text_spans.push(TextSpan { start: a, end: b });
+                }
+            }
+        };
+        for piece in &self.pieces {
+            if piece.cp_len == 0 {
+                continue;
+            }
+            let safe = matches!(
+                piece.kind,
+                PieceKind::Text { .. } | PieceKind::Ref { .. } | PieceKind::CData { .. }
+            ) && piece.t.is_some_and(|t| text_element_supported(doc, t));
+            if safe {
+                start.get_or_insert(piece.cp_start);
+                end = piece.cp_start + piece.cp_len;
+            } else if let Some(a) = start.take() {
+                emit(a, end, &mut result);
+                if result.text_spans_truncated {
+                    return result;
+                }
+            }
+        }
+        if let Some(a) = start {
+            emit(a, end, &mut result);
+        }
+        result
     }
 
     pub fn grapheme_len(&self) -> usize {

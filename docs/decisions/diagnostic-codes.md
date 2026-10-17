@@ -61,3 +61,18 @@ PACKAGE_REJECTED의 reason 값: encrypted, duplicate_name, case_collision, path_
 | `RENDERER_UNTRUSTED_CONTENT` | rhwp 매니페스트가 문서 내용을 신뢰할 수 없다고 표시함. |
 | `RENDERER_STDERR` | 배치 코드로 해석되지 않은 비어 있지 않은 stderr 줄의 개수를 알림. |
 | `NOTES_TRUNCATED` | 진단 수 한도로 추가 진단을 생략함. |
+
+## 2026-10-17 편집 가능성·범위 재시도 계약
+
+`RANGE_CROSSES_CONTROL`의 `Diagnostic.detail`은 `textSpans: [{start,end}]`와
+`textSpansTruncated: bool`을 포함한다. 문단 조회와 같은 extended grapheme cluster의
+반열린 오프셋이며 앞의 최대 64개 구간을 제공한다. batch 오류에서는 `failedStep`을
+병합해 두 정보를 함께 보존한다. 구간은 실패 단계 직전 후보 상태를 설명하므로,
+batch 롤백 뒤 현재 문서에서 재조회한다. 코드는 추가하지 않는다.
+
+개요의 `edits.<command>.reason`과 `notEditableReason`은 진단 코드가 아닌 지원 사유다.
+문단 text.replace의 `no_text_span`, `empty_paragraph_insert_unsupported`, 공통
+`document_readonly`·노드 잠금 사유, paragraph.format의 `no_header`·`no_paraPr`·`paraPr_shape`,
+셀의 `merged_cell`·`cell_paragraph_count`·`nested_table`·`no_run`·`range_crosses_control`·
+`unsupported_content_in_range` 등이 포함된다. 셀 전체 교체 거절은 자손 문단의 교체 거절을
+뜻하지 않으며 `childParagraphsEditable`과 자손 문단의 `edits`를 확인한다.

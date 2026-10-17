@@ -174,6 +174,15 @@ paragraph.format은 대상 문단의 현재 문단 모양에서 요청 값만 �
 
 document.inspect는 문서를 에이전트가 읽기 쉬운 개요로 돌려준다. 각 항목에 nodeId, 종류, 부모, 텍스트 앞부분, 표의 행·열 수, 그림의 크기와 미디어 hash, 편집 가능 여부와 거절 사유를 담는다. 큰 문서는 커서로 나누고, 모든 응답에 조회 기준 revision을 붙인다.
 
+2026-10-17 정합성 계약: `document.inspect.items`, `element.query.matches`, `element.get.outline`은 같은 노드 개요를 쓴다. 각 개요의 `edits`는 문단에 `text.replace`·`paragraph.format`, 셀에 `cell.setText`, 그림에 `image.replace`를 명령 이름으로 매핑한다. 값은 `{available: bool, reason?: string}`이다. 수식·구역·표·opaque는 `edits: {}`이다. 노드의 `editable`은 `edits` 값 중 하나라도 available일 때만 true다. 노드 전체가 불가하면 기존 `notEditableReason`도 유지한다. 최상위 inspect/open의 `editable`은 종전대로 문서 전체 권한이며 노드에 관한 보장이 아니다.
+
+문단은 `textSpans: [{start,end}]`와 `textSpansTruncated: bool`을 제공한다. 구간은 기존 text.replace의 extended grapheme cluster 반열린 오프셋이며, 개체·탭·줄바꿈·다른 비텍스트 요소·해석 불가 hp:t 속성을 덮지 않는 최대 구간이다. 여러 text/run/entity/CDATA가 연속되면 합치고, 안전하지 않은 코드포인트에 걸친 grapheme은 전체를 제외한다. 구간이 하나도 없으면 text.replace는 `no_text_span`, 빈 문단이면 `empty_paragraph_insert_unsupported`로 불가다. 문서 권한 또는 노드 잠금이 막으면 모든 명령이 불가이고 textSpans는 빈 목록이다. 구간은 앞의 64개만 제공하며 추가 구간이 있으면 truncated를 true로 한다. 기본 inspect 100항목에서 이 정보가 응답 한도 4 MiB를 소진하지 않도록 제한한다. truncated일 때 생략된 구간의 불가를 추론해서는 안 된다.
+
+문단 서식은 객체만 있는 문단에도 가능하다. header·paraPr 참조와 지원되는 정렬 또는 줄간격 속성의 존재를 확인한다. available은 적어도 하나의 유효한 명령 인자가 존재하는 구조적 판정이며, 모든 인자 조합·자원 예산의 성공을 보장하지 않는다. 셀은 기존 병합·문단 수·중첩 표 제한에 더해 자손 문단 잠금, 전체 텍스트 교체 가능성, 빈 셀의 기존 run/t 경로를 조회 결과에 반영한다. `childParagraphsEditable`은 셀 자손 중 적어도 한 문단에서 text.replace가 가능할 때 true이며, 셀 자신의 editable을 true로 바꾸지는 않는다.
+
+`RANGE_CROSSES_CONTROL` 진단의 기존 `detail`에 같은 textSpans/textSpansTruncated를 담는다. batch에서는 failedStep을 병합하고 구간을 보존한다. 이때 구간은 실패 단계 직전 후보 상태에 관한 것이므로 롤백 후 재조회한다. 명령 능력 확장은 없다. 자세한 실측·호환성 경계는 `docs/decisions/editable-semantics-0.1.md`에 기록한다.
+
+
 element.query는 종류, 텍스트 포함 여부(코드포인트 일치), 조상 nodeId로 대상을 좁힌다. 표 셀은 (표 nodeId, 행, 열)로 찾을 수 있으며, 행과 열은 HWPX 셀 주소를 0부터 센 값이다. 병합 셀은 시작 주소와 행·열 병합 수를 함께 보고한다. 결과가 여러 개면 첫 결과를 자동으로 고르지 않고 모두 돌려준다.
 
 ‘3페이지의 그림’은 해당 revision의 배치 결과에서 그림 ID로 해석한다. 편집할 때 expectedVersion이 다르면 다시 찾는다. 페이지 번호를 영구 편집 대상으로 쓰지 않는다. 페이지가 아직 계산되지 않았거나 근사 배치이면 그 상태를 알린다. rhwp 요소와 우리 nodeId는 구조 경로로 대조하고, 유일하게 대응되지 않으면 페이지 정보를 unavailable로 한다. 페이지 정보에는 source=renderer-estimated를 붙여 한컴 기준 위치로 오인하지 않게 한다. 단계 0 S2 결과에 따라 0.1은 최상위 문단·표·셀·그림(키가 유일한 것)의 쪽 정보만 제공한다. 구역 번호는 content.hpf spine 순서로 맞춘다. 그룹·글상자·머리말·꼬리말 안 요소와 자기닫힘 최상위 문단이 있는 구역은 unavailable이다. 조인 전 대조(쪽 수, 표 행·열 수, 개체 종류, 텍스트 앞부분)가 하나라도 어긋나면 그 구역 전체를 unavailable로 한다.

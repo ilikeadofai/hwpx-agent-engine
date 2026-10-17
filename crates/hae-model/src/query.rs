@@ -1,14 +1,17 @@
 //! document.inspect / element.query / element.get views (spec §7).
 
-use crate::{is_hp, Document, Kind, Node};
+use crate::para::{text_element_supported, TextSpan, TextSpans};
+use crate::{is_hp, Document, Kind, Node, PieceKind};
 use hae_diag::{Code, EngineError, Result, Stage};
-use hae_package::NS_HC;
+use hae_package::{NS_HC, NS_HH};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use unicode_segmentation::UnicodeSegmentation;
 
 pub const PREVIEW_GRAPHEMES: usize = 60;
 
-#[derive(Debug, Clone, Serialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Default, PartialEq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CellAddr {
     pub row: u32,
@@ -17,7 +20,7 @@ pub struct CellAddr {
     pub col_span: u32,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Outline {
     pub node_id: String,
@@ -37,12 +40,37 @@ pub struct Outline {
     pub size: Option<(i64, i64)>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub media: Option<MediaRef>,
+    /// True iff at least one command in edits is available on this node.
     pub editable: bool,
+    pub edits: BTreeMap<String, EditAvailability>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_spans: Option<Vec<TextSpan>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_spans_truncated: Option<bool>,
+    /// For cells: at least one descendant paragraph accepts text.replace.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub child_paragraphs_editable: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub not_editable_reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq, JsonSchema)]
+pub struct EditAvailability {
+    pub available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl EditAvailability {
+    fn from_reason(reason: Option<String>) -> Self {
+        Self {
+            available: reason.is_none(),
+            reason,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaRef {
     pub item_id: String,
@@ -156,19 +184,183 @@ impl Document {
         ))
     }
 
-    /// Why a node cannot be edited by any 0.1 command, if so.
-    pub fn edit_block_reason(&self, n: &Node) -> Option<String> {
-        if let Err(e) = self.check_editable(n) {
-            return Some(e.reason().unwrap_or("not_editable").to_string());
+    /// Geometry and content preconditions only; parameter validation and resource
+    /// budgets still apply when the caller supplies an actual edit.
+    pub fn paragraph_text_spans(&self, n: &Node) -> TextSpans {
+        if n.kind != Kind::Paragraph || self.check_editable(n).is_err() {
+            return TextSpans::default();
         }
+        self.para_text(n)
+            .map(|p| p.replaceable_spans(self.doc_of(n)))
+            .unwrap_or_default()
+    }
+
+    fn text_replace_reason(&self, n: &Node, spans: &TextSpans) -> Option<String> {
+        if !spans.text_spans.is_empty() {
+            return None;
+        }
+        Some(
+            if self.para_text(n).is_ok_and(|p| p.grapheme_len() == 0) {
+                "empty_paragraph_insert_unsupported"
+            } else {
+                "no_text_span"
+            }
+            .into(),
+        )
+    }
+
+    /// At least one of alignment/lineSpacing must be changeable. Availability
+    /// does not promise that every combination of formatting parameters works.
+    pub fn paragraph_format_block_reason(&self, n: &Node) -> Option<String> {
+        let Some(header) = self.info.header.as_ref().and_then(|h| self.xml.get(h)) else {
+            return Some("no_header".into());
+        };
+        let Some(pref) = self.doc_of(n).el(n.el).attr_value("paraPrIDRef") else {
+            return Some("no_paraPr".into());
+        };
+        let hh =
+            |e: &hae_xml::Element, local: &str| e.ns.as_deref() == Some(NS_HH) && e.local == local;
+        let Some((props, _)) = header.iter().find(|(_, e)| hh(e, "paraProperties")) else {
+            return Some("no_paraPr".into());
+        };
+        let Some(pp) =
+            header.el(props).children.iter().copied().find(|&p| {
+                hh(header.el(p), "paraPr") && header.el(p).attr_value("id") == Some(pref)
+            })
+        else {
+            return Some("no_paraPr".into());
+        };
+        let align: Vec<_> = header
+            .descendants(pp)
+            .filter(|&p| hh(header.el(p), "align"))
+            .collect();
+        let spacing: Vec<_> = header
+            .descendants(pp)
+            .filter(|&p| hh(header.el(p), "lineSpacing"))
+            .collect();
+        let can_align = !align.is_empty()
+            && align
+                .iter()
+                .all(|&p| header.el(p).attr("horizontal").is_some());
+        let can_space = !spacing.is_empty()
+            && spacing.iter().all(|&p| {
+                header.el(p).attr("type").is_some() && header.el(p).attr("value").is_some()
+            });
+        if can_align || can_space {
+            None
+        } else {
+            Some("paraPr_shape".into())
+        }
+    }
+
+    pub fn cell_set_text_block_reason(&self, n: &Node) -> Option<String> {
+        if let Some(r) = self.cell_block_reason(n) {
+            return Some(r);
+        }
+        let Some(para) = self.children(&n.id).find(|p| p.kind == Kind::Paragraph) else {
+            return Some("cell_paragraph_count".into());
+        };
+        if let Err(e) = self.check_editable(para) {
+            return Some(e.reason().unwrap_or("not_editable").into());
+        }
+        let pt = self.para_text(para).ok()?;
+        let doc = self.doc_of(para);
+        if pt.pieces.is_empty() {
+            let Some(run) = doc
+                .el(para.el)
+                .children
+                .iter()
+                .copied()
+                .find(|&p| is_hp(doc.el(p).ns.as_deref()) && doc.el(p).local == "run")
+            else {
+                return Some("no_run".into());
+            };
+            let t = doc
+                .el(run)
+                .children
+                .iter()
+                .copied()
+                .find(|&p| is_hp(doc.el(p).ns.as_deref()) && doc.el(p).local == "t");
+            return match t {
+                Some(t) if !text_element_supported(doc, t) => {
+                    Some("unsupported_content_in_range".into())
+                }
+                None if doc.el(run).end.is_none() => Some("no_run".into()),
+                _ => None,
+            };
+        }
+        if pt
+            .pieces
+            .iter()
+            .any(|p| matches!(p.kind, PieceKind::Control { .. }))
+        {
+            return Some("range_crosses_control".into());
+        }
+        let spans = pt.replaceable_spans(doc);
+        if spans.text_spans.len() == 1
+            && spans.text_spans[0]
+                == (TextSpan {
+                    start: 0,
+                    end: pt.grapheme_len(),
+                })
+        {
+            None
+        } else {
+            Some("unsupported_content_in_range".into())
+        }
+    }
+
+    fn edits(&self, n: &Node, spans: &TextSpans) -> BTreeMap<String, EditAvailability> {
+        let global = self
+            .check_editable(n)
+            .err()
+            .map(|e| e.reason().unwrap_or("not_editable").to_string());
+        let mut edits = BTreeMap::new();
+        let mut add = |name: &str, reason: Option<String>| {
+            edits.insert(
+                name.into(),
+                EditAvailability::from_reason(global.clone().or(reason)),
+            );
+        };
         match n.kind {
-            Kind::Section | Kind::Table => Some("no_edit_command".into()),
-            Kind::Equation => Some("equation_edit_unsupported".into()),
-            Kind::Opaque => Some("opaque".into()),
-            Kind::Cell => self.cell_block_reason(n),
-            Kind::Picture => self.picture_block_reason(n),
-            Kind::Paragraph => None,
+            Kind::Paragraph => {
+                add("text.replace", self.text_replace_reason(n, spans));
+                add("paragraph.format", self.paragraph_format_block_reason(n));
+            }
+            Kind::Cell => add("cell.setText", self.cell_set_text_block_reason(n)),
+            Kind::Picture => add("image.replace", self.picture_block_reason(n)),
+            _ => {}
         }
+        edits
+    }
+
+    /// Why no command is available; command-specific reasons are in edits.
+    pub fn edit_block_reason(&self, n: &Node) -> Option<String> {
+        let spans = self.paragraph_text_spans(n);
+        self.edits_block_reason(n, &self.edits(n, &spans))
+    }
+
+    fn edits_block_reason(
+        &self,
+        n: &Node,
+        edits: &BTreeMap<String, EditAvailability>,
+    ) -> Option<String> {
+        if edits.values().any(|e| e.available) {
+            return None;
+        }
+        if let Err(e) = self.check_editable(n) {
+            return Some(e.reason().unwrap_or("not_editable").into());
+        }
+        edits.values().find_map(|e| e.reason.clone()).or_else(|| {
+            Some(
+                match n.kind {
+                    Kind::Equation => "equation_edit_unsupported",
+                    Kind::Opaque => "opaque",
+                    _ => "no_edit_command",
+                }
+                .into(),
+            )
+        })
     }
 
     pub fn cell_block_reason(&self, n: &Node) -> Option<String> {
@@ -324,7 +516,9 @@ impl Document {
         } else {
             None
         };
-        let block = self.edit_block_reason(n);
+        let spans = self.paragraph_text_spans(n);
+        let edits = self.edits(n, &spans);
+        let block = self.edits_block_reason(n, &edits);
         Outline {
             node_id: n.id.clone(),
             kind: n.kind,
@@ -340,7 +534,15 @@ impl Document {
             } else {
                 None
             },
-            editable: block.is_none(),
+            editable: edits.values().any(|e| e.available),
+            edits,
+            text_spans: (n.kind == Kind::Paragraph).then_some(spans.text_spans),
+            text_spans_truncated: (n.kind == Kind::Paragraph).then_some(spans.text_spans_truncated),
+            child_paragraphs_editable: (n.kind == Kind::Cell).then(|| {
+                self.children_deep(n, Kind::Paragraph)
+                    .iter()
+                    .any(|p| !self.paragraph_text_spans(p).text_spans.is_empty())
+            }),
             not_editable_reason: block,
         }
     }
