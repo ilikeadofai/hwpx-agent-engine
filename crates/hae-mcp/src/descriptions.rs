@@ -40,6 +40,10 @@ fn text_replace() -> &'static str {
     "Replace a paragraph grapheme range [start,end), or insert non-empty text at [p,p). No tabs/newlines in text. Check edits[\"text.replace\"].modes (replace/insert); default controls=reject requires a subrange/position in textSpans. Empty paragraphs advertise {start:0,end:0}; insertion uses the following character run, then preceding run, then the empty paragraph first run. controls=preserve changes only text fragments and keeps objects/tabs/line breaks/fields in original XML order; leading objects stay before the first text fragment. Existing empty hp:t may be reused; no text fragment means UNSUPPORTED_CONTENT_IN_RANGE. CONTROLS_PRESERVED reports count and new grapheme offsets. Unsupported markup/attributes still fail. Requires expectedVersion; VERSION_CONFLICT means re-query. FORMAT_COLLAPSED warns about character shapes. dryRun=true verifies without committing."
 }
 
+fn text_replace_all() -> &'static str {
+    "Replace every exact match of `find` with `text` in one atomic step (one revision, one undo unit). Searches the whole document, or only `scope` (nodeId of a section, table, cell or paragraph) and the paragraphs below it, table cells included. Matching is exact Unicode codepoints, leftmost and non-overlapping per paragraph; a match is replaced only if it lies wholly inside the paragraph's editable `textSpans`. Matches that cross an object, tab, line break or field marker, split a grapheme cluster, touch unsupported markup, or sit in a locked paragraph are skipped and reported: `skippedCount`, `skipped[]` (per reason `crosses_control`, `grapheme_boundary`, `unsupported_markup`, `paragraph_not_editable` with `count` and up to 50 `locations` {nodeId, range}) and a `MATCHES_SKIPPED` warning; nothing is skipped silently. `find` must not be empty; `text` may be empty (deletes matches) but has no tabs/newlines. More than `maxMatches` (default 1000, max 10000) replaceable matches is refused with `RESOURCE_LIMIT` before anything is changed. Result: `replacementCount`, `paragraphCount`, and `matches[]` previews ({nodeId, range, before, after}; first 200). Run with `dryRun: true` first to review the list; the real call uses the same rules. Requires `expectedVersion`; `VERSION_CONFLICT` means re-query. Any failure leaves the document unchanged; `history_undo` restores the previous bytes. Character shapes inside a match collapse to the first one (`FORMAT_COLLAPSED`)."
+}
+
 fn paragraph_format() -> &'static str {
     "Update paragraph `target` (`nodeId` from `document_inspect`/`element_query`) with `alignment` (`left`, `center`, `right`, `justify`, `distribute`, `distributeSpace`) and/or `lineSpacing` (`{\"kind\": \"percent\", \"value\": 1..=1000}`), reusing or cloning the paragraph shape without altering global styles. Requires `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query). Refuses read-only documents or uncloneable shapes (`UNSUPPORTED`), missing targets (`TARGET_NOT_FOUND`), or calls with neither option set (`INVALID_REQUEST`). Set `dryRun: true` to preview without changing the document."
 }
@@ -53,7 +57,7 @@ fn image_replace() -> &'static str {
 }
 
 fn command_batch() -> &'static str {
-    "Execute multiple edit `steps` (`text.replace`, `paragraph.format`, `cell.setText`, `image.replace`) atomically as a single revision increment and single undo unit. Requires one top-level `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query); each step's ranges and preconditions are evaluated against the state produced by preceding steps. If any step fails, the entire batch rolls back with no state change and reports the failing step index. Set `dryRun: true` to validate and preview the combined diff without changing the document."
+    "Execute multiple edit `steps` (`text.replace`, `text.replaceAll`, `paragraph.format`, `cell.setText`, `image.replace`) atomically as a single revision increment and single undo unit. Requires one top-level `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query); each step's ranges and preconditions are evaluated against the state produced by preceding steps. If any step fails, the entire batch rolls back with no state change and reports the failing step index. Set `dryRun: true` to validate and preview the combined diff without changing the document."
 }
 
 fn history_undo() -> &'static str {
@@ -102,6 +106,7 @@ pub const TABLE: &[(&str, Describe)] = &[
     ("element.query", element_query),
     ("element.get", element_get),
     ("text.replace", text_replace),
+    ("text.replaceAll", text_replace_all),
     ("paragraph.format", paragraph_format),
     ("cell.setText", cell_set_text),
     ("image.replace", image_replace),
@@ -146,5 +151,5 @@ pub fn dry_run_property() -> &'static str {
 
 /// Returned as `instructions` from `initialize`.
 pub fn server_instructions() -> &'static str {
-    "Preservation-first HWPX document engine. Workflow: (1) call `document_open` to get `documentId` and `revision`; (2) call `document_inspect` or `element_query` to find target `nodeId`s and text; check per-command `edits` and choose text ranges within paragraph `textSpans` (`editable` means any available command); (3) call edit tools (`text_replace`, `paragraph_format`, `cell_set_text`, `image_replace`, `command_batch`) with optional `documentId` (defaults to the currently open document; if given it must match the open document) and `expectedVersion` = current revision (use `dryRun: true` to preview without changing anything); (4) on `VERSION_CONFLICT`, re-query before retrying; (5) export to a new `.hwpx` via `document_export` or save a `.hwpwork` project via `project_save`. Text ranges are half-open `[start, end)` extended grapheme cluster indices within a single paragraph. Request sequence numbering is handled automatically by the MCP adapter."
+    "Preservation-first HWPX document engine. Workflow: (1) call `document_open` to get `documentId` and `revision`; (2) call `document_inspect` or `element_query` to find target `nodeId`s and text; check per-command `edits` and choose text ranges within paragraph `textSpans` (`editable` means any available command); (3) call edit tools (`text_replace`, `text_replace_all` for document-wide exact find-and-replace, `paragraph_format`, `cell_set_text`, `image_replace`, `command_batch`) with optional `documentId` (defaults to the currently open document; if given it must match the open document) and `expectedVersion` = current revision (use `dryRun: true` to preview without changing anything); (4) on `VERSION_CONFLICT`, re-query before retrying; (5) export to a new `.hwpx` via `document_export` or save a `.hwpwork` project via `project_save`. Text ranges are half-open `[start, end)` extended grapheme cluster indices within a single paragraph. Request sequence numbering is handled automatically by the MCP adapter."
 }

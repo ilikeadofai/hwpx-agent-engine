@@ -36,7 +36,9 @@ mod format;
 mod image;
 mod text;
 
-pub use contract::{Alignment, LineSpacing, LineSpacingKind, VerifyOperation, VerifyReport};
+pub use contract::{
+    Alignment, LineSpacing, LineSpacingKind, VerifyOperation, VerifyReport, VerifyScope,
+};
 use hae_diag::{Budget, Code, EngineError, Limits, Result, Stage};
 use hae_package::{PackageInfo, PackageState, XmlMap, NS_HC, NS_HH, NS_HP, NS_HP10, NS_HS};
 use hae_xml::{Element, ParseOptions, XmlDoc};
@@ -234,6 +236,53 @@ fn verify_inner(
     let mut material = false;
     let mut seen_images = BTreeSet::new();
     for op in requests {
+        if let VerifyOperation::TextReplaceAll {
+            find,
+            replacement,
+            scope,
+            max_matches,
+        } = op
+        {
+            let sections: Vec<String> = match scope {
+                Some(s) => vec![s.entry.clone()],
+                None => info.sections.clone(),
+            };
+            let mut total = 0usize;
+            for entry in sections {
+                if !info.sections.contains(&entry) {
+                    return Err(unsupported("targets must belong to a spine section"));
+                }
+                let doc = parse(&expected, &entry, limits)?;
+                let scope_el = match scope {
+                    Some(s) => {
+                        let original_target = at(&xml[&entry], &s.path)?;
+                        Some(stable_at(
+                            &doc,
+                            &stable_path(&xml[&entry], original_target),
+                        )?)
+                    }
+                    None => None,
+                };
+                for (para, old, new) in text::replace_all(
+                    &mut expected,
+                    &entry,
+                    &doc,
+                    scope_el,
+                    find,
+                    replacement,
+                    *max_matches,
+                    &mut total,
+                )? {
+                    anchor(&mut anchors, &entry, &doc, para)?;
+                    preview.push((old, new));
+                    material = true;
+                }
+            }
+            if expected.total_bytes() > limits.max_session_memory {
+                return Err(fail("derived package exceeds memory limit"));
+            }
+            continue;
+        }
         let (entry, path) = op.target();
         if !info.sections.iter().any(|s| s == entry) {
             return Err(unsupported("targets must belong to a spine section"));
@@ -266,6 +315,7 @@ fn verify_inner(
                     material = true;
                 }
             }
+            VerifyOperation::TextReplaceAll { .. } => unreachable!("handled before target lookup"),
             VerifyOperation::CellSetText { .. } | VerifyOperation::CellSetParagraphs { .. } => {
                 let (text, paragraphs, preserve) = match op {
                     VerifyOperation::CellSetText { text, preserve, .. } => {

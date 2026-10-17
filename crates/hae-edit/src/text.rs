@@ -7,7 +7,7 @@ use hae_xml::{escape_text, is_xml_char};
 use std::collections::BTreeSet;
 use std::ops::Range;
 
-fn check_new_text(text: &str) -> Result<()> {
+pub(crate) fn check_new_text(text: &str) -> Result<()> {
     if text.contains(['\t', '\n', '\r']) {
         return Err(EngineError::new(
             Code::InvalidRequest,
@@ -31,10 +31,10 @@ fn check_new_text(text: &str) -> Result<()> {
 /// Known attributes of hp:t; anything else is uninterpreted (spec §6).
 use hae_model::para::TEXT_ATTRS as T_ATTRS;
 
-type Splice = (Range<usize>, Vec<u8>);
+pub(crate) type Splice = (Range<usize>, Vec<u8>);
 
 /// Splices that replace codepoints `cps` of the paragraph with `new`.
-fn plan_replace(
+pub(crate) fn plan_replace(
     d: &Draft,
     para: &Node,
     pt: &ParaText,

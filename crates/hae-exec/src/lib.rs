@@ -10,7 +10,7 @@ pub use registry::{
     DocumentExportParams, DocumentInspectParams, DocumentOpenParams, DocumentPreviewParams,
     ElementGetParams, ElementQueryParams, EmptyParams, ImageReplaceParams, LineSpacingParam,
     ParagraphFormatParams, ParsedCommand, ProjectSaveParams, SnapshotCreateParams,
-    SnapshotReleaseParams, TextRangeParam, TextReplaceParams, COMMAND_NAMES,
+    SnapshotReleaseParams, TextRangeParam, TextReplaceAllParams, TextReplaceParams, COMMAND_NAMES,
 };
 pub use session::{RequestEnvelope, ResponseEnvelope, SessionExecutor};
 

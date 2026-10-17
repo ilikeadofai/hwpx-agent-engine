@@ -6,6 +6,7 @@
 
 mod format;
 mod image;
+mod replace_all;
 mod text;
 
 use hae_diag::{Code, Diagnostic, EngineError, Result, Stage};
@@ -18,6 +19,10 @@ use std::sync::Arc;
 
 pub use format::{Alignment, LineSpacing};
 pub use image::ImageBytes;
+pub use replace_all::{
+    GraphemeRange, MatchPreview, ReplaceAllReport, SkippedGroup, SkippedLocation,
+    DEFAULT_MAX_MATCHES, HARD_MAX_MATCHES,
+};
 
 /// One edit command (spec §6). Ranges are grapheme-cluster indices.
 #[derive(Debug, Clone)]
@@ -27,6 +32,13 @@ pub enum EditOp {
         range: Range<usize>,
         text: String,
         preserve: bool,
+    },
+    /// Exact-match replacement over the document or a `scope` subtree.
+    TextReplaceAll {
+        find: String,
+        text: String,
+        scope: Option<String>,
+        max_matches: usize,
     },
     ParagraphFormat {
         target: String,
@@ -57,6 +69,7 @@ impl EditOp {
             | EditOp::CellSetText { target, .. }
             | EditOp::CellSetParagraphs { target, .. }
             | EditOp::ImageReplace { target, .. } => target,
+            EditOp::TextReplaceAll { scope, .. } => scope.as_deref().unwrap_or(""),
         }
     }
 }
@@ -72,6 +85,15 @@ pub enum Intent {
         path: Vec<usize>,
         #[serde(rename = "expectedText")]
         expected_text: String,
+    },
+    #[serde(rename = "text.replaceAll")]
+    TextReplaceAll {
+        find: String,
+        replacement: String,
+        #[serde(rename = "replacementCount")]
+        replacement_count: usize,
+        #[serde(rename = "paragraphCount")]
+        paragraph_count: usize,
     },
     #[serde(rename = "cell.setText")]
     CellSetText {
@@ -131,6 +153,8 @@ pub struct Applied {
     pub stale: Staleness,
     /// Lineseg arrays removed per section entry (separate from body changes, spec §11).
     pub cache_removals: BTreeMap<String, usize>,
+    /// One report per `text.replaceAll` step, in step order.
+    pub replace_all: Vec<ReplaceAllReport>,
 }
 
 /// Work-in-progress state while applying a batch.
@@ -144,6 +168,7 @@ pub(crate) struct Draft {
     pub anchors: BTreeMap<String, (usize, Vec<String>)>,
     /// (old display text, new display text) of edited paragraphs for PrvText.
     pub prv: Vec<(String, String)>,
+    pub replace_all: Vec<ReplaceAllReport>,
 }
 
 impl Draft {
@@ -230,6 +255,7 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
         intents: Vec::new(),
         anchors: BTreeMap::new(),
         prv: Vec::new(),
+        replace_all: Vec::new(),
     };
     for (i, op) in ops.iter().enumerate() {
         let r = match op {
@@ -239,6 +265,12 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
                 text,
                 preserve,
             } => text::text_replace(&mut d, target, range.clone(), text, *preserve),
+            EditOp::TextReplaceAll {
+                find,
+                text,
+                scope,
+                max_matches,
+            } => replace_all::text_replace_all(&mut d, find, text, scope.as_deref(), *max_matches),
             EditOp::CellSetText {
                 target,
                 text,
@@ -271,10 +303,12 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
             doc: doc.clone(),
             changed_ids: Vec::new(),
             resource_changes: Vec::new(),
-            diagnostics: Vec::new(),
+            // Only text.replaceAll can report (skipped matches) without a change.
+            diagnostics: d.diags,
             intents: Vec::new(),
             stale: Staleness::default(),
             cache_removals: BTreeMap::new(),
+            replace_all: d.replace_all,
         });
     }
     let cache_removals = clear_caches(&mut d)?;
@@ -289,6 +323,7 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
         intents: d.intents,
         stale,
         cache_removals,
+        replace_all: d.replace_all,
     })
 }
 

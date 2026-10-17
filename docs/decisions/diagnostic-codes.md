@@ -5,7 +5,7 @@
 | 코드 | 설계서 | 단계 | 뜻 |
 |---|---|---|---|
 | PACKAGE_REJECTED | §11 | 1 | 열기 단계 패키지 거절. reason에 사유 |
-| RESOURCE_LIMIT | §8·§11 | 1 | 한도 초과(크기·항목 수·해제량·깊이·화소·메모리·이력) |
+| RESOURCE_LIMIT | §8·§11 | 1 | 한도 초과(크기·항목 수·해제량·깊이·화소·메모리·이력). text.replaceAll은 바꿀 수 있는 일치가 maxMatches를 넘으면 commit 전에 이 코드로 거절하고 detail.maxMatches를 담음 |
 | STATE_INVARIANT_ERROR | §4 | 1 | commit 전 정규 상태와 파생물 불일치 |
 | PROJECT_INTEGRITY_ERROR | §5 | 1 | .hwpwork 무결성 검사 실패 |
 | PROJECT_LOCKED | §5·§11 | 1 | 프로젝트 잠금 실패 |
@@ -29,6 +29,7 @@
 | UNSUPPORTED_CONTENT_IN_RANGE | §6 | 1 | 범위 안 텍스트 외 자식·해석 불가 속성 |
 | CONTROLS_PRESERVED | 0.2 §3 | 1 | (경고) 범위 내 개체·탭·줄바꿈 유지. detail.count는 유지 수, detail.offsets는 그 개체들의 변경 후 문단 grapheme 오프셋 배열(원래 순서) |
 | FORMAT_COLLAPSED | §6 | 1 | (경고) 여러 글자 모양이 하나로 합쳐짐 |
+| MATCHES_SKIPPED | 0.2 §7-2 | 1 | (경고) text.replaceAll이 건너뛴 일치가 있음. detail.count는 총 건너뛴 수, detail.reasons[]는 사유별 {reason, count, locations[{nodeId, range}] 최대 50, locationsTruncated}. 사유: crosses_control(개체·탭·줄바꿈·필드 표식을 가로지름), grapheme_boundary(자소 경계가 맞지 않음), unsupported_markup(CDATA·주석·PI·리터럴 제어문자·해석 불가 속성 등), paragraph_not_editable(잠긴 문단 또는 불투명 요소가 가리키는 문단). range는 명령 전 문단의 grapheme 반열린 구간이며 경계가 맞지 않으면 바깥쪽으로 올린 구간 |
 | RENDERER_UNAVAILABLE | §9 | 3 | 렌더러 없음·격리 미검증. 단계 1·2는 항상 이 코드 |
 | PREVIEW_PAGE_LIMIT | §10 | 3 | (경고) 100쪽 초과로 partial |
 | INVALID_REQUEST | 추가 | 1 | 요청 형식 오류·정의되지 않은 속성 |
@@ -81,3 +82,5 @@ batch 롤백 뒤 현재 문서에서 재조회한다. 코드는 추가하지 않
 
 
 0.2 §7-1: preserve 범위 안 필드 시작/끝(하이퍼링크 포함)은 RANGE_CROSSES_CONTROL(reason:field_boundary_in_range)로 거절한다. 개체 전용 문단의 유효한 경계 위치는 길이 0 textSpans로 광고한다.
+
+0.2 §7-2: text.replaceAll은 건너뛴 일치를 MATCHES_SKIPPED(경고)로, 여러 글자 모양이 합쳐진 일치를 하나의 FORMAT_COLLAPSED(경고, detail.matches)로 알린다. 빈 find·탭/줄바꿈이 든 text는 INVALID_REQUEST, maxMatches가 1..10000 밖이면 INVALID_ARGUMENT, 없는 scope는 TARGET_NOT_FOUND다.

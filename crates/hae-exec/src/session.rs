@@ -6,7 +6,7 @@ use crate::registry::{
     CommandDescriptor, DocumentDiffParams, DocumentExportParams, DocumentOpenParams,
     DocumentPreviewParams, ImageReplaceParams, LineSpacingParam, ParagraphFormatParams,
     ParsedCommand, ProjectSaveParams, SnapshotCreateParams, SnapshotReleaseParams,
-    TextReplaceParams,
+    TextReplaceAllParams, TextReplaceParams,
 };
 use hae_diag::{Code, Diagnostic, EngineError, Limits, Result, Stage};
 use hae_edit::{Alignment, Applied, EditOp, ImageBytes, LineSpacing};
@@ -17,6 +17,7 @@ use hae_render_rhwp::{AdapterConfig, RhwpAdapter};
 use hae_verify::{
     verify_archive, verify_candidate, Alignment as VerifyAlignment,
     LineSpacing as VerifyLineSpacing, LineSpacingKind as VerifyLineSpacingKind, VerifyOperation,
+    VerifyScope,
 };
 use hae_zip::Archive;
 use serde::{Deserialize, Serialize};
@@ -118,6 +119,14 @@ pub struct SessionExecutor {
     open_doc: Option<OpenDocSession>,
     /// rhwp preview adapter; `None` keeps `document.preview` at RENDERER_UNAVAILABLE.
     renderer: Option<Arc<RhwpAdapter>>,
+}
+
+/// Attach per-step `text.replaceAll` reports to a mutation result.
+fn with_replace_all(mut result: Value, reports: &[hae_edit::ReplaceAllReport]) -> Value {
+    if !reports.is_empty() {
+        result["replaceAll"] = serde_json::to_value(reports).expect("reports serialize");
+    }
+    result
 }
 
 fn canonical_json(v: &Value) -> Value {
@@ -725,6 +734,26 @@ impl SessionExecutor {
                     params: serde_json::to_value(p).unwrap(),
                 }],
             ),
+            ParsedCommand::TextReplaceAll(p) => {
+                let (mut result, diags) = self.handle_edit_steps(
+                    req,
+                    &[BatchStepParam {
+                        command: "text.replaceAll".into(),
+                        params: serde_json::to_value(p).unwrap(),
+                    }],
+                )?;
+                // A single command reports its one step's summary at top level.
+                if let Some(Value::Array(mut reports)) =
+                    result.as_object_mut().and_then(|o| o.remove("replaceAll"))
+                {
+                    if let (Some(Value::Object(report)), Some(out)) =
+                        (reports.pop(), result.as_object_mut())
+                    {
+                        out.extend(report);
+                    }
+                }
+                Ok((result, diags))
+            }
             ParsedCommand::ParagraphFormat(p) => self.handle_edit_steps(
                 req,
                 &[BatchStepParam {
@@ -1029,6 +1058,38 @@ impl SessionExecutor {
                     },
                 ))
             }
+            "text.replaceAll" => {
+                let p: TextReplaceAllParams =
+                    serde_json::from_value(step.params.clone()).map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            format!("invalid text.replaceAll params: {e}"),
+                        ))
+                    })?;
+                let max_matches = p.max_matches.unwrap_or(hae_edit::DEFAULT_MAX_MATCHES);
+                let scope = p.scope.as_ref().map(|id| {
+                    let (entry, path) = doc
+                        .node(id)
+                        .map(|n| (n.entry.clone(), doc.doc_of(n).path(n.el)))
+                        .unwrap_or_default();
+                    VerifyScope { entry, path }
+                });
+                Ok((
+                    EditOp::TextReplaceAll {
+                        find: p.find.clone(),
+                        text: p.text.clone(),
+                        scope: p.scope,
+                        max_matches,
+                    },
+                    VerifyOperation::TextReplaceAll {
+                        find: p.find,
+                        replacement: p.text,
+                        scope,
+                        max_matches,
+                    },
+                ))
+            }
             "paragraph.format" => {
                 let p: ParagraphFormatParams = serde_json::from_value(step.params.clone())
                     .map_err(|e| {
@@ -1201,36 +1262,42 @@ impl SessionExecutor {
         if req.dry_run {
             let outcome = if is_noop { "noop" } else { "applied" };
             return Ok((
-                json!({
-                    "outcome": outcome,
-                    "dryRun": true,
-                    "beforeVersion": before_version,
-                    "afterVersion": before_version,
-                    "predictedAfterVersion": if is_noop { before_version } else { before_version + 1 },
-                    "changedIds": applied.changed_ids,
-                    "resourceChanges": applied.resource_changes,
-                    "intents": applied.intents,
-                    "stale": applied.stale,
-                    "cacheRemovals": applied.cache_removals,
-                    "historyEvicted": false,
-                }),
+                with_replace_all(
+                    json!({
+                        "outcome": outcome,
+                        "dryRun": true,
+                        "beforeVersion": before_version,
+                        "afterVersion": before_version,
+                        "predictedAfterVersion": if is_noop { before_version } else { before_version + 1 },
+                        "changedIds": applied.changed_ids,
+                        "resourceChanges": applied.resource_changes,
+                        "intents": applied.intents,
+                        "stale": applied.stale,
+                        "cacheRemovals": applied.cache_removals,
+                        "historyEvicted": false,
+                    }),
+                    &applied.replace_all,
+                ),
                 diags,
             ));
         }
 
         if is_noop {
             return Ok((
-                json!({
-                    "outcome": "noop",
-                    "beforeVersion": before_version,
-                    "afterVersion": before_version,
-                    "changedIds": Vec::<String>::new(),
-                    "resourceChanges": Vec::<hae_edit::ResourceChange>::new(),
-                    "intents": Vec::<hae_edit::Intent>::new(),
-                    "stale": applied.stale,
-                    "cacheRemovals": applied.cache_removals,
-                    "historyEvicted": false,
-                }),
+                with_replace_all(
+                    json!({
+                        "outcome": "noop",
+                        "beforeVersion": before_version,
+                        "afterVersion": before_version,
+                        "changedIds": Vec::<String>::new(),
+                        "resourceChanges": Vec::<hae_edit::ResourceChange>::new(),
+                        "intents": Vec::<hae_edit::Intent>::new(),
+                        "stale": applied.stale,
+                        "cacheRemovals": applied.cache_removals,
+                        "historyEvicted": false,
+                    }),
+                    &applied.replace_all,
+                ),
                 diags,
             ));
         }
@@ -1262,17 +1329,20 @@ impl SessionExecutor {
         s.revision += 1;
 
         Ok((
-            json!({
-                "outcome": "applied",
-                "beforeVersion": before_version,
-                "afterVersion": s.revision,
-                "changedIds": applied.changed_ids,
-                "resourceChanges": applied.resource_changes,
-                "intents": applied.intents,
-                "stale": applied.stale,
-                "cacheRemovals": applied.cache_removals,
-                "historyEvicted": history_evicted,
-            }),
+            with_replace_all(
+                json!({
+                    "outcome": "applied",
+                    "beforeVersion": before_version,
+                    "afterVersion": s.revision,
+                    "changedIds": applied.changed_ids,
+                    "resourceChanges": applied.resource_changes,
+                    "intents": applied.intents,
+                    "stale": applied.stale,
+                    "cacheRemovals": applied.cache_removals,
+                    "historyEvicted": history_evicted,
+                }),
+                &applied.replace_all,
+            ),
             diags,
         ))
     }

@@ -52,6 +52,16 @@ pub enum VerifyOperation {
         #[serde(default)]
         preserve: bool,
     },
+    /// Exact codepoint search-and-replace over every paragraph of the document,
+    /// or of the `scope` subtree. The gate derives the match set itself.
+    #[serde(rename = "text.replaceAll")]
+    TextReplaceAll {
+        find: String,
+        replacement: String,
+        scope: Option<VerifyScope>,
+        #[serde(rename = "maxMatches")]
+        max_matches: usize,
+    },
     #[serde(rename = "cell.setText")]
     CellSetText {
         entry: String,
@@ -87,9 +97,19 @@ pub enum VerifyOperation {
         bytes: Vec<u8>,
     },
 }
+/// Structural address of the element whose descendant paragraphs are searched.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VerifyScope {
+    pub entry: String,
+    pub path: Vec<usize>,
+}
 impl VerifyOperation {
     pub(crate) fn target(&self) -> (&str, &[usize]) {
         match self {
+            Self::TextReplaceAll { scope, .. } => scope
+                .as_ref()
+                .map_or(("", &[][..]), |s| (s.entry.as_str(), s.path.as_slice())),
             Self::TextReplace { entry, path, .. }
             | Self::CellSetText { entry, path, .. }
             | Self::CellSetParagraphs { entry, path, .. }

@@ -390,6 +390,16 @@ impl ParaText {
     /// Maximal editable intervals, rounded inward to whole graphemes. A grapheme
     /// touching a control or uninterpreted hp:t is excluded in its entirety.
     pub fn replaceable_spans(&self, doc: &XmlDoc) -> TextSpans {
+        self.spans_limited(doc, MAX_TEXT_SPANS)
+    }
+
+    /// Every maximal editable interval, without the 64-span response cap.
+    /// `text.replaceAll` decides containment against this complete set.
+    pub fn all_replaceable_spans(&self, doc: &XmlDoc) -> Vec<TextSpan> {
+        self.spans_limited(doc, usize::MAX).text_spans
+    }
+
+    fn spans_limited(&self, doc: &XmlDoc, limit: usize) -> TextSpans {
         let mut result = TextSpans::default();
         if self.text.is_empty() && self.empty_insert_reason(doc).is_none() {
             result.text_spans.push(TextSpan { start: 0, end: 0 });
@@ -397,10 +407,10 @@ impl ParaText {
         }
         let sites = self.object_insert_sites(doc);
         if !sites.is_empty() {
-            result.text_spans_truncated = sites.len() > MAX_TEXT_SPANS;
+            result.text_spans_truncated = sites.len() > limit;
             result.text_spans = sites
                 .into_iter()
-                .take(MAX_TEXT_SPANS)
+                .take(limit)
                 .map(|(p, _, _)| TextSpan { start: p, end: p })
                 .collect();
             return result;
@@ -414,7 +424,7 @@ impl ParaText {
                 .partition_point(|&cp| cp <= end)
                 .saturating_sub(1);
             if a < b {
-                if result.text_spans.len() == MAX_TEXT_SPANS {
+                if result.text_spans.len() == limit {
                     result.text_spans_truncated = true;
                 } else {
                     result.text_spans.push(TextSpan { start: a, end: b });

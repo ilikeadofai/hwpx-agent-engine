@@ -121,6 +121,24 @@ pub struct TextReplaceParams {
     pub text: String,
 }
 
+/// Exact-match search and replace over the document or one subtree.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TextReplaceAllParams {
+    /// Non-empty text to find, compared by exact Unicode codepoints.
+    pub find: String,
+    /// Replacement (no tabs or line breaks); may be empty to delete matches.
+    pub text: String,
+    /// Optional nodeId; only that node (if a paragraph) and its descendant
+    /// paragraphs, including table cells, are searched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// Reject before committing when more replaceable matches exist
+    /// (default 1000, at most 10000).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_matches: Option<usize>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LineSpacingParam {
@@ -229,6 +247,31 @@ pub struct MutationResultShape {
     pub history_evicted: bool,
 }
 
+/// Result of `text.replaceAll` (batch results carry the same object per step in
+/// `replaceAll`). Ranges are grapheme ranges of the paragraph before the command.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplaceAllResultShape {
+    pub outcome: String,
+    pub before_version: u64,
+    pub after_version: u64,
+    pub changed_ids: Vec<String>,
+    pub history_evicted: bool,
+    pub find: String,
+    pub replacement: String,
+    pub scope: Option<String>,
+    pub max_matches: usize,
+    pub replacement_count: usize,
+    pub paragraph_count: usize,
+    pub skipped_count: usize,
+    /// Per reason (`crosses_control`, `grapheme_boundary`, `unsupported_markup`,
+    /// `paragraph_not_editable`): `count`, up to 50 `locations` {nodeId, range}.
+    pub skipped: Vec<Value>,
+    /// Up to 200 {nodeId, range, before, after} previews in document order.
+    pub matches: Vec<Value>,
+    pub matches_truncated: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GenericResultShape {
@@ -281,6 +324,7 @@ pub enum ParsedCommand {
     ElementQuery(ElementQueryParams),
     ElementGet(ElementGetParams),
     TextReplace(TextReplaceParams),
+    TextReplaceAll(TextReplaceAllParams),
     ParagraphFormat(ParagraphFormatParams),
     CellSetText(CellSetTextParams),
     ImageReplace(ImageReplaceParams),
@@ -306,6 +350,11 @@ fn schema_json<T: JsonSchema>() -> Value {
         schema["properties"]["text"] = serde_json::json!({"type":"string"});
         schema["properties"]["paragraphs"] =
             serde_json::json!({"type":"array","items":{"type":"string"}});
+    }
+    if schema["title"] == "TextReplaceAllParams" {
+        schema["properties"]["find"] = serde_json::json!({"type":"string","minLength":1});
+        schema["properties"]["maxMatches"] =
+            serde_json::json!({"type":"integer","minimum":1,"maximum":10000,"default":1000});
     }
     schema
 }
@@ -481,6 +530,16 @@ define_commands! {
         mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
         stage1: true, reason: None,
         params: TextReplaceParams, output: MutationResultShape,
+    },
+    TextReplaceAll {
+        name: "text.replaceAll",
+        cli: "text-replace-all",
+        mcp: "text_replace_all",
+        summary: "Replace every exact match of a string in the document or a scope subtree; skips matches that cross objects or graphemes and reports them",
+        category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None,
+        params: TextReplaceAllParams, output: ReplaceAllResultShape,
     },
     ParagraphFormat {
         name: "paragraph.format",

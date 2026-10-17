@@ -574,3 +574,213 @@ pub(crate) fn cell(
     }
     Ok(changes)
 }
+
+// ---------------------------------------------------------------------------
+// text.replaceAll: the expected match set is derived here from the request
+// (`find`, `replacement`, scope) and the pre-step XML alone. Nothing from the
+// editor (its match list, counts, skip reasons or splices) is consulted.
+// ---------------------------------------------------------------------------
+
+fn known_ns(ns: Option<&str>) -> bool {
+    matches!(
+        ns,
+        Some(hae_package::NS_HP)
+            | Some(hae_package::NS_HP10)
+            | Some(hae_package::NS_HS)
+            | Some(hae_package::NS_HH)
+            | Some(hae_package::NS_HC)
+    )
+}
+
+/// Paragraphs the gate refuses to edit through replaceAll: referenced by an
+/// opaque attribute (as itself, an ancestor or a descendant), holding an opaque
+/// container of its own, or named by an attribute inside an opaque container.
+struct Eligibility {
+    blocked: std::collections::BTreeSet<usize>,
+    tokens: std::collections::BTreeSet<String>,
+    container_values: std::collections::BTreeSet<String>,
+}
+
+impl Eligibility {
+    fn new(doc: &XmlDoc) -> Eligibility {
+        use std::collections::BTreeSet;
+        let mut tokens = BTreeSet::new();
+        for (_, e) in doc.iter() {
+            let known = known_ns(e.ns.as_deref());
+            for a in &e.attrs {
+                let opaque = !known
+                    || a.ns.as_deref().is_some_and(|ns| {
+                        !known_ns(Some(ns)) && ns != "http://www.w3.org/2000/xmlns/"
+                    });
+                if opaque && !a.qname.starts_with("xmlns") {
+                    tokens.extend(a.value.split_whitespace().map(str::to_string));
+                }
+            }
+        }
+        let identity = |i: usize| {
+            let e = doc.el(i);
+            i == doc.root()
+                || (hp(e, "p") || hp(e, "tbl") || hp(e, "tc") || hp(e, "pic") || hp(e, "equation"))
+        };
+        let mut blocked = BTreeSet::new();
+        let mut container_values = BTreeSet::new();
+        for (i, e) in doc.iter() {
+            if known_ns(e.ns.as_deref())
+                || e.parent.is_some_and(|p| !known_ns(doc.el(p).ns.as_deref()))
+            {
+                continue;
+            }
+            if let Some(owner) = doc.ancestors(i).find(|&a| identity(a)) {
+                if hp(doc.el(owner), "p") {
+                    blocked.insert(owner);
+                }
+            }
+            for j in std::iter::once(i).chain(doc.descendants(i)) {
+                container_values.extend(doc.el(j).attrs.iter().map(|a| a.value.clone()));
+            }
+        }
+        Eligibility {
+            blocked,
+            tokens,
+            container_values,
+        }
+    }
+    fn allows(&self, doc: &XmlDoc, p: usize) -> bool {
+        if self.blocked.contains(&p) {
+            return false;
+        }
+        if doc
+            .el(p)
+            .attr_value("id")
+            .is_some_and(|id| self.container_values.contains(id))
+        {
+            return false;
+        }
+        let top = doc
+            .ancestors(p)
+            .find(|&a| doc.el(a).parent == Some(doc.root()))
+            .unwrap_or(p);
+        if !hp(doc.el(top), "p") {
+            return false;
+        }
+        self.tokens.is_empty()
+            || !std::iter::once(p)
+                .chain(doc.ancestors(p))
+                .chain(doc.descendants(p))
+                .filter_map(|i| doc.el(i).attr_value("id"))
+                .any(|id| self.tokens.contains(id))
+    }
+}
+
+pub(crate) type ReplacedParagraph = (usize, String, String);
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn replace_all(
+    state: &mut PackageState,
+    entry: &str,
+    doc: &XmlDoc,
+    scope: Option<usize>,
+    find: &str,
+    replacement: &str,
+    max_matches: usize,
+    total: &mut usize,
+) -> Result<Vec<ReplacedParagraph>> {
+    new_text(replacement)?;
+    if find.is_empty() || max_matches == 0 {
+        return Err(fail("invalid replaceAll request"));
+    }
+    if find == replacement {
+        return Ok(Vec::new());
+    }
+    let paragraphs: Vec<usize> = match scope {
+        None => doc
+            .iter()
+            .filter(|(_, e)| hp(e, "p"))
+            .map(|(i, _)| i)
+            .collect(),
+        Some(s) => std::iter::once(s)
+            .chain(doc.descendants(s))
+            .filter(|&i| hp(doc.el(i), "p"))
+            .collect(),
+    };
+    let find_len = find.chars().count();
+    let mut eligibility: Option<Eligibility> = None;
+    let mut cuts: Vec<Splice> = Vec::new();
+    let mut changed = Vec::new();
+    for p in paragraphs {
+        let v = view(doc, p);
+        if !v.text.contains(find) {
+            continue;
+        }
+        let boundaries: Vec<usize> = std::iter::once(0)
+            .chain(v.text.graphemes(true).scan(0, |cp, g| {
+                *cp += g.chars().count();
+                Some(*cp)
+            }))
+            .collect();
+        let allowed = eligibility
+            .get_or_insert_with(|| Eligibility::new(doc))
+            .allows(doc, p);
+        if !allowed {
+            continue;
+        }
+        let chars: Vec<char> = v.text.chars().collect();
+        let (mut cp, mut last, mut at) = (0usize, 0usize, 0usize);
+        let mut wanted = String::new();
+        let mut any = false;
+        for (byte, _) in v.text.match_indices(find) {
+            cp += v.text[last..byte].chars().count();
+            let (s, e) = (cp, cp + find_len);
+            cp = e;
+            last = byte + find.len();
+            let covered = &v.scalars[s..e];
+            let replaceable = boundaries.binary_search(&s).is_ok()
+                && boundaries.binary_search(&e).is_ok()
+                && !v.barriers.iter().any(|&b| s < b && b < e)
+                && covered.iter().all(|x| {
+                    x.raw.is_some()
+                        && !x.barrier
+                        && !['\t', '\n', '\r'].contains(&x.character)
+                        && x.t.is_some_and(|t| plain_attrs(doc, t).is_ok())
+                });
+            if !replaceable {
+                continue;
+            }
+            *total += 1;
+            if *total > max_matches {
+                return Err(fail("replaceAll exceeds maxMatches"));
+            }
+            let mut ranges: Vec<Range<usize>> = Vec::new();
+            for x in covered {
+                let r = x.raw.clone().expect("checked above");
+                match ranges.last_mut() {
+                    Some(last) if *last == r => {}
+                    Some(last) if last.end == r.start => last.end = r.end,
+                    _ => ranges.push(r),
+                }
+            }
+            for (i, r) in ranges.into_iter().enumerate() {
+                cuts.push((
+                    r,
+                    if i == 0 {
+                        escape_text(replacement).into_bytes()
+                    } else {
+                        Vec::new()
+                    },
+                ));
+            }
+            wanted.extend(&chars[at..s]);
+            wanted.push_str(replacement);
+            at = e;
+            any = true;
+        }
+        if any {
+            wanted.extend(&chars[at..]);
+            changed.push((p, v.text, wanted));
+        }
+    }
+    if !cuts.is_empty() {
+        change(state, entry, doc, cuts)?;
+    }
+    Ok(changed)
+}
