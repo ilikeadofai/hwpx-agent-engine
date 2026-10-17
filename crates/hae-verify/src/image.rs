@@ -25,7 +25,7 @@ fn check_dimensions((w, h): (u32, u32), limits: &Limits) -> Result<()> {
     Ok(())
 }
 
-fn png_shape(bytes: &[u8], limits: &Limits) -> Result<()> {
+fn png_shape(bytes: &[u8], limits: &Limits) -> Result<(u32, u32)> {
     let bad = || fail("truncated or malformed PNG chunks");
     if bytes.len() < 33 || &bytes[8..16] != b"\0\0\0\rIHDR" {
         return Err(bad());
@@ -66,12 +66,12 @@ fn png_shape(bytes: &[u8], limits: &Limits) -> Result<()> {
     if !ended {
         return Err(bad());
     }
-    Ok(())
+    Ok(dims)
 }
 
 /// Framing-only JPEG walk: exactly one SOF0/1/2, then SOS, then terminal EOI.
 /// Progressive JPEG may carry several SOS scans; those are not extra frames.
-fn jpeg_shape(bytes: &[u8], limits: &Limits) -> Result<()> {
+fn jpeg_shape(bytes: &[u8], limits: &Limits) -> Result<(u32, u32)> {
     let bad = || fail("truncated or malformed JPEG markers");
     let mut pos = 2usize;
     let mut dims = None;
@@ -95,10 +95,9 @@ fn jpeg_shape(bytes: &[u8], limits: &Limits) -> Result<()> {
             0 if in_scan => continue,
             0xd0..=0xd7 if in_scan => continue,
             0xd9 => {
-                return if saw_scan && pos == bytes.len() && dims.is_some() {
-                    Ok(())
-                } else {
-                    Err(bad())
+                return match dims {
+                    Some(d) if saw_scan && pos == bytes.len() => Ok(d),
+                    _ => Err(bad()),
                 };
             }
             0 | 0xd8 | 0x01 | 0xd0..=0xd7 => return Err(bad()),
@@ -145,16 +144,14 @@ fn jpeg_shape(bytes: &[u8], limits: &Limits) -> Result<()> {
     Err(bad())
 }
 
-fn validated_media_type(bytes: &[u8], limits: &Limits) -> Result<&'static str> {
+fn validated_media_type(bytes: &[u8], limits: &Limits) -> Result<(&'static str, (u32, u32))> {
     if bytes.len() as u64 > limits.max_hwpx_bytes {
         return Err(fail("image input byte limit exceeded"));
     }
     if bytes.starts_with(PNG_SIGNATURE) {
-        png_shape(bytes, limits)?;
-        Ok("image/png")
+        Ok(("image/png", png_shape(bytes, limits)?))
     } else if bytes.starts_with(&[0xff, 0xd8]) {
-        jpeg_shape(bytes, limits)?;
-        Ok("image/jpeg")
+        Ok(("image/jpeg", jpeg_shape(bytes, limits)?))
     } else {
         Err(unsupported("only static PNG and JPEG images are supported"))
     }
@@ -304,6 +301,11 @@ fn validate_manifest_item(
     if element.attr_value("media-type") != Some(media_type) {
         return Err(fail("manifest item media type mismatch"));
     }
+    // Hancom resolves a media item without `isEmbeded="1"` as an external link
+    // and prompts for the picture path instead of using the embedded bytes.
+    if element.attr_value("isEmbeded") != Some("1") {
+        return Err(fail("new media item must set isEmbeded=\"1\""));
+    }
     Ok(())
 }
 
@@ -321,7 +323,7 @@ pub(crate) fn check(
     bytes: &[u8],
     limits: &Limits,
 ) -> Result<bool> {
-    let media_type = validated_media_type(bytes, limits)?;
+    let (media_type, (new_w, new_h)) = validated_media_type(bytes, limits)?;
     if !hp(doc.el(target), "pic") {
         return Err(unsupported("image target is not a picture"));
     }
@@ -456,15 +458,37 @@ pub(crate) fn check(
         &state_root,
         vec![(close.start..close.start, token)],
     )?;
-    change(
-        state,
-        entry,
-        doc,
-        vec![(
-            attr(doc, img, "binaryItemIDRef")?.value_span.clone(),
-            escape_attr(&new_id).into_bytes(),
-        )],
-    )?;
+    // The source-image geometry follows the media, not the display frame, so a
+    // candidate that swaps the bytes must also carry the new dimensions in
+    // `imgDim`/`imgClip`. Hancom shows only the old corner otherwise.
+    let mut splices = vec![(
+        attr(doc, img, "binaryItemIDRef")?.value_span.clone(),
+        escape_attr(&new_id).into_bytes(),
+    )];
+    // Hancom reads these attributes in HWPUNIT at a fixed 75 units per pixel,
+    // not in raw pixels (verified by screenshot: raw pixels make only the
+    // top-left corner render).
+    let units = |px: u32| {
+        px.checked_mul(75)
+            .ok_or_else(|| fail("image dimension exceeds the HWPUNIT range"))
+    };
+    let (hwp_w, hwp_h) = (units(new_w)?, units(new_h)?);
+    for &child in &doc.el(target).children {
+        let e = doc.el(child);
+        let attrs: &[(&str, u32)] = if hp(e, "imgDim") {
+            &[("dimwidth", hwp_w), ("dimheight", hwp_h)]
+        } else if hp(e, "imgClip") {
+            &[("right", hwp_w), ("bottom", hwp_h)]
+        } else {
+            &[]
+        };
+        for (name, value) in attrs {
+            if let Some(a) = e.attr(name) {
+                splices.push((a.value_span.clone(), value.to_string().into_bytes()));
+            }
+        }
+    }
+    change(state, entry, doc, splices)?;
     state.add(new_item.entry.clone(), Arc::from(bytes.to_vec()), 0);
     Ok(true)
 }

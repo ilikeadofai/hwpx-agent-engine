@@ -465,8 +465,15 @@ pub(crate) fn image_replace(d: &mut Draft, target: &str, image: &ImageBytes) -> 
         .ok_or_else(|| limit("image resource identifiers exhausted"))?;
     // An explicit local namespace makes the inserted item independent of any
     // prefix rebindings on the original manifest and preserves its source bytes.
+    //
+    // `isEmbeded="1"` is required. Without it Hancom does not treat the item as
+    // embedded media: it resolves the picture as an external link, shows a
+    // "Picture File" path prompt, and leaves the picture frame empty. Verified
+    // against Hancom Office 2020 Linux Beta (`hoffice-hwp` 11.20.0.989) on
+    // 2026-10-17 by adding this attribute to an engine export and observing the
+    // prompt disappear and the image render.
     let item = format!(
-        "<hae:item xmlns:hae=\"{}\" id=\"{}\" href=\"{}\" media-type=\"{}\"/>",
+        "<hae:item xmlns:hae=\"{}\" id=\"{}\" href=\"{}\" media-type=\"{}\" isEmbeded=\"1\"/>",
         escape_attr(manifest.ns.as_deref().unwrap_or_default()),
         id,
         name,
@@ -486,11 +493,40 @@ pub(crate) fn image_replace(d: &mut Draft, target: &str, image: &ImageBytes) -> 
     {
         return Err(limit("image replacement package budget exceeded").with_target(target));
     }
+    // The source-image geometry attributes describe the media, not the display
+    // frame. Leaving them at the old values makes Hancom show only the top-left
+    // region of a larger replacement (verified with Hancom Office 2020 Linux
+    // Beta: a 3000x2000 replacement displayed as the old ~1254 px corner).
+    // The frame itself (sz/curSz/pos/caption) is intentionally untouched.
+    // Hancom reads `imgClip`/`imgDim` in HWPUNIT at a fixed 75 units per pixel,
+    // not in raw pixels. Writing the raw pixel count makes a 800x400 image read
+    // as the top-left 800x400 of a 60000x30000 picture, so only that corner is
+    // drawn (verified by screenshot against Hancom Office 2020 Linux Beta).
+    let (px_w, px_h) = image.dimensions;
+    let units = |px: u32| {
+        px.checked_mul(75)
+            .ok_or_else(|| limit("image dimension exceeds the HWPUNIT range"))
+    };
+    let (new_w, new_h) = (units(px_w)?, units(px_h)?);
+    let mut splices = vec![(reference.value_span.clone(), escape_attr(&id).into_bytes())];
+    for &child in &section.el(n.el).children {
+        let e = section.el(child);
+        if !is_hp(e.ns.as_deref()) {
+            continue;
+        }
+        let attrs: &[(&str, u32)] = match e.local.as_str() {
+            "imgDim" => &[("dimwidth", new_w), ("dimheight", new_h)],
+            "imgClip" => &[("right", new_w), ("bottom", new_h)],
+            _ => &[],
+        };
+        for (name, value) in attrs {
+            if let Some(a) = e.attr(name) {
+                splices.push((a.value_span.clone(), value.to_string().into_bytes()));
+            }
+        }
+    }
     let path = section.path(n.el);
-    let new_section = section.splice(
-        vec![(reference.value_span.clone(), escape_attr(&id).into_bytes())],
-        d.opts(),
-    )?;
+    let new_section = section.splice(splices, d.opts())?;
     let new_hpf = hpf.splice(
         vec![(close.start..close.start, item.into_bytes())],
         d.opts(),

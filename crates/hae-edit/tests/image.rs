@@ -280,12 +280,39 @@ fn replaces_only_target_reference_and_appends_media_preserving_shared_old_bytes(
         .find(|m| m.entry == added.name)
         .unwrap();
     assert_eq!(item.media_type, "image/jpeg");
-    let old_section = std::str::from_utf8(d.payload("Contents/section0.xml").unwrap()).unwrap();
-    let expected = old_section.replacen(
-        "binaryItemIDRef=\"old\"",
-        &format!("binaryItemIDRef=\"{}\"", item.id),
-        1,
+    // The appended manifest item must mark the media as embedded. Hancom
+    // (verified with hoffice-hwp 11.20.0.989) treats an item without
+    // `isEmbeded="1"` as an external link and prompts for the picture path
+    // instead of using the embedded bytes.
+    let hpf = std::str::from_utf8(a.doc.payload("Contents/content.hpf").unwrap()).unwrap();
+    let at = hpf
+        .find(&format!("id=\"{}\"", item.id))
+        .expect("appended manifest item id");
+    let open = hpf[..at].rfind('<').expect("item element start");
+    let elem = &hpf[open..open + hpf[open..].find('>').expect("item element end")];
+    assert!(
+        elem.contains("isEmbeded=\"1\""),
+        "appended media item must be marked embedded: {elem}"
     );
+    let old_section = std::str::from_utf8(d.payload("Contents/section0.xml").unwrap()).unwrap();
+    // The replacement is a 1x1 JPEG: the source-image geometry (imgDim, imgClip)
+    // follows the new media, while the display frame (sz/pos/caption) stays.
+    let expected = old_section
+        .replacen(
+            "binaryItemIDRef=\"old\"",
+            &format!("binaryItemIDRef=\"{}\"", item.id),
+            1,
+        )
+        .replacen(
+            "dimwidth=\"1440\" dimheight=\"720\"",
+            "dimwidth=\"75\" dimheight=\"75\"",
+            1,
+        )
+        .replacen(
+            "right=\"1440\" bottom=\"720\"",
+            "right=\"75\" bottom=\"75\"",
+            1,
+        );
     assert_eq!(
         &a.doc.payload("Contents/section0.xml").unwrap()[..],
         expected.as_bytes()
@@ -317,7 +344,7 @@ fn replaces_only_target_reference_and_appends_media_preserving_shared_old_bytes(
 }
 
 #[test]
-fn empty_native_effects_is_editable_and_replacement_preserves_geometry() {
+fn empty_native_effects_is_editable_and_replacement_updates_media_geometry() {
     let d = document(
         r#"<hp:imgClip left="0" top="0" right="1440" bottom="720"/><hp:effects/>"#,
         r#"effect="REAL_PIC" bright="0" contrast="0" alpha="0""#,
@@ -335,9 +362,8 @@ fn empty_native_effects_is_editable_and_replacement_preserves_geometry() {
             .to_vec(),
     )
     .unwrap();
-    assert!(
-        out.contains(r#"<hp:imgClip left="0" top="0" right="1440" bottom="720"/><hp:effects/>"#)
-    );
+    // The clip follows the new 1x1 media; the display frame stays 1440x720.
+    assert!(out.contains(r#"<hp:imgClip left="0" top="0" right="75" bottom="75"/><hp:effects/>"#));
     assert!(out.contains(r#"<hp:sz width="1440" height="720"/>"#));
 }
 

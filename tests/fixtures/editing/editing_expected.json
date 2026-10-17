@@ -1191,7 +1191,7 @@
       "category": "media",
       "expect": "accept",
       "notes": "그림 3개가 미디어 2개를 공유한다(그림0·그림1 -> image1, 그림2 -> image2). image.replace 는 대상 그림의 참조만 새 미디어 항목으로 바꾸므로 공유하던 다른 그림과 원래 BinData 는 그대로 남는다.",
-      "bytes": 1897,
+      "bytes": 2394,
       "structure": {
         "entry": "Contents/section0.xml",
         "pictures": [
@@ -1288,7 +1288,7 @@
       "category": "media",
       "expect": "accept",
       "notes": "그림0 은 imgClip left=10 으로 잘려 있고, 그림1 은 클립(0,0,1440,720)이 그림 크기와 같아 자르기로 보지 않는다. 자르기가 있는 그림은 image.replace 를 UNSUPPORTED(cropped) 로 거절한다.",
-      "bytes": 1727,
+      "bytes": 2190,
       "structure": {
         "entry": "Contents/section0.xml",
         "pictures": [
@@ -1349,7 +1349,7 @@
       "category": "media",
       "expect": "accept",
       "notes": "그림0 은 hp:effects(glow), 그림1 은 hc:img effect=GRAY_SCALE, 그림2 는 bright=5 로 효과가 있다. 효과가 있는 그림은 image.replace 를 UNSUPPORTED(effects) 로 거절한다. 그림3 은 효과가 없어 바꿀 수 있다.",
-      "bytes": 1751,
+      "bytes": 2241,
       "structure": {
         "entry": "Contents/section0.xml",
         "pictures": [

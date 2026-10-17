@@ -314,6 +314,12 @@ fn image_replacement_has_exact_new_bytes_and_preserves_shared_original() {
     let mut bad = good.clone();
     replace(&mut bad, HPF, "id='fresh'", "id='dangling'");
     assert!(gate(&old, &bad, &ops).is_err());
+    let mut bad = good.clone();
+    replace(&mut bad, HPF, " isEmbeded='1'", "");
+    assert!(
+        gate(&old, &bad, &ops).is_err(),
+        "media item without isEmbeded=1 must be rejected"
+    );
     let mut bad = good;
     replace(
         &mut bad,

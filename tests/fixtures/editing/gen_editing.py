@@ -231,10 +231,55 @@ def SEC(body, extra_ns=""):
             % (NS["hs"], NS["hp"], NS["hc"], extra_ns, body)).encode("utf-8")
 
 
-def pic(pid, ref, extra=""):
-    return ('<hp:pic id="%s"><hp:sz width="1440" height="720"/><hp:pos/>'
-            '<hp:imgDim dimwidth="1440" dimheight="720"/>%s'
-            '<hc:img binaryItemIDRef="%s"/></hp:pic>' % (pid, extra, ref))
+def pic(pid, ref, *, clip=None, effects="", effect="REAL_PIC",
+        bright=0, contrast=0, alpha=0, w=1440, h=720, px=(2, 1)):
+    """hp:pic을 한컴이 저장한 구조·자식 순서로 만든다.
+
+    순서 근거: hancom-io/hwpx-owpml-model 의 CPictureType::InitMap
+    (offset, orgSz, curSz, flip, rotationInfo, renderingInfo, imgRect, imgClip,
+     effects, inMargin, imgDim, sz, pos, outMargin) 및 실제 저장본 관찰.
+    최소 마크업(sz, pos, hc:img)만으로는 한컴이 불완전하게 해석한다.
+
+    단위: imgClip·imgDim은 HWPUNIT이며 픽셀당 75다(예: 800x400 -> 60000x30000).
+    실제 픽셀 수를 그대로 쓰면 한컴은 그 값을 더 큰 그림의 좌상단으로 읽어
+    일부만 그린다. `px`가 내장 이미지의 실제 픽셀 크기이고, w/h는 표시 크기다.
+    """
+    iw, ih = px[0] * 75, px[1] * 75
+    left, right, top, bottom = clip if clip is not None else (0, iw, 0, ih)
+    return (
+        '<hp:pic id="%(pid)s" zOrder="0" numberingType="PICTURE" textWrap="TOP_AND_BOTTOM"'
+        ' textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" href="" groupLevel="0"'
+        ' instid="%(pid)s" reverse="0">'
+        '<hp:offset x="0" y="0"/>'
+        '<hp:orgSz width="%(w)d" height="%(h)d"/>'
+        '<hp:curSz width="%(w)d" height="%(h)d"/>'
+        '<hp:flip horizontal="0" vertical="0"/>'
+        '<hp:rotationInfo angle="0" centerX="0" centerY="0" rotateimage="0"/>'
+        '<hp:renderingInfo>'
+        '<hc:transMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/>'
+        '<hc:scaMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/>'
+        '<hc:rotMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/>'
+        '</hp:renderingInfo>'
+        '<hp:imgRect><hc:pt0 x="0" y="0"/><hc:pt1 x="%(w)d" y="0"/>'
+        '<hc:pt2 x="%(w)d" y="%(h)d"/><hc:pt3 x="0" y="%(h)d"/></hp:imgRect>'
+        '<hp:imgClip left="%(left)d" right="%(right)d" top="%(top)d" bottom="%(bottom)d"/>'
+        '<hp:inMargin left="0" right="0" top="0" bottom="0"/>'
+        '<hp:imgDim dimwidth="%(iw)d" dimheight="%(ih)d"/>'
+        '<hc:img binaryItemIDRef="%(ref)s" bright="%(bright)d" contrast="%(contrast)d"'
+        ' effect="%(effect)s" alpha="%(alpha)d"/>'
+        '<hp:effects>%(effects)s</hp:effects>'
+        '<hp:sz width="%(w)d" widthRelTo="ABSOLUTE" height="%(h)d" heightRelTo="ABSOLUTE"'
+        ' protect="0"/>'
+        '<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="0" allowOverlap="0"'
+        ' holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP"'
+        ' horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
+        '<hp:outMargin left="0" right="0" top="0" bottom="0"/>'
+        '</hp:pic>'
+        % {"pid": pid, "ref": ref, "w": w, "h": h, "iw": iw, "ih": ih,
+           "left": left, "right": right, "top": top, "bottom": bottom,
+           "effects": effects, "effect": effect, "bright": bright,
+           "contrast": contrast, "alpha": alpha}
+    )
 
 
 def merge_attrs(attrs):
@@ -1083,8 +1128,8 @@ case(
 
 # ===== 14. 자른 그림 =====
 def c_cropped():
-    cropped = pic(1, "image1", '<hp:imgClip left="10" top="0" right="1440" bottom="720"/>')
-    full = pic(2, "image1", '<hp:imgClip left="0" top="0" right="1440" bottom="720"/>')
+    cropped = pic(1, "image1", clip=(10, 150, 0, 75))
+    full = pic(2, "image1")
     extra = [("BinData/image1.png", png(2, 1), 0)]
     return build(SEC(P(R(cropped)) + P(R(full))),
                  hpf_bytes=hpf_sec([("image1", "BinData/image1.png", "image/png")]), extra=extra)
@@ -1095,7 +1140,7 @@ def k_cropped(b):
     sec = f["Contents/section0.xml"]
     eq(pictures_of(sec), ["image1", "image1"], "그림 참조")
     in_bytes(f, "Contents/section0.xml", b'<hp:imgClip left="10"', "자른 그림 표시")
-    in_bytes(f, "Contents/section0.xml", b'<hp:imgClip left="0" top="0" right="1440" bottom="720"/>',
+    in_bytes(f, "Contents/section0.xml", b'<hp:imgClip left="0" right="150" top="0" bottom="75"/>',
              "클립이 그림 전체와 같은 경우")
     return {"entry": "Contents/section0.xml",
             "pictures": [{"index": 0, "media": "image1", "cropped": True},
@@ -1120,13 +1165,9 @@ case(
 
 # ===== 15. 효과 그림 =====
 def c_effects():
-    glow = pic(1, "image1", "<hp:effects><hp:glow/></hp:effects>")
-    gray = ('<hp:pic id="2"><hp:sz width="1440" height="720"/><hp:pos/>'
-            '<hp:imgDim dimwidth="1440" dimheight="720"/>'
-            '<hc:img binaryItemIDRef="image1" effect="GRAY_SCALE"/></hp:pic>')
-    bright = ('<hp:pic id="3"><hp:sz width="1440" height="720"/><hp:pos/>'
-              '<hp:imgDim dimwidth="1440" dimheight="720"/>'
-              '<hc:img binaryItemIDRef="image1" bright="5"/></hp:pic>')
+    glow = pic(1, "image1", effects="<hp:glow/>")
+    gray = pic(2, "image1", effect="GRAY_SCALE")
+    bright = pic(3, "image1", bright=5)
     clean = pic(4, "image1")
     extra = [("BinData/image1.png", png(2, 1), 0)]
     return build(SEC(P(R(glow)) + P(R(gray)) + P(R(bright)) + P(R(clean))),
