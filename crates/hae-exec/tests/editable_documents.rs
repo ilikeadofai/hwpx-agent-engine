@@ -243,6 +243,8 @@ fn v02_all_local_control_paragraphs_empty_paragraphs_and_complex_cells_undo_exac
     paths.sort();
     let (mut controls, mut empty, mut multi, mut merged, mut undo) = (0, 0, 0, 0, 0);
     let mut field_rejected = 0;
+    let (mut control_success, mut cell_success, mut control_rejected, mut cell_rejected) =
+        (0, 0, 0, 0);
     for path in &paths {
         let original = fs::read(path).unwrap();
         let d = hae_model::Document::open(original.clone(), &Limits::default()).unwrap();
@@ -299,9 +301,15 @@ fn v02_all_local_control_paragraphs_empty_paragraphs_and_complex_cells_undo_exac
             } else {
                 continue;
             };
+            let control_attempt = params["controls"] == "preserve";
             let r = exec.call(command, params, Some(revision), false);
             if !r.ok && r.diagnostics[0].reason.as_deref() == Some("field_boundary_in_range") {
                 field_rejected += 1;
+                if command == "cell.setText" {
+                    cell_rejected += 1;
+                } else {
+                    control_rejected += 1;
+                }
                 continue;
             }
             assert!(
@@ -318,10 +326,15 @@ fn v02_all_local_control_paragraphs_empty_paragraphs_and_complex_cells_undo_exac
             assert!(fs::read(&output).unwrap() == original, "Undo mismatch");
             fs::remove_file(output).unwrap();
             undo += 1;
+            if command == "cell.setText" {
+                cell_success += 1;
+            } else if control_attempt {
+                control_success += 1;
+            }
         }
         assert_eq!(fs::read(path).unwrap(), original);
     }
-    eprintln!("V02_LOCAL_PROPERTIES files={} control_paragraphs={controls} empty_insertions={empty} multi_paragraph_cells={multi} merged_cells={merged} field_rejected={field_rejected} undo_exact={undo}",paths.len());
+    eprintln!("V02_LOCAL_PROPERTIES files={} control_paragraphs={controls} empty_insertions={empty} multi_paragraph_cells={multi} merged_cells={merged} field_rejected={field_rejected} undo_exact={undo} control_success={control_success} control_rejected={control_rejected} cell_success={cell_success} cell_rejected={cell_rejected}",paths.len());
 }
 
 fn resolve_local_reference(
@@ -370,6 +383,7 @@ fn v02_retry_24_recorded_stage4_rejections_and_undo_exactly() {
     let (mut seen, mut retried, mut expanded, mut excluded) = (0, 0, 0, 0);
     let mut field_rejected = 0;
     let mut no_fragment_rejected = 0;
+    let mut adapted_cells = 0;
     let mut paths: Vec<_> = fs::read_dir(root.join("runs"))
         .unwrap()
         .map(|e| e.unwrap().path())
@@ -442,7 +456,25 @@ fn v02_retry_24_recorded_stage4_rejections_and_undo_exactly() {
                     .as_u64()
                     .unwrap() as usize;
                 let text = params.as_object_mut().unwrap().remove("text").unwrap();
-                params["paragraphs"] = json!(vec![text; count]);
+                let children = query(
+                    &mut exec,
+                    "element.query",
+                    json!({"kind":"paragraph","ancestor":params["target"]}),
+                );
+                let mut texts: Vec<Value> = children["matches"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|p| p["parent"] == params["target"])
+                    .map(|p| {
+                        query(&mut exec, "element.get", json!({"target":p["nodeId"]}))["text"]
+                            .clone()
+                    })
+                    .collect();
+                assert_eq!(texts.len(), count);
+                texts[0] = text;
+                params["paragraphs"] = json!(texts);
+                adapted_cells += 1;
                 r = exec.call(command, params.clone(), Some(revision), false);
             }
             if !r.ok {
@@ -483,5 +515,5 @@ fn v02_retry_24_recorded_stage4_rejections_and_undo_exactly() {
         }
     }
     assert_eq!((seen, retried + expanded, excluded), (25, 24, 1));
-    eprintln!("V02_STAGE4_RETRY recorded={seen} succeeded={retried} equation_excluded={excluded} exact_request_rejected={expanded} field_rejected={field_rejected} no_text_fragment={no_fragment_rejected} undo_exact={retried}");
+    eprintln!("V02_STAGE4_RETRY recorded={seen} succeeded={retried} equation_excluded={excluded} exact_request_rejected={expanded} field_rejected={field_rejected} no_text_fragment={no_fragment_rejected} undo_exact={retried} adapted_cells_first_paragraph={adapted_cells}");
 }

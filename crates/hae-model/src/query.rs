@@ -61,6 +61,9 @@ pub struct EditAvailability {
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modes: Option<Vec<String>>,
+    /// Additional arguments needed for the advertised edit path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requires: Option<BTreeMap<String, String>>,
 }
 
 impl EditAvailability {
@@ -69,6 +72,7 @@ impl EditAvailability {
             available: reason.is_none(),
             reason,
             modes: None,
+            requires: None,
         }
     }
 }
@@ -397,6 +401,9 @@ impl Document {
                 add("text.replace", self.text_replace_reason(n, spans));
                 add("paragraph.format", self.paragraph_format_block_reason(n));
                 let e = edits.get_mut("text.replace").unwrap();
+                if e.available && spans.text_spans.is_empty() {
+                    e.requires = Some(BTreeMap::from([("controls".into(), "preserve".into())]));
+                }
                 e.modes = Some(if e.available {
                     let mut modes = Vec::new();
                     if spans.text_spans.iter().any(|s| s.start < s.end)
@@ -414,7 +421,24 @@ impl Document {
                     vec![]
                 });
             }
-            Kind::Cell => add("cell.setText", self.cell_set_text_block_reason(n)),
+            Kind::Cell => {
+                add("cell.setText", self.cell_set_text_block_reason(n));
+                let e = edits.get_mut("cell.setText").unwrap();
+                if e.available
+                    && self
+                        .children(&n.id)
+                        .filter(|p| p.kind == Kind::Paragraph)
+                        .any(|p| {
+                            self.para_text(p).is_ok_and(|pt| {
+                                pt.pieces
+                                    .iter()
+                                    .any(|piece| matches!(piece.kind, PieceKind::Control { .. }))
+                            })
+                        })
+                {
+                    e.requires = Some(BTreeMap::from([("controls".into(), "preserve".into())]));
+                }
+            }
             Kind::Picture => add("image.replace", self.picture_block_reason(n)),
             _ => {}
         }

@@ -83,3 +83,17 @@ class ReplaceAllTests(unittest.TestCase):
         result=check(a,b,r);self.assertTrue(result['ok'],result)
         r['intents']=result['expectedIntents'];self.assertTrue(check(a,b,r)['ok'])
         r['intents']=[{**result['expectedIntents'][0],'replacementCount':1}];self.assertFalse(check(a,b,r)['ok'])
+
+    def test_empty_paragraph_insertion_leaves_preview_stale(self):
+        from fixtures_v02 import custom_replace_all, _para
+        from fixtures import unpack
+        before = _para('<hp:t>pre</hp:t>') + _para('') + _para('<hp:t>post</hp:t>')
+        after = _para('<hp:t>pre</hp:t>') + _para('<hp:t>X</hp:t>', cache=False) + _para('<hp:t>post</hp:t>', cache=False)
+        a,b,r,_ = custom_replace_all(before, after, {'op':'text.replace','entry':SECTION,'path':[1],'range':{'start':0,'end':0},'text':'X'})
+        original, candidate = unpack(a), unpack(b)
+        original['Preview/PrvText.txt'] = b'pre\n\npost'
+        candidate['Preview/PrvText.txt'] = b'pre\n\npost'
+        self.assertTrue(check(archive(original), archive(candidate), r)['ok'])
+        candidate['Preview/PrvText.txt'] = b'pre\nX\npost'
+        result = check(archive(original), archive(candidate), r)
+        self.assertFalse(result['ok'], result)

@@ -6,7 +6,7 @@ AI 에이전트와 사람이 같은 명령으로 HWPX 문서를 조회·편집·
 
 2026-10-17 기준, **0.1의 Linux 범위는 완료**했다. 단계 0 선행 시험(S1~S3)을 통과했고, 단계 1 코어·단계 2 JSON-lines·stdio MCP·단계 3 격리 렌더링의 완료 판정은 예이며, 단계 4 Linux 범위는 실제 stdio MCP 94/94와 세트 A·B 실제 픽셀 시각 판독 PASS로 완료했다. **Windows·한컴 검증은 최종 단계로 보류**했으며, 한컴 출력과의 `nativeComparison`·한컴 SDK 분석은 이번 완료 범위 밖이다. 설계 §13에 따라 Windows 결과 회수 전까지 0.1 전체의 최종 완료는 선언하지 않는다. 단계 1~4의 Linux 결과는 **`main`에 병합했다**(`7cfc1fa`). [Linux 범위 완료 판정](docs/decisions/stage234-linux-results.md#linux-범위-완료-판정-2026-10-17)을 따른다.
 
-**0.2 구현(2026-10-18).** 기존 구조를 바꾸는 편집의 폭을 넓혔다 — 위치 삽입(길이 0 범위), 개체를 보존하는 범위 교체(`controls:"preserve"`), 다문단·병합 셀 편집(`paragraphs`), 그리고 문서 전체 정확 일치 교체 `text.replaceAll`. 새 문단·행·개체를 만드는 일은 0.3으로 넘겼다. 완료 조건 1~3은 다시 실행해 확인했다(게이트 297개 통과, MCP 146/146, 사용자 문서 속성 편집 98건과 Undo 98건, Linux 한컴 관찰 4종). 단계 4 거절 25건 재시도는 **성공 18 + 설계상 거절 6 + 수식 제외 1**이며, 24건 전부 성공으로 주장하지 않는다. 독립 검증(조건 4)은 진행 중이고 Windows 확인은 최종본에서 한다. [0.2 설계](docs/superpowers/specs/2026-10-18-hwpx-engine-0.2-design.md), [구현 기록](docs/decisions/v0.2-implementation-notes.md).
+**0.2 구현(2026-10-18).** 기존 구조를 바꾸는 편집의 폭을 넓혔다 — 위치 삽입(길이 0 범위), 개체를 보존하는 범위 교체(`controls:"preserve"`), 다문단·병합 셀 편집(`paragraphs`), 그리고 문서 전체 정확 일치 교체 `text.replaceAll`. 새 문단·행·개체를 만드는 일은 0.3으로 넘겼다. 기존 게이트는 Rust 297개·MCP 146/146이었고 Linux 한컴 관찰은 4종이다. 사용자 문서 속성 시험은 시도 98건 중 편집·Undo 정확 복원 92건, 필드 경계 거절 6건이다. 단계 4 거절 25건 재시도는 **성공 18 + 설계상 거절 6 + 수식 제외 1**이며, 성공 중 다문단 셀 9건은 paragraphs 적응 요청이다. 24건 전부 성공으로 주장하지 않는다. Sonnet 독립 검증은 조건부 수용(안전 성질 결함 없음)이며 Windows 확인은 최종본에서 한다. [0.2 설계](docs/superpowers/specs/2026-10-18-hwpx-engine-0.2-design.md), [구현 기록](docs/decisions/v0.2-implementation-notes.md).
 
 **한컴 상호운용 추가 검증(2026-10-17).** 한컴오피스 2020 Linux Beta를 디스플레이 없이 실행하고 화면을 읽는 경로(`QT_QPA_PLATFORM=vnc` + 최소 RFB 클라이언트)를 만들어, 엔진 출력을 실제 한컴으로 열어 확인했다. 그 결과 실제 결함 2건을 찾아 고쳤다 — 매니페스트 미디어 항목의 `isEmbeded="1"` 누락(한컴이 내장 대신 외부 연결로 해석)과 `imgClip`/`imgDim`의 단위 오류(픽셀당 75 HWPUNIT). 86개 파일 전수에서 실제 한컴 문서·사용자 작성 문서·엔진 출력은 모두 정상적으로 열린다. 로컬 게이트는 `scripts/hancom_gate.sh`이며, 자세한 근거와 한계는 [한컴 열기 검증 기록](docs/decisions/engine-output-open-verification-2026-10-17.md)에 있다. **이 검증은 Linux 빌드(2020 Beta)에 한정되며 Windows 한컴오피스 2024의 결과가 아니다.**
 
@@ -19,7 +19,7 @@ AI 에이전트와 사람이 같은 명령으로 HWPX 문서를 조회·편집·
   - `hae-edit`: 부분 편집(`text.replace`, `text.replaceAll`, `paragraph.format`, `cell.setText`, `image.replace`), `LinesegPolicy`, `PrvText` 갱신
   - `hae-verify`: 편집 계층에 의존하지 않는 독립 저장 관문 검사기(30종 변조 사례 전수 거절)
   - `hae-project`: Linux 디렉터리 핸들(`openat`/`O_NOFOLLOW`) 기반 루트 I/O, 세션 `.lock`(`flock`), 원자적 저장(`RENAME_NOREPLACE`·`fsync`), `.hwpwork` 프로젝트 및 무편집 바이트 통과 내보내기
-  - `hae-exec`: 단일 출처 명령 레지스트리(21개 명령·JSON Schema), `writerId`·`requestSequence` 순서/재전송/충돌 처리, `command.batch`, `dryRun`, 100단위 항목 공유 Undo/Redo 이력·스냅샷·세션 메모리 예산
+  - `hae-exec`: 단일 출처 명령 레지스트리(22개 명령·JSON Schema), `writerId`·`requestSequence` 순서/재전송/충돌 처리, `command.batch`, `dryRun`, 100단위 항목 공유 Undo/Redo 이력·스냅샷·세션 메모리 예산
   - `hae-cli`: `hae script`(단일 세션 스크립트 실행) 및 `hae run`(단발 실행, 일회성 Undo/Redo는 `SESSION_REQUIRED` 거절)
 - **추가 인터페이스·프리뷰 crate**: `hae-jsonl`(요청 1 MiB·응답 4 MiB), `hae-mcp`(레지스트리 기반 도구·실제 프로세스 동등성), `hae-render-rhwp`(bubblewrap 격리, 페이지 선택, SVG 검사, PNG 변환, 쪽 대응 검증).
 - **대형 프리뷰 전달**: 실제 JSON 및 MCP 이스케이프 예산을 초과하는 쪽은 출력 루트의 PNG/SVG 파일로 제공한다. 원본·기존 파일을 덮어쓰지 않고 해시와 경로를 반환한다.

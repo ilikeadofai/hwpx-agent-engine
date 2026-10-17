@@ -74,9 +74,9 @@ PACKAGE_REJECTED의 reason 값: encrypted, duplicate_name, case_collision, path_
 batch 롤백 뒤 현재 문서에서 재조회한다. 코드는 추가하지 않는다.
 
 개요의 `edits.<command>.reason`과 `notEditableReason`은 진단 코드가 아닌 지원 사유다.
-문단 text.replace의 `no_text_span`, `empty_paragraph_insert_unsupported`, 공통
+문단 text.replace의 `no_text_span`, `no_run`, 공통
 `document_readonly`·노드 잠금 사유, paragraph.format의 `no_header`·`no_paraPr`·`paraPr_shape`,
-셀의 `merged_cell`·`cell_paragraph_count`·`nested_table`·`no_run`·`range_crosses_control`·
+셀의 `nested_table`·`no_run`·`range_crosses_control`·
 `unsupported_content_in_range` 등이 포함된다. 셀 전체 교체 거절은 자손 문단의 교체 거절을
 뜻하지 않으며 `childParagraphsEditable`과 자손 문단의 `edits`를 확인한다.
 

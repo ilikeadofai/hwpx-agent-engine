@@ -198,18 +198,22 @@ class OracleTests(unittest.TestCase):
         a[SECTION] = a[SECTION].replace(b'<hp:t>beta</hp:t>', b'<hp:t xmlns:hp="urn:spoof">beta</hp:t>')
         self.assert_reject(archive(a), c, r, 'UNSUPPORTED')
 
-    def test_utf16_preview(self):
+    def test_utf16_preview_remains_stale(self):
         o, c, r = case('text')
         a, b = unpack(o), unpack(c)
         for payload in (a, b):
             payload['Preview/PrvText.txt'] = b'\xff\xfe' + payload['Preview/PrvText.txt'].decode().replace('\n', '\r\n').encode('utf-16-le')
+        b['Preview/PrvText.txt'] = a['Preview/PrvText.txt']
         self.assert_pass(archive(a), archive(b), r)
 
-    def test_ambiguous_preview_unsupported(self):
+    def test_ambiguous_preview_remains_stale(self):
         o, c, r = case('text')
         a = unpack(o)
         a['Preview/PrvText.txt'] = b'Alpha beta appears twice Alpha beta'
-        self.assert_reject(archive(a), c, r, 'UNSUPPORTED_PREVIEW', 'unsupported')
+        b = unpack(c)
+        b['Preview/PrvText.txt'] = a['Preview/PrvText.txt']
+        self.assert_pass(archive(a), archive(b), r)
+        self.assert_reject(archive(a), c, r, 'PAYLOAD_CHANGED')
 
     def test_missing_preview_is_not_synthesized(self):
         o, c, r = case('text')

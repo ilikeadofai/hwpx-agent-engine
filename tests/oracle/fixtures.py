@@ -129,7 +129,7 @@ def case(name):
         p2 = P2.replace(old, new.replace(CACHE, ''))
         p2 = p2[:-len(CACHE + '</hp:p>')] + '</hp:p>'
         candidate[SECTION] = candidate[SECTION].decode().replace(P2, p2).replace(P3, P3.replace(CACHE, '')).replace(P4, P4.replace(CACHE, '')).encode()
-        candidate['Preview/PrvText.txt'] = b'KEEP\nAlpha beta\n\nNEW\n\n\nTAIL\nOTHER' if name == 'cell' else b'KEEP\nAlpha beta\n\ncell\nNEW\n\nTAIL\nOTHER'
+        candidate['Preview/PrvText.txt'] = b'KEEP\nAlpha beta\n\nNEW\n\n\nTAIL\nOTHER' if name == 'cell' else original['Preview/PrvText.txt']
     elif name in ('format_clone', 'format_reuse'):
         clone = name == 'format_clone'
         req = request('paragraph.format', path=[1], alignment='center' if clone else 'right', **({'lineSpacingPercent': 180} if clone else {}))

@@ -745,3 +745,33 @@ fn v02_object_boundary_insertion_keeps_ids_batch_targets_and_project_paths() {
         );
     }
 }
+
+#[test]
+fn preserve_only_edits_advertise_required_controls() {
+    for inner in ["<hp:t>ab</hp:t><hp:equation/>", "<hp:equation/><hp:t/>"] {
+        let h = Harness::new();
+        let mut exec = h.open(&synthetic(&cell(inner)));
+        let c = query(&mut exec, "element.query", json!({"kind":"cell"}))["matches"][0].clone();
+        assert_eq!(
+            c["edits"]["cell.setText"]["requires"],
+            json!({"controls":"preserve"})
+        );
+        let r = exec.call(
+            "cell.setText",
+            json!({"target":c["nodeId"],"text":"T","controls":"preserve"}),
+            Some(0),
+            false,
+        );
+        assert!(r.ok, "{:?}", r.diagnostics);
+    }
+    let h = Harness::new();
+    let mut exec = h.open(&synthetic(&p("<hp:equation/><hp:t>́</hp:t>")));
+    let item = paragraphs(&mut exec).remove(0);
+    assert_eq!(item["edits"]["text.replace"]["modes"], json!(["replace"]));
+    assert_eq!(
+        item["edits"]["text.replace"]["requires"],
+        json!({"controls":"preserve"})
+    );
+    let r = exec.call("text.replace", json!({"target":item["nodeId"],"range":{"start":0,"end":1},"text":"T","controls":"preserve"}), Some(0), true);
+    assert!(r.ok, "{:?}", r.diagnostics);
+}

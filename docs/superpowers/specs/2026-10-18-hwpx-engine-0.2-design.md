@@ -41,6 +41,8 @@
   - hae-verify는 새 동작의 기대 결과를 hae-edit에 의존하지 않고 따로 계산한다.
   - tests/oracle(Python)에도 삽입·보존 교체·다문단 셀의 독립 구현과 변이 시험을 더한다.
 - editable 계약:
+  - 기본 광고는 기본 인자 기준이며 preserve 전용 범위를 모두 열거하지 않는다. `no_text_span`이어도 일부 preserve 범위는 실행될 수 있다.
+  - 기본 controls=reject로 실행할 수 없는 available 셀 및 preserve 전용 문단은 `requires:{controls:"preserve"}`를 함께 광고한다. 호출자는 이 필수 인자를 적용한다.
   - edits, modes, textSpans, 이유 코드는 새 능력을 정확히 반영한다.
   - 광고한 모든 구간·모드는 executor 경로(편집 + 검증)에서 성공해야 한다(0.1 2차 라운드 원칙).
 - 새 진단 코드는 docs/decisions/diagnostic-codes.md에 추가한다(CONTROLS_PRESERVED 등).
@@ -57,7 +59,7 @@
 3. Linux 한컴 관찰 환경(docs/decisions/engine-output-open-verification-2026-10-17.md)에서 대표 산출물(삽입, 보존 교체, 다문단 셀, 병합 셀)을 열어 화면으로 확인한다. Windows 확인은 사용자 지시대로 최종본에서 한 번에 한다.
 4. 독립 검증: Sol 구현은 Sonnet 또는 Luna가 반례 시도와 게이트 재실행으로 확인한다.
 
-**확인 결과(2026-10-18).** 1·2·3은 실측으로 확인했다: `scripts/check.sh` 종료 0(297개 통과, 실패 0), 사용자 문서 5종 속성 시험 98건/Undo 98건, Linux 한컴 관찰 4종. 2번의 "24건 성공"은 §7-1이 이미 이론상 상한으로 한정했고, 실측은 **성공 18건 + 설계상 거절 6건(no_text_fragment 5, field_boundary_in_range 1) + 수식 제외 1건**이다. 24건 전부 성공으로 읽지 않는다. 4번 독립 검증은 진행 중이다.
+**확인 결과(2026-10-18).** 기존 실측 결과: `scripts/check.sh` 종료 0(297개 통과, 실패 0), 사용자 문서 5종 속성 시험 시도 98건 중 성공·Undo 정확 복원 92건, field_boundary_in_range 거절 6건, Linux 한컴 관찰 4종. 2번의 "24건 성공" 목표는 달성하지 못했으며 §7-1의 원 요청 재시도·필드 안전 거절 원칙에 따라 구분한다. 실측은 **성공 18건 + 설계상 거절 6건(no_text_fragment 5, field_boundary_in_range 1) + 수식 제외 1건**이다. 24건 전부 성공으로 읽지 않는다. Sonnet 독립 검증은 조건부 수용이며 안전 성질 결함은 발견하지 않았다. 성공 18건 중 다문단 셀 9건은 원 text 요청과 동일하지 않은 paragraphs 적응 요청이므로 별도 집계한다.
 
 ## 7. 2단계 (재검토 결과 반영 자리)
 

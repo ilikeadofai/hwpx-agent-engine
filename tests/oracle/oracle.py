@@ -580,7 +580,7 @@ def replace_all_matches(text, find):
         position = index + len(find)
 
 
-def replace_all(original, candidate, expected, op, touched, anchors):
+def replace_all(original, candidate, expected, op, touched, anchors, preview_edits):
     """text.replaceAll over the expected tree. Returns (changed paragraph count, replacement count, entries)."""
     schema(op, ('op', 'find', 'text'), ('scope', 'maxMatches'))
     find, text = op['find'], op['text']
@@ -646,6 +646,7 @@ def replace_all(original, candidate, expected, op, touched, anchors):
                 t.changed_gaps = True
             for t in {id(t): t for t, _ in cuts.values()}.values():
                 t.text = ''.join(ch for gap in t.gaps for _, _, ch in decode_gap(gap))
+            preview_edits.append((original_text, v02_text(node)))
             changed_paragraphs += 1
             top = path[0]
             slot = anchors.setdefault(entry, {'first': top, 'nested': []})
@@ -729,23 +730,24 @@ def preview_text(package):
     return '\n'.join(lines)
 
 
-def update_preview(original, expected, changed):
+def update_preview(original, expected, edits):
+    """Only replace uniquely occurring, nonblank old paragraph text in UTF-8.
+
+    Otherwise retain the old preview bytes (stale), as the design requires.
+    Never synthesize a transcript from the candidate document.
+    """
     name = 'Preview/PrvText.txt'
-    if not changed or name not in original.payload:
+    if not edits or name not in original.payload:
         return
-    before, after = preview_text(original), preview_text(expected)
-    if before == after:
+    try:
+        preview = original.payload[name].decode('utf-8')
+    except UnicodeDecodeError:
         return
-    payload = original.payload[name]
-    formats = []
-    for encoding, bom in (('utf-8', b''), ('utf-8', b'\xef\xbb\xbf'), ('utf-16-le', b'\xff\xfe')):
-        for newline in ('\n', '\r\n'):
-            for trailing in ('', newline):
-                if bom + (before.replace('\n', newline) + trailing).encode(encoding) == payload:
-                    formats.append(bom + (after.replace('\n', newline) + trailing).encode(encoding))
-    need(formats and len(set(formats)) == 1, 'UNSUPPORTED_PREVIEW',
-         'PrvText is not an unambiguous full paragraph transcript')
-    expected.payload[name] = formats[0]
+    for old, new in edits:
+        old, new = (value.replace('\t', ' ').replace('\n', ' ') for value in (old, new))
+        if old != new and old.strip() and preview.count(old) == 1:
+            preview = preview.replace(old, new, 1)
+    expected.payload[name] = preview.encode('utf-8')
 
 
 def expected_state(original, candidate, request):
@@ -761,11 +763,12 @@ def expected_state(original, candidate, request):
     expected = copy.deepcopy(original)
     intents, changes, anchors, touched = [], [], {}, set()
     new_images, new_styles = set(), set()
+    preview_edits = []
     for op in ops:
         need(isinstance(op, dict), 'INVALID_REQUEST', 'operation must be object')
         kind = op.get('op')
         if kind == 'text.replaceAll':
-            count, replaced, entries = replace_all(original, candidate, expected, op, touched, anchors)
+            count, replaced, entries = replace_all(original, candidate, expected, op, touched, anchors, preview_edits)
             if replaced:
                 intents.append({'op': kind, 'find': op['find'], 'replacement': op['text'],
                                 'replacementCount': replaced, 'paragraphCount': count})
@@ -794,6 +797,7 @@ def expected_state(original, candidate, request):
         intent = {'op': kind, 'entry': entry, 'path': path}
         changed = False
         if kind in ('text.replace', 'cell.setText'):
+            old_texts = [v02_text(p) for p in paras]
             controls=op.get('controls','reject')
             need(controls in ('reject','preserve'),'INVALID_REQUEST','unknown controls mode')
             preserve=controls=='preserve'
@@ -817,6 +821,8 @@ def expected_state(original, candidate, request):
                 para=paras[0]
                 if len(paras)==1:intent['expectedText']=v02_text(para)
                 else:intent['expectedParagraphs']=[v02_text(p) for p in paras]
+            new_texts = [intent['expectedText']] if kind == 'text.replace' else [v02_text(p) for p in paras]
+            preview_edits.extend(zip(old_texts, new_texts))
         elif kind == 'paragraph.format':
             need(hp(para, 'p'), 'INVALID_TARGET', 'format target must be paragraph')
             need(expected.header is not None, 'UNSUPPORTED', 'missing header')
@@ -907,7 +913,7 @@ def expected_state(original, candidate, request):
                     need(i == len(para.children) - 1, 'UNSUPPORTED', 'cache must be final paragraph child')
                     para.remove(i)
                     cache_count += 1
-    update_preview(original, expected, changes)
+    update_preview(original, expected, preview_edits)
     if 'intents' in request:
         need(request['intents'] == intents, 'INTENT_MISMATCH', 'reported Intent does not equal independently derived applied intents')
     return expected, {'changes': changes, 'expectedIntents': intents, 'cacheRemovals': cache_count,
