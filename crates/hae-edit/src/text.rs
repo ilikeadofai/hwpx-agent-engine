@@ -359,47 +359,26 @@ fn plan_insert(
             && p.t
                 .is_some_and(|t| hae_model::para::text_element_supported(doc, t))
     };
-    let right = pt
-        .pieces
-        .iter()
-        .filter(safe)
-        .find(|p| p.cp_start <= cp && cp < p.cp_start + p.cp_len);
-    let left = pt
-        .pieces
-        .iter()
-        .filter(safe)
-        .rev()
-        .find(|p| p.cp_start < cp && cp <= p.cp_start + p.cp_len);
-    let piece = right.or(left).ok_or_else(|| {
-        EngineError::new(
-            Code::InvalidRange,
-            Stage::Validate,
-            "position is outside textSpans",
-        )
-        .with_target(&para.id)
-    })?;
-    // Require the adjacent whole grapheme to be in a safe span. A truncated
-    // public span list does not bound the actual command's valid positions.
-    let a = if right.is_some() { pos } else { pos - 1 };
-    let probe = pt.cp_range(a..a + 1).unwrap();
-    if pt
-        .verification_barriers
-        .iter()
-        .any(|&b| probe.start < b && b < probe.end)
-        || pt
-            .pieces
+    let grapheme_safe = |i: usize| {
+        let probe = pt.cp_range(i..i + 1).unwrap();
+        !pt.verification_barriers
             .iter()
-            .filter(|p| p.cp_start < probe.end && probe.start < p.cp_start + p.cp_len)
-            .any(|p| {
-                !safe(&p)
-                    || pt
-                        .text
-                        .chars()
-                        .skip(p.cp_start.max(probe.start))
-                        .take((p.cp_start + p.cp_len).min(probe.end) - p.cp_start.max(probe.start))
-                        .any(|c| ['\t', '\n', '\r'].contains(&c))
-            })
-    {
+            .any(|&b| probe.start < b && b < probe.end)
+            && pt
+                .pieces
+                .iter()
+                .filter(|p| p.cp_start < probe.end && probe.start < p.cp_start + p.cp_len)
+                .all(|p| safe(&p))
+            && !pt
+                .text
+                .chars()
+                .skip(probe.start)
+                .take(probe.end - probe.start)
+                .any(|c| ['\t', '\n', '\r'].contains(&c))
+    };
+    let right = pos < pt.grapheme_len() && grapheme_safe(pos);
+    let left = pos > 0 && grapheme_safe(pos - 1);
+    if !right && !left {
         return Err(EngineError::new(
             Code::InvalidRange,
             Stage::Validate,
@@ -407,6 +386,12 @@ fn plan_insert(
         )
         .with_target(&para.id));
     }
+    let source = if right { cp } else { cp - 1 };
+    let piece = pt
+        .pieces
+        .iter()
+        .find(|p| p.cp_start <= source && source < p.cp_start + p.cp_len)
+        .unwrap();
     let at = match &piece.kind {
         PieceKind::Text { raw } => {
             raw.start

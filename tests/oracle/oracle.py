@@ -64,6 +64,8 @@ class Node:
     allowed: set = field(default_factory=set)
     text_changed: bool = False
     generated: bool = False
+    changed_gaps: bool = False
+    expanded: bool = False
     start: int = 0
     open_end: int = 0
     close_start: int = 0
@@ -294,7 +296,13 @@ def compare_node(expected, actual, location):
     need(expected.text == actual.text, 'TEXT_CHANGED', location)
     if not expected.generated:
         left, right = masked_open(expected, expected.allowed), masked_open(actual, expected.allowed)
-        if expected.text_changed:
+        if expected.changed_gaps or expected.expanded:
+            if expected.expanded:
+                left = re.sub(rb'\s*/>$', b'>', left)
+            need(left == right and expected.gaps == actual.gaps, 'LEXICAL_CHANGED', location)
+            if not expected.expanded:
+                need(expected.closing == actual.closing, 'LEXICAL_CHANGED', location)
+        elif expected.text_changed:
             left, right = re.sub(rb'/\s*>$', b'>', left), re.sub(rb'/\s*>$', b'>', right)
             need(not actual.children and not re.search(rb'<', b''.join(actual.gaps)),
                  'LEXICAL_CHANGED', 'new text must be escaped character data: ' + location)
@@ -372,15 +380,121 @@ def replace_range(paragraph, start, end, replacement, empty_cell=False):
     return True
 
 
-def cell_paragraph(cell):
-    need(hp(cell, 'tc'), 'INVALID_TARGET', 'cell target must be tc')
-    spans = [n for n in cell.children if hp(n, 'cellSpan')]
-    need(len(spans) == 1 and spans[0].attrs == {'colSpan': '1', 'rowSpan': '1'}, 'UNSUPPORTED', 'merged/unknown cell span')
-    need(not any(hp(n, 'tbl') for n in cell.walk()), 'UNSUPPORTED', 'nested table')
-    subs = [n for n in cell.children if hp(n, 'subList')]
-    need(len(subs) == 1 and len(subs[0].children) == 1 and hp(subs[0].children[0], 'p'),
-         'UNSUPPORTED', 'cell must have exactly one paragraph')
-    return subs[0].children[0]
+def decode_gap(raw):
+    need(b'<!' not in raw and b'<?' not in raw and not any(c in raw for c in (b'\t', b'\n', b'\r')),
+         'UNSUPPORTED', 'CDATA/comments/PI/literal controls are outside oracle text subset')
+    result=[]
+    for m in re.finditer(rb'&(?:#[0-9]+|#x[0-9a-fA-F]+|amp|lt|gt|quot|apos);|[^&]',raw):
+        token=m[0]
+        if token.startswith(b'&'):
+            value=token[1:-1].decode()
+            ch=chr(int(value[2:],16)) if value.startswith('#x') else chr(int(value[1:])) if value.startswith('#') else {'amp':'&','lt':'<','gt':'>','quot':'"','apos':"'"}[value]
+            result.append((m.start(),m.end(),ch))
+        elif token[0]<128:
+            result.append((m.start(),m.end(),token.decode()))
+    # Non-ASCII is decoded a scalar at a time, with byte ranges retained.
+    if any(c>=128 for c in raw):
+        result=[];offset=0
+        for token in re.findall(r'&(?:#[0-9]+|#x[0-9a-fA-F]+|amp|lt|gt|quot|apos);|[^&]',raw.decode()):
+            data=token.encode();ch=decode_gap(data)[0][2] if token.startswith('&') else token
+            result.append((offset,offset+len(data),ch));offset+=len(data)
+    return result
+
+
+def v02_view(paragraph):
+    need(hp(paragraph,'p'),'INVALID_TARGET','target must be paragraph')
+    scalars=[];empty=[];runs=[]
+    for run in paragraph.children:
+        if hp(run,'linesegarray'):continue
+        need(hp(run,'run'),'UNSUPPORTED','non-run paragraph child')
+        runs.append(run)
+        need(not run.text.strip(),'UNSUPPORTED','direct run text')
+        need(not any(b'<!' in gap or b'<?' in gap for gap in run.gaps),'UNSUPPORTED','run lexical barriers')
+        for t in run.children:
+            if hp(t,'secPr'):continue
+            if not hp(t,'t'):
+                scalars.append((None,0,0,0,'\ufffc'));continue
+            need(set(t.attrs)<={'charPrIDRef'},'UNSUPPORTED','opaque hp:t attributes')
+            if not t.text and not t.children and all(not g for g in t.gaps):empty.append((t,len(scalars)))
+            for i,gap in enumerate(t.gaps):
+                for a,b,ch in decode_gap(gap):scalars.append((t,i,a,b,ch))
+                if i<len(t.children):
+                    child=t.children[i]
+                    need(hp(child,'tab') or hp(child,'lineBreak'),'UNSUPPORTED','unknown text child')
+                    scalars.append((None,0,0,0,'\t' if hp(child,'tab') else '\n'))
+    return scalars,empty,runs
+
+
+def v02_text(paragraph):
+    return ''.join(s[4] for s in v02_view(paragraph)[0])
+
+
+def replace_v02(paragraph,start,end,replacement,preserve=False,empty_cell=False):
+    scalars,empty,runs=v02_view(paragraph)
+    original=''.join(s[4] for s in scalars)
+    simple_graphemes(original.replace('\t','').replace('\n',''))
+    need(type(start) is int and type(end) is int and 0<=start<=end<=len(scalars),'INVALID_RANGE','invalid original grapheme range')
+    need(start!=end or replacement or empty_cell,'INVALID_RANGE','empty insertion')
+    if start==end:
+        if original:
+            chosen=scalars[start] if start<len(scalars) and scalars[start][0] is not None else scalars[start-1] if start>0 and scalars[start-1][0] is not None else None
+            need(chosen is not None,'INVALID_RANGE','outside insertion spans')
+            node,g,a,b,_=chosen;at=a if start<len(scalars) and chosen is scalars[start] else b
+            node.gaps[g]=node.gaps[g][:at]+xml_text(replacement)+node.gaps[g][at:]
+            node.text=node.text[:sum(1 for t,*_ in scalars[:start] if t is node)]+replacement+node.text[sum(1 for t,*_ in scalars[:start] if t is node):]
+            node.changed_gaps=True
+            return bool(replacement)
+        need(runs,'UNSUPPORTED','no first run')
+        if not replacement:return False
+        if empty:
+            node=next((t for t,_ in empty if t in runs[0].children),None)
+            need(node is not None,'UNSUPPORTED','first run has no reusable text')
+            node.text=replacement;node.gaps=[xml_text(replacement)];node.changed_gaps=True
+            node.expanded=not node.closing
+        else:
+            run=runs[0]
+            tag=paragraph.tag.rsplit('}',1)[0]+'}t'
+            node=Node(tag,{},text=replacement,gaps=[xml_text(replacement)],generated=True)
+            run.append(node);run.expanded=not run.closing
+        return True
+    covered=scalars[start:end]
+    need(preserve or all(t is not None for t,*_ in covered),'UNSUPPORTED','range crosses controls')
+    mapped=[x for x in covered if x[0] is not None]
+    need(all(ch not in '\t\r\n' for _,_,_,_,ch in mapped),'UNSUPPORTED','literal/reference control character')
+    if not mapped:
+        node=next((t for t,cp in empty if start<=cp<=end),None)
+        need(node is not None,'UNSUPPORTED','no existing text fragment')
+        if not replacement:return False
+        node.text=replacement;node.gaps=[xml_text(replacement)];node.changed_gaps=True;node.expanded=not node.closing
+        return True
+    wanted=original[:start];put=False
+    for node,_,_,_,ch in covered:
+        if node is None:wanted+=ch
+        elif not put:wanted+=replacement;put=True
+    wanted+=original[end:]
+    if wanted==original:return False
+    edits={};inserted=False
+    for node,g,a,b,ch in mapped:
+        edits.setdefault((id(node),g),(node,[]))[1].append((a,b,xml_text(replacement) if not inserted else b''));inserted=True
+    for (_,g),(node,cuts) in edits.items():
+        raw=node.gaps[g]
+        for a,b,value in reversed(cuts):raw=raw[:a]+value+raw[b:]
+        node.gaps[g]=raw;node.changed_gaps=True
+    for node in {id(x[0]):x[0] for x in mapped}.values():
+        node.text=''.join(ch for gap in node.gaps for _,_,ch in decode_gap(gap))
+    return v02_text(paragraph)!=original
+
+
+def xml_text(value):
+    return value.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').encode()
+
+
+def cell_paragraphs(cell):
+    need(hp(cell,'tc'),'INVALID_TARGET','target must be tc')
+    need(not any(hp(n,'tbl') or hp(n,'tc') and n is not cell for n in cell.walk()),'UNSUPPORTED','nested table/cell')
+    subs=[n for n in cell.children if hp(n,'subList')]
+    need(len(subs)==1 and subs[0].children and all(hp(n,'p') for n in subs[0].children),'UNSUPPORTED','cell paragraph structure')
+    return subs[0].children
 
 
 def semantic(node, ignore_id=False):
@@ -480,8 +594,8 @@ def expected_state(original, candidate, request):
         need(isinstance(op, dict), 'INVALID_REQUEST', 'operation must be object')
         kind = op.get('op')
         requirements = {
-            'text.replace': (('range', 'text'), ()),
-            'cell.setText': (('text',), ()),
+            'text.replace': (('range', 'text'), ('controls',)),
+            'cell.setText': ((), ('text','paragraphs','controls')),
             'paragraph.format': ((), ('alignment', 'lineSpacingPercent')),
             'image.replace': (('image',), ()),
         }
@@ -494,22 +608,37 @@ def expected_state(original, candidate, request):
         root = expected.xml[entry].root
         target = root.at(path)
         # Each operation owns a distinct target paragraph or picture in this initial oracle.
-        para = cell_paragraph(target) if kind == 'cell.setText' else target
+        paras = cell_paragraphs(target) if kind == 'cell.setText' else [target]
+        para = paras[0]
         key = (entry, id(para))
         need(key not in touched, 'UNSUPPORTED', 'multiple operations on same paragraph/picture')
         touched.add(key)
         intent = {'op': kind, 'entry': entry, 'path': path}
         changed = False
         if kind in ('text.replace', 'cell.setText'):
-            plain_text(op['text'])
-            if kind == 'text.replace':
-                bounds = op['range']
-                schema(bounds, ('start', 'end'))
-                changed = replace_range(para, bounds['start'], bounds['end'], op['text'])
+            controls=op.get('controls','reject')
+            need(controls in ('reject','preserve'),'INVALID_REQUEST','unknown controls mode')
+            preserve=controls=='preserve'
+            if kind=='text.replace':
+                plain_text(op['text']);bounds=op['range'];schema(bounds,('start','end'))
+                if preserve or bounds['start']==bounds['end']:
+                    changed=replace_v02(para,bounds['start'],bounds['end'],op['text'],preserve)
+                    intent['expectedText']=v02_text(para)
+                else:
+                    changed=replace_range(para,bounds['start'],bounds['end'],op['text'])
+                    intent['expectedText']=text_of(para)
             else:
-                text = text_of(para)
-                changed = replace_range(para, 0, len(text), op['text'], empty_cell=not text)
-            intent['expectedText'] = text_of(para)
+                need(('text' in op)!=('paragraphs' in op),'INVALID_ARGUMENT','text/paragraphs are mutually exclusive')
+                values=op.get('paragraphs',[op.get('text')])
+                need('paragraphs' in op or len(paras)==1,'UNSUPPORTED','use paragraphs')
+                need(isinstance(values,list) and len(values)==len(paras),'INVALID_ARGUMENT','exact paragraph count required')
+                for para,value in zip(paras,values):
+                    plain_text(value)
+                    text=v02_text(para)
+                    changed=replace_v02(para,0,len(text),value,preserve,empty_cell=not text) or changed
+                para=paras[0]
+                if len(paras)==1:intent['expectedText']=v02_text(para)
+                else:intent['expectedParagraphs']=[v02_text(p) for p in paras]
         elif kind == 'paragraph.format':
             need(hp(para, 'p'), 'INVALID_TARGET', 'format target must be paragraph')
             need(expected.header is not None, 'UNSUPPORTED', 'missing header')
@@ -588,7 +717,7 @@ def expected_state(original, candidate, request):
                 anchor = anchors.setdefault(entry, {'first': path[0], 'nested': []})
                 anchor['first'] = min(anchor['first'], path[0])
                 if para is not root.children[path[0]]:
-                    anchor['nested'].append(para)
+                    anchor['nested'].extend(paras if kind == 'cell.setText' else [para])
     cache_count = 0
     for entry, anchor in anchors.items():
         root = expected.xml[entry].root

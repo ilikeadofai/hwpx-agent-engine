@@ -28,14 +28,20 @@ fn parse_oracle_op(op: &Value, candidate: &Archive) -> VerifyOperation {
                 path,
                 range: start..end,
                 replacement,
-                preserve: false,
+                preserve: op["controls"] == "preserve",
             }
         }
+        "cell.setText" if op.get("paragraphs").is_some() => VerifyOperation::CellSetParagraphs {
+            entry,
+            path,
+            paragraphs: serde_json::from_value(op["paragraphs"].clone()).unwrap(),
+            preserve: op["controls"] == "preserve",
+        },
         "cell.setText" => VerifyOperation::CellSetText {
             entry,
             path,
             text: op["text"].as_str().unwrap().to_string(),
-            preserve: false,
+            preserve: op["controls"] == "preserve",
         },
         "paragraph.format" => {
             let alignment = op["alignment"].as_str().map(|s| match s {
@@ -128,4 +134,54 @@ fn hae_verify_rejects_all_30_independent_oracle_mutations() {
         assert_eq!(res.unwrap_err().code(), Code::VerifyFailed, "{name}");
     }
     let _ = fs::remove_dir_all(&out_dir);
+}
+
+#[test]
+fn v02_independent_python_candidates_pass_and_all_mutants_fail() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let out = std::env::temp_dir().join(format!("hae-v02-oracle-{}", std::process::id()));
+    let status = Command::new("python3")
+        .arg("-I")
+        .arg(root.join("tests/oracle/fixtures_v02.py"))
+        .arg(&out)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let cases: Value =
+        serde_json::from_slice(&fs::read(out.join("v02-manifest.json")).unwrap()).unwrap();
+    let limits = Limits::default();
+    let mut rejected = 0;
+    for row in cases.as_array().unwrap() {
+        let kind = row["kind"].as_str().unwrap();
+        let original = Archive::open(
+            fs::read(out.join(format!("{kind}.original.hwpx"))).unwrap(),
+            &limits,
+        )
+        .unwrap();
+        let bytes = fs::read(out.join(format!("{kind}.valid.hwpx"))).unwrap();
+        let candidate = Archive::open(bytes.clone(), &limits).unwrap();
+        let request: Value =
+            serde_json::from_slice(&fs::read(out.join(format!("{kind}.request.json"))).unwrap())
+                .unwrap();
+        let ops: Vec<_> = request["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| parse_oracle_op(o, &candidate))
+            .collect();
+        let valid = verify_archive(&original, &bytes, &ops, &limits);
+        assert!(valid.is_ok(), "{kind}: {valid:?}");
+        for name in row["mutants"].as_array().unwrap() {
+            let result = verify_archive(
+                &original,
+                &fs::read(out.join(name.as_str().unwrap())).unwrap(),
+                &ops,
+                &limits,
+            );
+            assert!(result.is_err(), "accepted mutation {name}");
+            rejected += 1;
+        }
+    }
+    assert_eq!(rejected, 14);
+    fs::remove_dir_all(out).unwrap();
 }

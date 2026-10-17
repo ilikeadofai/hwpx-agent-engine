@@ -301,7 +301,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
-    const DOC_CODES: [&str; 31] = [
+    const DOC_CODES: [&str; 33] = [
         "PACKAGE_REJECTED",
         "RESOURCE_LIMIT",
         "STATE_INVARIANT_ERROR",
@@ -321,9 +321,11 @@ mod tests {
         "TARGET_NOT_FOUND",
         "AMBIGUOUS_TARGET",
         "UNSUPPORTED",
+        "INVALID_ARGUMENT",
         "INVALID_RANGE",
         "RANGE_CROSSES_CONTROL",
         "UNSUPPORTED_CONTENT_IN_RANGE",
+        "CONTROLS_PRESERVED",
         "FORMAT_COLLAPSED",
         "RENDERER_UNAVAILABLE",
         "PREVIEW_PAGE_LIMIT",
@@ -340,7 +342,7 @@ mod tests {
         let got: BTreeSet<&str> = Code::ALL.iter().map(|c| c.as_str()).collect();
         let want: BTreeSet<&str> = DOC_CODES.into_iter().collect();
         assert_eq!(got, want);
-        assert_eq!(got.len(), 31);
+        assert_eq!(got.len(), 33);
         for c in Code::ALL {
             let j = serde_json::to_string(&c).unwrap();
             assert_eq!(j, format!("\"{}\"", c.as_str()));
@@ -366,7 +368,14 @@ mod tests {
     #[test]
     fn warnings_and_sections() {
         let warns: Vec<Code> = Code::ALL.into_iter().filter(|c| c.is_warning()).collect();
-        assert_eq!(warns, vec![Code::FormatCollapsed, Code::PreviewPageLimit]);
+        assert_eq!(
+            warns,
+            vec![
+                Code::ControlsPreserved,
+                Code::FormatCollapsed,
+                Code::PreviewPageLimit
+            ]
+        );
         assert_eq!(Code::ResourceLimit.spec_section(), Some("§8·§11"));
         assert_eq!(Code::IoError.spec_section(), None);
         assert_eq!(

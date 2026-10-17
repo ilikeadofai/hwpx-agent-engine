@@ -331,15 +331,6 @@ fn insert(
         let valid = |s: &Scalar| {
             !s.barrier && !['\t', '\n', '\r'].contains(&s.character) && s.raw.is_some()
         };
-        let right = v.scalars.get(cp).filter(|s| valid(s));
-        let left = cp
-            .checked_sub(1)
-            .and_then(|i| v.scalars.get(i))
-            .filter(|s| valid(s));
-        let s = right
-            .or(left)
-            .ok_or_else(|| unsupported("insertion has no adjacent text"))?;
-        // The selected adjacent grapheme must be entirely supported.
         let offsets: Vec<usize> = std::iter::once(0)
             .chain(v.text.graphemes(true).scan(0, |n, g| {
                 *n += g.chars().count();
@@ -349,17 +340,25 @@ fn insert(
         let g = offsets
             .binary_search(&cp)
             .map_err(|_| fail("not a grapheme boundary"))?;
-        let (a, b) = if right.is_some() {
-            (cp, offsets[g + 1])
-        } else {
-            (offsets[g - 1], cp)
+        let supported = |a: usize, b: usize| {
+            !v.barriers.iter().any(|&i| a < i && i < b)
+                && v.scalars[a..b]
+                    .iter()
+                    .all(|s| valid(s) && s.t.is_some_and(|t| plain_attrs(doc, t).is_ok()))
         };
-        if v.barriers.iter().any(|&i| a < i && i < b) || v.scalars[a..b].iter().any(|s| !valid(s)) {
-            return Err(unsupported("insertion outside safe span"));
-        }
-        for s in &v.scalars[a..b] {
-            plain_attrs(doc, s.t.ok_or_else(|| unsupported("missing t"))?)?;
-        }
+        let right = if g + 1 < offsets.len() && supported(cp, offsets[g + 1]) {
+            v.scalars.get(cp)
+        } else {
+            None
+        };
+        let left = if g > 0 && supported(offsets[g - 1], cp) {
+            v.scalars.get(cp - 1)
+        } else {
+            None
+        };
+        let s = right
+            .or(left)
+            .ok_or_else(|| unsupported("insertion outside safe span"))?;
         let r = s.raw.as_ref().unwrap();
         let at = if right.is_some() { r.start } else { r.end };
         let mut wanted: String = v.text.chars().take(cp).collect();
@@ -470,7 +469,11 @@ pub(crate) fn cell(
         if hp(e, "tbl") {
             return Err(unsupported("nested table"));
         }
-        if hp(e, "p") {
+        if hp(e, "p")
+            && e.parent.is_some_and(|parent| {
+                hp(doc.el(parent), "subList") && doc.el(parent).parent == Some(tc)
+            })
+        {
             paras.push(i);
         }
     }

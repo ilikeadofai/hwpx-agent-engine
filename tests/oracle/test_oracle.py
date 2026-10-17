@@ -86,7 +86,7 @@ class OracleTests(unittest.TestCase):
         self.assert_pass(o, archive(b), r)
 
     def test_bad_ranges(self):
-        for start, end in ((0, 0), (-1, 2), (1, 20), (True, 3), (0, 1.5)):
+        for start, end in ((-1, 2), (1, 20), (True, 3), (0, 1.5)):
             with self.subTest(start=start, end=end):
                 o, c, r = case('text')
                 r['operations'][0]['range'] = {'start': start, 'end': end}
@@ -157,11 +157,13 @@ class OracleTests(unittest.TestCase):
         a[SECTION] = a[SECTION].replace(b'<hp:t></hp:t>', b'<hp:t/>')
         self.assert_pass(archive(a), c, req)
 
-    def test_merged_cell_unsupported(self):
+    def test_merged_cell_is_supported_and_geometry_preserved(self):
         o, c, req = case('cell')
         a = unpack(o)
         a[SECTION] = a[SECTION].replace(b'colSpan="1"', b'colSpan="2"', 1)
-        self.assert_reject(archive(a), c, req, 'UNSUPPORTED')
+        b=unpack(c)
+        b[SECTION]=b[SECTION].replace(b'colSpan="1"',b'colSpan="2"',1)
+        self.assert_pass(archive(a),archive(b),req)
 
     def test_multiple_cell_paragraphs_unsupported(self):
         o, c, req = case('cell')

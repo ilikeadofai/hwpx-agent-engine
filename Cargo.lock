@@ -323,7 +323,7 @@ dependencies = [
 
 [[package]]
 name = "hae-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "hae-diag",
@@ -334,7 +334,7 @@ dependencies = [
 
 [[package]]
 name = "hae-diag"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -343,7 +343,7 @@ dependencies = [
 
 [[package]]
 name = "hae-edit"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hae-diag",
  "hae-model",
@@ -359,7 +359,7 @@ dependencies = [
 
 [[package]]
 name = "hae-exec"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hae-diag",
  "hae-edit",
@@ -376,7 +376,7 @@ dependencies = [
 
 [[package]]
 name = "hae-jsonl"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "hae-diag",
@@ -386,7 +386,7 @@ dependencies = [
 
 [[package]]
 name = "hae-mcp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "hae-diag",
@@ -399,7 +399,7 @@ dependencies = [
 
 [[package]]
 name = "hae-model"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "getrandom",
  "hae-diag",
@@ -415,7 +415,7 @@ dependencies = [
 
 [[package]]
 name = "hae-package"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hae-diag",
  "hae-xml",
@@ -426,7 +426,7 @@ dependencies = [
 
 [[package]]
 name = "hae-project"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hae-diag",
  "hae-model",
@@ -441,7 +441,7 @@ dependencies = [
 
 [[package]]
 name = "hae-render-rhwp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "getrandom",
  "hae-diag",
@@ -458,7 +458,7 @@ dependencies = [
 
 [[package]]
 name = "hae-verify"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hae-diag",
  "hae-package",
@@ -472,7 +472,7 @@ dependencies = [
 
 [[package]]
 name = "hae-xml"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hae-diag",
  "quick-xml",
@@ -480,7 +480,7 @@ dependencies = [
 
 [[package]]
 name = "hae-zip"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crc32fast",
  "flate2",

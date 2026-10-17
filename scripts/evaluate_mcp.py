@@ -478,6 +478,7 @@ class Runner:
         try:
             self.verify_tools_schema(client)
             self.evaluate(client, doc_path, doc_sha, replacement, replacement_sha)
+            self.evaluate_v02(client,doc_path)
         finally:
             stderr = client.close()
         (self.logs_dir / "engine-stderr.log").write_text(stderr, encoding="utf-8")
@@ -512,7 +513,9 @@ class Runner:
             and has_doc_id
             and {"steps", "expectedVersion"} <= set(required("command_batch"))
             and "dryRun" in props("command_batch")
-            and {"target", "text", "expectedVersion"} <= set(required("cell_set_text"))
+            and {"target", "expectedVersion"} <= set(required("cell_set_text"))
+            and {"text","paragraphs","controls"} <= set(props("cell_set_text"))
+            and "controls" in props("text_replace")
             and {"target", "expectedVersion"} <= set(required("paragraph_format"))
             and {"target", "imagePath", "expectedVersion"} <= set(required("image_replace"))
             and {"pages", "includePng", "includeSvg"} <= set(props("document_preview"))
@@ -706,6 +709,58 @@ class Runner:
 
         self.artifacts["preview_before"] = before
         self.artifacts["preview_after"] = after
+
+    def evaluate_v02(self, client, base_path):
+        for kind in ("insert","preserve","multi","merged"):
+            client.call("document_close",{})
+            with zipfile.ZipFile(base_path) as z:
+                payload={info.filename:(z.read(info),info.compress_type) for info in z.infolist()}
+            section=payload["Contents/section0.xml"][0].decode()
+            if kind=="multi":
+                extra=f'<hp:p {P_ATTRS.format(id=99)}><hp:run charPrIDRef="0"><hp:t/></hp:run></hp:p>'
+                section=section.replace('</hp:subList>',extra+'</hp:subList>',1)
+            if kind=="merged":
+                section=section.replace(table_cell_xml(1,"셀나"),"")
+                section=section.replace('colSpan="1" rowSpan="1"','colSpan="2" rowSpan="1"',1)
+                section=section.replace('<hp:cellSz width="21000"','<hp:cellSz width="42000"',1)
+            payload["Contents/section0.xml"]=(section.encode(),8)
+            path=self.inputs/f'v02-{kind}.hwpx'
+            with zipfile.ZipFile(path,'w') as z:
+                for name,(data,method) in payload.items():z.writestr(name,data,compress_type=method)
+            opened,_=client.call("document_open",{"path":str(path)})
+            self.require(f'v02_{kind}_open',opened.get('ok'),opened)
+            if kind in ('insert','preserve'):
+                qs,_=client.call('element_query',{'kind':'paragraph'})
+                items=qs['result']['matches']
+                item=items[0] if kind=='insert' else items[-1]
+                got,_=client.call('element_get',{'target':item['nodeId']})
+                if kind=='insert':
+                    pos=item['textSpans'][0]['start'];bounds={'start':pos,'end':pos}
+                else:bounds={'start':0,'end':got['result']['graphemeCount']}
+                tool='text_replace';params={'target':item['nodeId'],'range':bounds,'text':('INSERT V02 ' if kind=='insert' else 'PRESERVE V02'),'controls':'preserve' if kind=='preserve' else 'reject'}
+            else:
+                qs,_=client.call('element_query',{'kind':'cell'})
+                item=qs['result']['matches'][0];tool='cell_set_text'
+                params={'target':item['nodeId'],'paragraphs':['MULTI FIRST','MULTI SECOND'] if kind=='multi' else ['MERGED V02'],'controls':'preserve'}
+            dry,_=client.call(tool,{**params,'expectedVersion':0,'dryRun':True})
+            self.require(f'v02_{kind}_dry_run',dry.get('ok') and dry['result']['afterVersion']==0,dry)
+            changed,_=client.call(tool,{**params,'expectedVersion':0})
+            self.require(f'v02_{kind}_apply',changed.get('ok') and changed['result']['afterVersion']==1,changed)
+            if kind=='preserve':self.require('v02_preserve_diagnostic',any(d['code']=='CONTROLS_PRESERVED' for d in changed.get('diagnostics',[])),changed.get('diagnostics'))
+            output=self.artifacts_dir/f'v02-{kind}.hwpx'
+            exported,_=client.call('document_export',{'path':str(output)})
+            self.require(f'v02_{kind}_export',exported.get('ok'),exported)
+            self.sha(output,f'v02_{kind}')
+            undo,_=client.call('history_undo',{'expectedVersion':1})
+            self.require(f'v02_{kind}_undo',undo.get('ok') and undo['result']['afterVersion']==2,undo)
+            undo_path=self.artifacts_dir/f'v02-{kind}-undo.hwpx'
+            exported,_=client.call('document_export',{'path':str(undo_path)})
+            self.require(f'v02_{kind}_undo_exact',exported.get('ok') and undo_path.read_bytes()==path.read_bytes(),None)
+            redo,_=client.call('history_redo',{'expectedVersion':2})
+            self.require(f'v02_{kind}_redo',redo.get('ok') and redo['result']['afterVersion']==3,redo)
+            redo_path=self.artifacts_dir/f'v02-{kind}-redo.hwpx'
+            exported,_=client.call('document_export',{'path':str(redo_path)})
+            self.require(f'v02_{kind}_redo_exact',exported.get('ok') and redo_path.read_bytes()==output.read_bytes(),None)
 
     def layout_checks(self, tag, png_raw, svg) -> None:
         """조판 회귀 방지: 쪽 설정이 있는 보통 문서는 첫 쪽 위·왼쪽 가장자리에 내용이 닿지 않는다.

@@ -316,3 +316,30 @@ PNG 변환에는 같은 빌드의 `hae-raster`가 필요합니다. 저장소 루
 실패 단계 직전 후보 상태의 오프셋입니다. batch가 롤백되면 현재 revision을 다시 조회한 뒤
 새 구간으로 요청합니다. 객체를 가로지르는 교체, 빈 문단 `text.replace` 삽입,
 다문단 셀의 `cell.setText`는 0.1에서 지원하지 않습니다.
+
+
+## 0.2 텍스트 삽입과 개체 보존
+
+엔진과 command.list/describe의 레지스트리 schemaVersion은 0.2.0이다. JSON-lines/MCP 요청 봉투와 .hwpwork 파일 형식의 정수 schemaVersion=1은 유지한다.
+
+text.replace는 [start,end) grapheme 범위를 받는다. start=end이면 비어 있지 않은 text를 삽입한다. 위치는 textSpans 내부·경계여야 하며, 빈 문단은 [{start:0,end:0}]과 modes:["insert"]를 제공한다. 일반 텍스트 문단은 modes:["replace","insert"]를 제공한다. 바로 뒤 글자의 run, 없으면 바로 앞 글자의 run을 쓴다. 빈 문단은 첫 run을 쓰고 필요한 hp:t 하나만 마지막 자식 뒤에 만든다. run이 없으면 UNSUPPORTED(reason:no_run)다. 빈 문자열 삽입은 INVALID_RANGE다.
+
+```json
+{"command":"text.replace","expectedVersion":0,"params":{"target":"문단 nodeId","range":{"start":0,"end":0},"text":"새 글"}}
+```
+
+controls는 기본 reject이며 기존처럼 개체를 가로지르면 거절한다. preserve를 주면 선택 범위의 첫 텍스트 조각에 새 문자열을 넣고 나머지 텍스트 조각을 비우며, 개체·탭·줄바꿈·필드 경계의 원문 바이트와 순서를 유지한다. 선행 개체는 문자열 앞에 남는다. 텍스트가 없으면 범위 내 기존 빈 hp:t를 재사용한다. 그것도 없으면 no_text_fragment로 거절한다. 수식 노드 자체 편집, CDATA·주석/PI 교차·리터럴 제어 문자·해석 불가 표기는 계속 거절한다. CONTROLS_PRESERVED 진단의 detail.count와 offsets는 유지된 개체 수와 새 문단 grapheme 위치를 담는다.
+
+preserve 범위는 개체 앞·뒤 grapheme 경계를 사용할 수 있다. textSpans는 기본 reject/삽입 구간이며 preserve의 모든 범위를 나열하지 않는다. preserve만 가능한 문단은 textSpans가 비어 있어도 modes:["replace"], available:true다. editable만 보고 텍스트 교체 가능을 추론하지 말고 명령 능력과 사용할 controls 모드를 함께 확인한다.
+
+```json
+{"command":"text.replace","expectedVersion":0,"params":{"target":"문단 nodeId","range":{"start":0,"end":12},"text":"교체 글","controls":"preserve"}}
+```
+
+cell.setText는 실제 존재하는 병합 기준 셀도 지원한다. 한 문단이면 text, 여러 문단이면 정확한 기존 문단 수의 paragraphs 배열을 준다. 두 인자를 동시에 주거나 둘 다 생략하면 INVALID_ARGUMENT이며, 배열 길이가 다르면 detail.paragraphCount로 실제 수를 알려준다. 다문단 셀에 text를 주면 paragraphs 안내와 함께 UNSUPPORTED다. controls는 text.replace와 같다. 새 문단·행·개체를 만들지는 않는다.
+
+```json
+{"command":"cell.setText","expectedVersion":0,"params":{"target":"셀 nodeId","paragraphs":["첫 문단","둘째 문단"],"controls":"preserve"}}
+```
+
+한 명령은 문단 수와 무관하게 Undo 한 단위이며 batch·dryRun·expectedVersion·재전송 규칙은 같다. 변경한 셀 문단과 표를 담은 최상위 문단부터 구역 끝의 줄 배치 캐시를 지운다. PrvText 갱신과 썸네일 staleness 규칙은 0.1과 같다. 독립 저장 관문을 통과한 뒤에만 commit한다.

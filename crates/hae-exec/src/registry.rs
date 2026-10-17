@@ -21,6 +21,7 @@ pub enum CommandCategory {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandDescriptor {
+    pub schema_version: &'static str,
     pub name: &'static str,
     pub cli_name: &'static str,
     pub mcp_tool_name: &'static str,
@@ -296,7 +297,17 @@ pub enum ParsedCommand {
 }
 
 fn schema_json<T: JsonSchema>() -> Value {
-    serde_json::to_value(schema_for!(T)).unwrap_or(Value::Null)
+    let mut schema = serde_json::to_value(schema_for!(T)).unwrap_or(Value::Null);
+    if schema["title"] == "CellSetTextParams" {
+        schema["oneOf"] = serde_json::json!([
+            {"required":["text"],"not":{"required":["paragraphs"]}},
+            {"required":["paragraphs"],"not":{"required":["text"]}}
+        ]);
+        schema["properties"]["text"] = serde_json::json!({"type":"string"});
+        schema["properties"]["paragraphs"] =
+            serde_json::json!({"type":"array","items":{"type":"string"}});
+    }
+    schema
 }
 
 fn parse_params<T: for<'de> Deserialize<'de>>(params: Value, cmd: &str) -> Result<T> {
@@ -340,6 +351,7 @@ macro_rules! define_commands {
             vec![
                 $(
                     CommandDescriptor {
+                        schema_version: "0.2.0",
                         name: $name,
                         cli_name: $cli,
                         mcp_tool_name: $mcp,

@@ -527,3 +527,44 @@ fn v02_preserve_still_rejects_unsupported_markup_and_equation_targets() {
         assert!(!r.ok);
     }
 }
+
+#[test]
+fn v02_cell_paragraph_array_does_not_include_textbox_paragraphs() {
+    let nested = p("<hp:t>opaque inner text</hp:t>");
+    let content=format!("<hp:t>outer</hp:t><hp:rect><hp:drawText><hp:subList>{nested}</hp:subList></hp:drawText></hp:rect>");
+    let h = Harness::new();
+    let mut exec = h.open(&synthetic(&cell(&content)));
+    let c = query(&mut exec, "element.query", json!({"kind":"cell"}))["matches"][0].clone();
+    let r = exec.call(
+        "cell.setText",
+        json!({"target":c["nodeId"],"paragraphs":["NEW"],"controls":"preserve"}),
+        Some(0),
+        false,
+    );
+    assert!(r.ok, "{:?}", r.diagnostics);
+    let all = paragraphs(&mut exec);
+    assert!(all.iter().any(|p| p["textPreview"] == "opaque inner text"));
+}
+
+#[test]
+fn v02_all_advertised_insertion_boundaries_survive_save_gate() {
+    for inner in [
+        "<hp:t>ab\tcd</hp:t>",
+        "<hp:t>ab<hp:tab/>cd</hp:t>",
+        "<hp:t>ab<![CDATA[cd]]>ef</hp:t>",
+        "<hp:t>ab<!--x-->cd</hp:t>",
+        "<hp:t>é&amp;가</hp:t>",
+    ] {
+        let h = Harness::new();
+        let mut exec = h.open(&synthetic(&p(inner)));
+        let item = paragraphs(&mut exec).remove(0);
+        for span in item["textSpans"].as_array().unwrap() {
+            for i in span["start"].as_u64().unwrap()..=span["end"].as_u64().unwrap() {
+                assert!(
+                    dry(&mut exec, &item, i, i, "X"),
+                    "advertised insertion {i} rejected"
+                );
+            }
+        }
+    }
+}

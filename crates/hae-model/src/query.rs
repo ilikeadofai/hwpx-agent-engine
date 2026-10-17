@@ -400,12 +400,10 @@ impl Document {
                 e.modes = Some(if e.available {
                     if self.para_text(n).is_ok_and(|p| p.text.is_empty()) {
                         vec!["insert".into()]
+                    } else if spans.text_spans.is_empty() {
+                        vec!["replace".into()]
                     } else {
-                        if spans.text_spans.is_empty() {
-                            vec!["replace".into()]
-                        } else {
-                            vec!["replace".into(), "insert".into()]
-                        }
+                        vec!["replace".into(), "insert".into()]
                     }
                 } else {
                     vec![]
