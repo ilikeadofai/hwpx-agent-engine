@@ -4,7 +4,9 @@ AI 에이전트와 사람이 같은 명령으로 HWPX 문서를 조회·편집·
 
 ## 현재 상태
 
-2026-10-17 기준, **0.1의 Linux 범위는 완료**했다. 단계 0 선행 시험(S1~S3)을 통과했고, 단계 1 코어·단계 2 JSON-lines·stdio MCP·단계 3 격리 렌더링의 완료 판정은 예이며, 단계 4 Linux 범위는 실제 stdio MCP 94/94와 세트 A·B 실제 픽셀 시각 판독 PASS로 완료했다. **Windows·한컴 검증은 대기 중**이며, S4 한컴 재열기·한컴 출력과의 `nativeComparison`·사용자 작성 한컴 fixture 평가·한컴 SDK 분석은 이번 완료 범위 밖이다. 설계 §13에 따라 Windows 결과 회수 전까지 0.1 전체의 최종 완료는 선언하지 않는다. `main` 병합 여부는 사용자 결정 사항이다. [Linux 범위 완료 판정](docs/decisions/stage234-linux-results.md#linux-범위-완료-판정-2026-10-17)을 따른다.
+2026-10-17 기준, **0.1의 Linux 범위는 완료**했다. 단계 0 선행 시험(S1~S3)을 통과했고, 단계 1 코어·단계 2 JSON-lines·stdio MCP·단계 3 격리 렌더링의 완료 판정은 예이며, 단계 4 Linux 범위는 실제 stdio MCP 94/94와 세트 A·B 실제 픽셀 시각 판독 PASS로 완료했다. **Windows·한컴 검증은 최종 단계로 보류**했으며, 한컴 출력과의 `nativeComparison`·한컴 SDK 분석은 이번 완료 범위 밖이다. 설계 §13에 따라 Windows 결과 회수 전까지 0.1 전체의 최종 완료는 선언하지 않는다. 단계 1~4의 Linux 결과는 **`main`에 병합했다**(`7cfc1fa`). [Linux 범위 완료 판정](docs/decisions/stage234-linux-results.md#linux-범위-완료-판정-2026-10-17)을 따른다.
+
+**한컴 상호운용 추가 검증(2026-10-17).** 한컴오피스 2020 Linux Beta를 디스플레이 없이 실행하고 화면을 읽는 경로(`QT_QPA_PLATFORM=vnc` + 최소 RFB 클라이언트)를 만들어, 엔진 출력을 실제 한컴으로 열어 확인했다. 그 결과 실제 결함 2건을 찾아 고쳤다 — 매니페스트 미디어 항목의 `isEmbeded="1"` 누락(한컴이 내장 대신 외부 연결로 해석)과 `imgClip`/`imgDim`의 단위 오류(픽셀당 75 HWPUNIT). 86개 파일 전수에서 실제 한컴 문서·사용자 작성 문서·엔진 출력은 모두 정상적으로 열린다. 로컬 게이트는 `scripts/hancom_gate.sh`이며, 자세한 근거와 한계는 [한컴 열기 검증 기록](docs/decisions/engine-output-open-verification-2026-10-17.md)에 있다. **이 검증은 Linux 빌드(2020 Beta)에 한정되며 Windows 한컴오피스 2024의 결과가 아니다.**
 
 - **단계 1 코어(10개 crate)**:
   - `hae-diag`: 진단·오류 코드(31종), 패키지 거절 사유(18종), `Limits` 상수, 자원 예산 타입
