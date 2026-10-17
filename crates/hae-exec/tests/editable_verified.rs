@@ -274,10 +274,16 @@ fn check_samples(exec: &mut SessionExecutor, label: &str) -> usize {
     let mut count = 0;
     for item in items["matches"].as_array().unwrap() {
         if item["kind"] == "cell" && item["edits"]["cell.setText"]["available"] == true {
+            let paragraphs = items["matches"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|p| p["kind"] == "paragraph" && p["parent"] == item["nodeId"])
+                .count();
             for text in ["X", "", "ZZ가"] {
                 let r = exec.call(
                     "cell.setText",
-                    json!({"target":item["nodeId"],"text":text}),
+                    json!({"target":item["nodeId"],"paragraphs":vec![text;paragraphs],"controls":"preserve"}),
                     Some(0),
                     true,
                 );
@@ -287,6 +293,19 @@ fn check_samples(exec: &mut SessionExecutor, label: &str) -> usize {
         if item["kind"] != "paragraph" {
             continue;
         }
+        if item["textSpans"].as_array().unwrap().is_empty()
+            && item["edits"]["text.replace"]["available"] == true
+        {
+            let got = query(exec, "element.get", json!({"target":item["nodeId"]}));
+            for text in ["X", "", "ZZ가"] {
+                let r=exec.call("text.replace",json!({"target":item["nodeId"],"range":{"start":0,"end":got["graphemeCount"]},"text":text,"controls":"preserve"}),Some(0),true);
+                assert!(
+                    r.ok,
+                    "{label} preserve-only mode rejected: {:?}",
+                    r.diagnostics
+                );
+            }
+        }
         for span in item["textSpans"].as_array().unwrap() {
             let a = span["start"].as_u64().unwrap();
             let b = span["end"].as_u64().unwrap();
@@ -295,6 +314,14 @@ fn check_samples(exec: &mut SessionExecutor, label: &str) -> usize {
             } else {
                 [a, a + 1, a + 2, (a + b) / 2, b - 2, b - 1, b].into()
             };
+            for &pos in &points {
+                for text in ["X", "ZZ가"] {
+                    assert!(
+                        dry(exec, item, pos, pos, text),
+                        "{label} advertised insert {pos} rejected"
+                    );
+                }
+            }
             for &s in &points {
                 for &e in points.range(s + 1..) {
                     for text in ["X", "", "ZZ가"] {
