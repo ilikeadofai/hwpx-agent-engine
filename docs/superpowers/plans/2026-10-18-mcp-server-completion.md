@@ -32,7 +32,7 @@
 | M0 | 현황 감사: MCP 명세 대비 빠진 것 목록, Inspector CLI 실제 실행 결과 | Haiku 5.5 또는 GPT 6 Luna(max) | 완료 — [감사 결과](../../decisions/mcp-audit-m0-2026-10-18.md) |
 | M1 | 프로토콜·견고성 구현(1·2) | GPT 6.1 Sol(한도 시 Sonnet 5.5) | 완료 — Rust 310·stdio 회귀 9/9·Inspector strict 0/0 |
 | M2 | 배포·doctor·버전(4), 안내서 문구 | Sol 또는 Sonnet / 문구 Gemini 4 Argon | 완료 — release 빌드·doctor 6/6·연결 예시 |
-| M3 | 실제 클라이언트 연결 시험(3) | Haiku 5.5 또는 Luna(max) | 대기 |
+| M3 | 실제 클라이언트 연결 시험(3) | Haiku 5.5 또는 Luna(max) | 완료 — [실행 결과](../../decisions/mcp-m3-client-runs-2026-10-18.md) |
 | M4 | 독립 검증(게이트 재실행·반례) | 구현자와 다른 모델 | 대기 |
 
 진행 중 작업과 결과는 이 표의 상태 칸과 아래 기록에 적는다. 오케스트레이터가 바뀌어도 이 문서를 보고 이어 간다.
@@ -76,3 +76,6 @@
 - 중간 재개 지점(아래 최종 기록으로 대체): A 마지막 커밋은 `32407a4`. B 코드는 staged 상태로 고정했고 `/tmp/hae-task-b-frozen-check.log`의 전체 게이트가 진행 중이다. oracle 98/MCP 146/146/Inspector 0·0/doctor 6·6/release는 이미 통과했다. 전체 게이트 종료 코드와 Rust 합계를 확인한 뒤 이 기록과 M1 상태를 완료로 갱신하고 B를 커밋하면 된다. 코드는 최종 검증 중 변경하지 않는다.
 
 - 최종 기록(2026-10-18): 고정 소스 `bash scripts/check.sh` 종료 0, Rust **310개** 통과. oracle **98개**, MCP E2E **146/146**, editable_documents **3/3**, 실제 stdio 적합성 **9/9**, release Inspector strict **오류 0·경고 0**, doctor **6/6**, release build 종료 0이다. M1·M2를 완료로 갱신했다. 이 기록을 포함한 B 커밋 제목은 `feat: complete MCP protocol support and deployment diagnostics`이며 A 커밋은 `32407a4`다. 상세 근거·프로토콜 리비전 URL·panic/timeout/취소 판단은 [M1·M2 구현 기록](../../decisions/mcp-m1-m2-2026-10-18.md)에 있다. 남은 일은 M3 실제 에이전트 연결과 M4 독립 검증이며 담당 총괄이 이어 간다. push·main 반영 없음.
+- 2026-10-18 06:14: Claude 5시간 사용률 80%(증가 속도 약 0.5%/분, 다음 점검 전 85% 초과 예상)로 오케스트레이터를 DeepSeek V4.1 Flash(max)로 전환. 진행 중: M3(Luna, codex), M4(Sonnet, Claude 하위 에이전트 — Claude 한도에 걸리면 초기화 뒤 재실행 필요). Claude 5시간 창 초기화 09:20 KST.
+
+- 2026-10-18, M3 실제 클라이언트 연결 완료: Codex CLI 0.163.0(GPT 6 Luna, low)와 OpenCode 2.0.30(opencode-go/deepseek-v4.1-flash)은 각각 22개 도구를 노출하고 편집·Undo·export를 완료했다. Claude Code 2.1.296(Haiku)은 서버가 `connected`로 표시됐지만 도구 0개가 노출되어 시나리오를 진행하지 못했다(M3-F1). Inspector CLI 2.11.0 strict는 종료 0, 도구 22개. Export 두 건은 ZIP 무결성 검사와 새 hae-mcp 프로세스 재열기를 통과했고 입력 fixture SHA-256은 유지됐다. Preview는 rhwp 미설정으로 불가; Inspector는 `uint64` outputSchema 형식 경고를 출력했다(M3-F2). 엔진 코드 변경 없음, push 없음. 세부 명령·사용량·재현은 [M3 실행 결과](../../decisions/mcp-m3-client-runs-2026-10-18.md)에 기록했다. M4 독립 검증은 대기.
