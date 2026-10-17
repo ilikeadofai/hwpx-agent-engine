@@ -72,6 +72,7 @@
 - 전체가 한 Undo 단위이고 원자적이다. 일부 실패 시 아무것도 바꾸지 않는다. dryRun은 일치 목록을 돌려준다.
 - 캐시 규칙은 batch와 같아 구역마다 가장 앞 기준 문단부터 지운다. 셀 안 일치도 포함한다.
 - hae-verify와 oracle에 독립 구현을 둔다.
+- 구현 확정(2026-10-18, 2단계 구현): 명령 `text.replaceAll`(인자 `find`, `text`, 선택 `scope`·`maxMatches`)은 `command.batch` 단계로도 쓴다. `scope`가 문단이면 그 문단과 자손 문단을, 표·셀·구역이면 자손 문단을 대상으로 한다. 일치는 문단마다 앞에서부터 겹치지 않게 고른 뒤 분류하므로 건너뛴 일치도 겹치는 뒤쪽 일치를 막는다. 건너뜀 사유는 `crosses_control`, `grapheme_boundary`, `unsupported_markup`, `paragraph_not_editable`이며 MATCHES_SKIPPED(경고)로 사유별 개수와 위치(최대 50)를 알린다. `maxMatches`는 바꿀 수 있는 일치만 세며 1~10,000이고 넘으면 RESOURCE_LIMIT로 거절한다. `find`와 `text`가 같으면 noop이다. 응답의 `matches` 미리보기는 앞 200곳으로 제한한다(개수는 정확). 자세한 이유는 docs/decisions/v0.2-implementation-notes.md.
 
 ### 7-3. 0.3 이후로 미룸
 글자 서식(run 분할·charPr 복제), 쪽 설정, 스타일 적용, 표 셀 서식, 머리말·꼬리말·각주·필드·번호 모델, 새 문단·행·개체 생성, HWP5, GUI. 이들은 run·자원 경계나 넓은 재배치를 다뤄 0.2의 "기존 구조 안 텍스트 편집" 원칙 밖이다.

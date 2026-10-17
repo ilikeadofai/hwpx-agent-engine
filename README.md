@@ -14,7 +14,7 @@ AI 에이전트와 사람이 같은 명령으로 HWPX 문서를 조회·편집·
   - `hae-xml`: 원문 토큰 범위·BOM/선언/줄바꿈 보존, XML 1.0 NCName·namespace 해석, 문자 참조·CDATA 대응표, 범위 교체
   - `hae-package`: `mimetype`, `content.hpf` manifest/spine, `META-INF`, 미디어 참조 무결성
   - `hae-model`: 정규 상태, 안정 `documentId`·`nodeId` 대응표, 편집 허용/잠금 판정, `inspect`/`query`/`get` 조회 뷰
-  - `hae-edit`: 4가지 부분 편집(`text.replace`, `paragraph.format`, `cell.setText`, `image.replace`), `LinesegPolicy`, `PrvText` 갱신
+  - `hae-edit`: 부분 편집(`text.replace`, `text.replaceAll`, `paragraph.format`, `cell.setText`, `image.replace`), `LinesegPolicy`, `PrvText` 갱신
   - `hae-verify`: 편집 계층에 의존하지 않는 독립 저장 관문 검사기(30종 변조 사례 전수 거절)
   - `hae-project`: Linux 디렉터리 핸들(`openat`/`O_NOFOLLOW`) 기반 루트 I/O, 세션 `.lock`(`flock`), 원자적 저장(`RENAME_NOREPLACE`·`fsync`), `.hwpwork` 프로젝트 및 무편집 바이트 통과 내보내기
   - `hae-exec`: 단일 출처 명령 레지스트리(21개 명령·JSON Schema), `writerId`·`requestSequence` 순서/재전송/충돌 처리, `command.batch`, `dryRun`, 100단위 항목 공유 Undo/Redo 이력·스냅샷·세션 메모리 예산

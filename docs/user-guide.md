@@ -12,6 +12,7 @@
 - **한컴오피스 불필요**: Linux 환경에서 한컴오피스 설치나 라이선스 없이 바로 작동합니다.
 - **문서 구조 및 요소 조회**: 구역, 문단, 표, 표 셀, 그림, 수식의 구조와 텍스트를 읽고 검색합니다.
 - **문단 텍스트 범위 교체 (`text_replace`)**: 한 문단의 `[start, end)` grapheme 범위를 바꾸거나 지우며, 길이 0 범위에 새 글을 삽입합니다. `controls: "preserve"`로 개체를 보존하면서 범위 안 텍스트만 바꿀 수 있습니다.
+- **문서 전체 바꾸기 (`text_replace_all`)**: 문서 전체(또는 `scope`로 고른 표·셀·문단 아래)에서 같은 글자를 정확히 찾아 한 번에 바꿉니다. 개체·탭·줄바꿈을 가로지르거나 자소 경계가 맞지 않는 일치는 바꾸지 않고 건너뛴 위치를 알려 줍니다. 전체가 한 번의 되돌리기 단위입니다.
 - **문단 서식 변경 (`paragraph_format`)**: 문단의 정렬 방식(왼쪽·가운데·오른쪽·양쪽·배분·나눔 정렬)과 백분율 줄간격(`1%~1000%`, 정수 `1`~`1000`)을 바꿉니다. 문서 전체 스타일은 건드리지 않고 대상 문단에만 적용합니다.
 - **표 셀 텍스트 교체 (`cell_set_text`)**: 병합 기준 셀을 포함해 기존 셀의 텍스트를 바꿉니다. 문단 하나는 `text`, 여러 문단은 정확한 기존 문단 수의 `paragraphs` 배열을 줍니다.
 - **그림 교체 (`image_replace`)**: 기존 그림의 위치·크기·캡션을 그대로 유지한 채, 정적 PNG 또는 JPEG 이미지 파일로 교체합니다.
@@ -185,6 +186,24 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 - **응답**: 적용이 완료되면 `outcome: "applied"`와 함께 새 버전 번호 `afterVersion: 1`이 반환됩니다.
 - 표 셀 전체 글을 바꿀 때는 `cell_set_text`에 셀의 `target`(`nodeId`)과 새 `text`(한 문단) 또는 `paragraphs`(기존 문단 수와 같은 문자열 배열)를 넘깁니다. 개체 보존이 필요하면 `controls: "preserve"`를 줍니다.
 
+### ③-2 문서 전체 바꾸기 (`text_replace_all`)
+같은 글자가 여러 곳에 나올 때는 문단마다 범위를 계산하지 않고 한 번에 바꿉니다. 먼저 `dryRun`으로 일치 목록(`matches`: `nodeId`, `range`, 앞뒤 미리보기 `before`/`after`)을 확인한 뒤 같은 요청을 `dryRun` 없이 보냅니다.
+```json
+{
+  "documentId": "doc-1",
+  "expectedVersion": 2,
+  "find": "탐구",
+  "text": "연구",
+  "dryRun": true
+}
+```
+- **찾기**: `find`는 비어 있지 않은 글자이며 유니코드 코드포인트가 정확히 같은 곳만 일치합니다. 한 문단 안에서는 앞에서부터 겹치지 않게 고릅니다(`"aaaa"`에서 `"aa"`는 2곳). 표 셀 안 문단도 포함합니다. `scope`에 nodeId를 주면 그 문단과 그 아래 문단(표를 고르면 모든 셀)만 찾습니다.
+- **바꾸기**: `text`에는 탭·줄바꿈을 넣을 수 없고, 빈 문자열이면 일치한 글자를 지웁니다. 일치 구간이 문단의 `textSpans` 안에 온전히 들어간 곳만 바뀝니다.
+- **건너뜀**: 아래 일치는 바꾸지 않고 `skipped`(사유별 `count`와 위치 `locations`의 `nodeId`·`range`, 사유마다 최대 50곳)와 `MATCHES_SKIPPED` 경고로 알립니다. `crosses_control`(개체·탭·줄바꿈·필드 표식을 가로지름), `grapheme_boundary`(예: 결합 문자 `é`의 `e`만 일치), `unsupported_markup`(CDATA·주석·해석 불가 속성 등), `paragraph_not_editable`(잠긴 문단). 조용히 빠지는 일치는 없고 `replacementCount + skippedCount`가 전체 일치 수입니다.
+- **한도**: 바꿀 수 있는 일치가 `maxMatches`(기본 1000, 최대 10000)보다 많으면 아무것도 바꾸지 않고 `RESOURCE_LIMIT`로 거절합니다. 범위를 좁히거나 값을 올려 다시 보내세요.
+- **원자성**: 하나라도 실패하면 문서는 그대로입니다. 성공하면 한 번의 `history_undo`로 원본 바이트까지 되돌립니다. 응답의 `matches`는 앞의 200곳만 미리보기로 담습니다(개수는 `replacementCount`가 정확합니다).
+- 글자 모양이 다른 run에 걸친 일치는 첫 글자의 모양으로 합쳐지며 `FORMAT_COLLAPSED` 경고가 붙습니다.
+
 ### ④ 문단 정렬 및 줄간격 변경 (`paragraph_format`)
 제목 문단(`node-p1`)을 가운데 정렬(`center`)하고 줄간격을 160%로 맞춥니다. 줄간격(`lineSpacing.value`)은 `1`부터 `1000`까지의 정수 백분율(`1%~1000%`)을 지정할 수 있습니다. 직전 편집으로 버전이 `1`이 되었으므로 `expectedVersion: 1`을 넣습니다.
 ```json
@@ -260,7 +279,7 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 | 코드 | 쉬운 설명 및 해결 방법 |
 |---|---|
 | `PACKAGE_REJECTED` | **문서 열기 거절**: 암호가 걸려 있는 문서(`encrypted`)이거나 손상된 파일, 비정상 ZIP/XML 구조일 때 발생합니다. 한컴오피스에서 암호를 해제하고 표준 `.hwpx`로 저장한 뒤 다시 열어 주세요. |
-| `RESOURCE_LIMIT` | **용량·크기 한도 초과**: 파일 크기(기본 HWPX 32 MiB, 프로젝트 96 MiB), 압축 해제 크기(128 MiB), 그림 화소 수(4,096만 화소), 세션 메모리(512 MiB), 단일 요청(1 MiB)·응답(4 MiB) 등의 안전 한도를 넘었을 때 발생합니다. |
+| `RESOURCE_LIMIT` | **용량·크기 한도 초과**: `text_replace_all`의 바꿀 일치 수가 `maxMatches`를 넘을 때도 이 코드로 거절합니다. 파일 크기(기본 HWPX 32 MiB, 프로젝트 96 MiB), 압축 해제 크기(128 MiB), 그림 화소 수(4,096만 화소), 세션 메모리(512 MiB), 단일 요청(1 MiB)·응답(4 MiB) 등의 안전 한도를 넘었을 때 발생합니다. |
 | `STATE_INVARIANT_ERROR` | **내부 상태 검증 오류**: 편집을 확정하기 직전 내부 데이터와 색인의 일관성이 맞지 않아 엔진이 변경을 취소했습니다. 원본 문서는 그대로 보존됩니다. |
 | `PROJECT_INTEGRITY_ERROR` | **프로젝트 파일 손상**: `.hwpwork` 프로젝트 파일의 무결성(해시·구조) 검사가 실패했습니다. 임의로 수정되었거나 손상된 프로젝트 파일은 열 수 없습니다. |
 | `PROJECT_LOCKED` | **프로젝트 잠김**: 같은 `.hwpwork` 프로젝트를 다른 프로그램이나 세션이 이미 열어 작업 중입니다. 이전 세션을 닫은(`document_close`) 뒤 다시 시도하세요. |
@@ -278,6 +297,7 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 | `INVALID_RANGE` | **잘못된 글자 범위**: `text_replace`의 `[start, end)` 범위가 문단 grapheme 수를 벗어났거나 역순입니다. 길이 0 범위는 지원되는 textSpans 위치에 비어 있지 않은 text를 넣을 때만 허용합니다. |
 | `RANGE_CROSSES_CONTROL` | **제어 문자를 가로지르는 범위**: 바꾸려는 텍스트 범위 안에 탭(Tab), 줄바꿈, 필드, 수식, 표, 그림 같은 제어 요소가 끼어 있습니다. 제어 요소 앞뒤로 범위를 나누어 일반 텍스트 구간만 교체하세요. |
 | `UNSUPPORTED_CONTENT_IN_RANGE` | **범위 내 알 수 없는 요소**: 지정한 텍스트 범위 안에 엔진이 해석할 수 없는 특수 속성이나 하위 요소가 들어 있어 안전을 위해 편집을 거절했습니다. |
+| `MATCHES_SKIPPED` *(경고)* | **일부 일치를 건너뜀**: `text_replace_all`이 개체를 가로지르거나 자소 경계가 맞지 않는 등 안전하게 바꿀 수 없는 일치를 건드리지 않았습니다. `detail.reasons`의 사유별 개수와 위치(`nodeId`, `range`)를 확인해 필요하면 `text_replace`·`controls: "preserve"`로 따로 고치세요. |
 | `FORMAT_COLLAPSED` *(경고)* | **글자 모양 통합 경고**: 서로 다른 글자 모양(글꼴·크기·색상 등)이 적용된 여러 구간을 한 번에 교체하여, 새 글자가 첫 글자의 모양으로 통일되었음을 알려주는 경고입니다. |
 | `RENDERER_UNAVAILABLE` | **미리보기 렌더러 사용 불가**: `document_preview`를 호출했으나 외부 렌더러(`HAE_RHWP`)가 설정되지 않았거나(`renderer_not_configured`), 실행 파일이 없거나(`renderer_missing`), `bubblewrap`(`HAE_BWRAP`) 격리 자가 점검에 실패했거나(`sandbox_unverified`), 글꼴 폴더(`HAE_FONT_DIR`)를 읽을 수 없거나(`font_dir_unreadable`), 렌더링 제한 시간(60초)을 넘겼을 때(`timeout`) 발생합니다. 미리보기만 실패할 뿐 문서 내용은 전혀 바뀌지 않습니다. |
 | `PREVIEW_PAGE_LIMIT` *(경고)* | **미리보기 100쪽 제한 경고**: 문서 전체가 100쪽을 넘어 앞의 100쪽까지만 렌더링했습니다(결과 `status`는 `"partial"`이 됩니다). |
@@ -347,3 +367,14 @@ cell.setText는 실제 존재하는 병합 기준 셀도 지원한다. 한 문�
 ### 0.2 추가 안전 규칙 (§7-1)
 
 `controls:"preserve"`여도 범위 안 필드 시작·끝(하이퍼링크 포함)이 있으면 `field_boundary_in_range`로 거절합니다. 필드 안 일반 텍스트 구간이 광고되어 있다면 경계를 가로지르지 않는 교체는 가능합니다. 개체만 있는 문단에는 개체 앞·뒤와 사이의 삽입 가능 위치를 `{start:p,end:p}`로 표시합니다. 인접 개체와 같은 기존 run에 hp:t를 만들 수 있는 위치만 제공하며 새 run은 만들지 않습니다. 삽입하면 실제 XML 경로는 바뀔 수 있지만 기존 nodeId·개체 순서와 Undo 복원은 유지합니다.
+
+
+### 0.2 문서 전체 바꾸기 (`text.replaceAll`, §7-2)
+
+명령 이름은 `text.replaceAll`(MCP 도구 `text_replace_all`, CLI `text-replace-all`)이고 `command.batch`의 단계로도 쓸 수 있습니다. 인자는 `find`, `text`, 선택 `scope`(nodeId), 선택 `maxMatches`(1~10000, 기본 1000)입니다. 편집 명령이므로 `expectedVersion`이 필요하고 `dryRun`·재전송 규칙은 다른 편집과 같습니다.
+
+```json
+{"command":"text.replaceAll","expectedVersion":0,"params":{"find":"2025학년도","text":"2026학년도"}}
+```
+
+결과에는 `replacementCount`, `paragraphCount`, `skippedCount`, `skipped[]`, `matches[]`(앞 200곳 미리보기)와 `changedIds`가 담깁니다. 일치는 명령 시작 시점의 문단 기준 grapheme `range`로 보고합니다. 바꾼 문단마다 줄 배치 캐시를 지우는 규칙은 `command.batch`와 같아, 구역마다 가장 앞서 바뀐 최상위 문단(셀은 표를 담은 최상위 문단)부터 구역 끝까지 지웁니다. PrvText는 문단 옛 문장이 미리보기에서 한 번만 나올 때만 바뀌고 아니면 `stale`로 알립니다. 잠긴 문단(불투명 요소가 가리키는 문단 등)은 건너뜁니다. 수식·필드의 내용은 어떤 경우에도 바꾸지 않습니다.
