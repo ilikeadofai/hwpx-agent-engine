@@ -233,10 +233,89 @@ impl ParaText {
         }
     }
 
+    pub fn field_in_range(&self, doc: &XmlDoc, range: Range<usize>) -> bool {
+        self.pieces
+            .iter()
+            .filter(|p| p.cp_start < range.end && range.start < p.cp_start + p.cp_len)
+            .any(|p| {
+                let el = match p.kind {
+                    PieceKind::Control { el, .. } | PieceKind::Other { el, .. } => el,
+                    _ => return false,
+                };
+                std::iter::once(el).chain(doc.descendants(el)).any(|i| {
+                    is_hp(doc.el(i).ns.as_deref())
+                        && matches!(doc.el(i).local.as_str(), "fieldBegin" | "fieldEnd")
+                })
+            })
+    }
+
+    /// Existing run and lexical insertion byte at each object-only boundary.
+    pub fn object_insert_sites(&self, doc: &XmlDoc) -> Vec<(usize, usize, usize)> {
+        if self.pieces.is_empty()
+            || !self.verification_barriers.is_empty()
+            || self
+                .pieces
+                .iter()
+                .any(|p| !matches!(p.kind, PieceKind::Control { .. }))
+        {
+            return vec![];
+        }
+        let anchor = |piece: &Piece, cp: usize, before: bool| {
+            let el = match piece.kind {
+                PieceKind::Control { el, .. } => el,
+                _ => return None,
+            };
+            let unit = piece.t.unwrap_or(el);
+            if let Some(t) = piece.t {
+                let mut ps = self.pieces.iter().filter(|p| p.t == Some(t));
+                let edge = if before {
+                    ps.next().map(|p| p.cp_start)
+                } else {
+                    ps.next_back().map(|p| p.cp_start + p.cp_len)
+                };
+                if edge != Some(cp) {
+                    return None;
+                }
+            }
+            if doc.el(unit).parent != Some(piece.run) {
+                return None;
+            }
+            Some((
+                piece.run,
+                if before {
+                    doc.el(unit).outer().start
+                } else {
+                    doc.el(unit).outer().end
+                },
+            ))
+        };
+        self.grapheme_cps
+            .iter()
+            .enumerate()
+            .filter_map(|(g, &cp)| {
+                let right = self
+                    .pieces
+                    .iter()
+                    .find(|p| p.cp_start == cp)
+                    .and_then(|p| anchor(p, cp, true));
+                let left = self
+                    .pieces
+                    .iter()
+                    .rev()
+                    .find(|p| p.cp_start + p.cp_len == cp)
+                    .and_then(|p| anchor(p, cp, false));
+                right.or(left).map(|(run, at)| (g, run, at))
+            })
+            .collect()
+    }
+
     /// Whether whole-paragraph preserve replacement has a supported existing
     /// text fragment. Object subtrees stay opaque and are never interpreted.
     pub fn preserve_replaceable(&self, doc: &XmlDoc) -> bool {
         let len = self.text.chars().count();
+        if self.field_in_range(doc, 0..len) {
+            return false;
+        }
         if self.verification_barriers.iter().any(|&p| 0 < p && p < len) {
             return false;
         }
@@ -314,6 +393,16 @@ impl ParaText {
         let mut result = TextSpans::default();
         if self.text.is_empty() && self.empty_insert_reason(doc).is_none() {
             result.text_spans.push(TextSpan { start: 0, end: 0 });
+            return result;
+        }
+        let sites = self.object_insert_sites(doc);
+        if !sites.is_empty() {
+            result.text_spans_truncated = sites.len() > MAX_TEXT_SPANS;
+            result.text_spans = sites
+                .into_iter()
+                .take(MAX_TEXT_SPANS)
+                .map(|(p, _, _)| TextSpan { start: p, end: p })
+                .collect();
             return result;
         }
         let mut start = None;

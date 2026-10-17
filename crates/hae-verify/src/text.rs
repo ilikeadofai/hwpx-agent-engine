@@ -13,6 +13,7 @@ struct Scalar {
     barrier: bool,
     control: bool,
     position: usize,
+    element: Option<usize>,
 }
 struct View {
     para: usize,
@@ -71,6 +72,7 @@ fn view(doc: &XmlDoc, p: usize) -> View {
                                     barrier: false,
                                     control: false,
                                     position: 0,
+                                    element: None,
                                 });
                             }
                         }
@@ -84,6 +86,7 @@ fn view(doc: &XmlDoc, p: usize) -> View {
                                     barrier: false,
                                     control: false,
                                     position: 0,
+                                    element: None,
                                 });
                             }
                         }
@@ -97,6 +100,7 @@ fn view(doc: &XmlDoc, p: usize) -> View {
                                     barrier: true,
                                     control: false,
                                     position: 0,
+                                    element: None,
                                 });
                             }
                             // Empty CDATA also represents an unsupported boundary.
@@ -112,6 +116,7 @@ fn view(doc: &XmlDoc, p: usize) -> View {
                                 barrier: true,
                                 control: hp(doc.el(*e), "tab") || hp(doc.el(*e), "lineBreak"),
                                 position: doc.el(*e).start.start,
+                                element: Some(*e),
                             });
                         }
                         Item::Comment(_) | Item::Pi(_) => out.barriers.push(out.scalars.len()),
@@ -126,6 +131,7 @@ fn view(doc: &XmlDoc, p: usize) -> View {
                     barrier: true,
                     control: true,
                     position: doc.el(c).start.start,
+                    element: Some(c),
                 });
             }
         }
@@ -210,6 +216,15 @@ fn replace_scalars(
     let covered = &v.scalars[range.clone()];
     if v.barriers.iter().any(|&b| range.start < b && b < range.end) {
         return Err(unsupported("range crosses comments/PI/CDATA boundaries"));
+    }
+    if preserve
+        && covered.iter().filter_map(|s| s.element).any(|e| {
+            std::iter::once(e)
+                .chain(doc.descendants(e))
+                .any(|i| hp(doc.el(i), "fieldBegin") || hp(doc.el(i), "fieldEnd"))
+        })
+    {
+        return Err(unsupported("field_boundary_in_range"));
     }
     let mut cuts: Vec<Splice> = Vec::new();
     for s in covered {
@@ -327,6 +342,59 @@ fn insert(
     cp: usize,
     text: &str,
 ) -> Result<Option<(String, String)>> {
+    if !v.scalars.is_empty() && v.barriers.is_empty() && v.scalars.iter().all(|s| s.control) {
+        let choose = |index: usize, before: bool| -> Option<(usize, usize)> {
+            let s = &v.scalars[index];
+            let el = s.element?;
+            let unit = s.t.unwrap_or(el);
+            let run = doc.el(unit).parent?;
+            if !hp(doc.el(run), "run") {
+                return None;
+            }
+            if let Some(t) = s.t {
+                if before && v.scalars[..index].iter().any(|s| s.t == Some(t)) {
+                    return None;
+                }
+                if !before && v.scalars[index + 1..].iter().any(|s| s.t == Some(t)) {
+                    return None;
+                }
+            }
+            Some((
+                run,
+                if before {
+                    doc.el(unit).outer().start
+                } else {
+                    doc.el(unit).outer().end
+                },
+            ))
+        };
+        let site = if cp < v.scalars.len() {
+            choose(cp, true)
+        } else {
+            None
+        }
+        .or_else(|| cp.checked_sub(1).and_then(|i| choose(i, false)));
+        if let Some((run, at)) = site {
+            let prefix = doc
+                .el(run)
+                .qname
+                .split_once(':')
+                .map_or(String::new(), |(p, _)| format!("{p}:"));
+            change(
+                state,
+                entry,
+                doc,
+                vec![(
+                    at..at,
+                    format!("<{prefix}t>{}</{prefix}t>", escape_text(text)).into_bytes(),
+                )],
+            )?;
+            let mut wanted: String = v.text.chars().take(cp).collect();
+            wanted.push_str(text);
+            wanted.extend(v.text.chars().skip(cp));
+            return Ok(Some((v.text, wanted)));
+        }
+    }
     if !v.scalars.is_empty() {
         let valid = |s: &Scalar| {
             !s.barrier && !['\t', '\n', '\r'].contains(&s.character) && s.raw.is_some()

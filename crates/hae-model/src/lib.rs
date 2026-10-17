@@ -19,6 +19,24 @@ use std::sync::Arc;
 
 pub use para::{ParaText, Piece, PieceKind};
 
+fn stable_path(doc: &XmlDoc, mut i: usize) -> Vec<(bool, usize)> {
+    let mut path = Vec::new();
+    while let Some(parent) = doc.el(i).parent {
+        let text = is_hp(doc.el(i).ns.as_deref()) && doc.el(i).local == "t";
+        let ordinal = doc
+            .el(parent)
+            .children
+            .iter()
+            .filter(|&&c| (is_hp(doc.el(c).ns.as_deref()) && doc.el(c).local == "t") == text)
+            .position(|&c| c == i)
+            .unwrap();
+        path.push((text, ordinal));
+        i = parent;
+    }
+    path.reverse();
+    path
+}
+
 /// Kinds of elements that receive a nodeId (spec §5).
 #[derive(
     Debug,
@@ -382,9 +400,9 @@ impl Document {
             self.limits,
             stale_layout,
         )?;
-        // Paths of identity elements must be unchanged too (0.1 never moves nodes).
+        // Identity ancestry/order is unchanged modulo the sole permitted text-carrier creation.
         for (a, b) in self.nodes.iter().zip(&d.nodes) {
-            if self.xml[&a.entry].path(a.el) != d.xml[&b.entry].path(b.el) {
+            if stable_path(&self.xml[&a.entry], a.el) != stable_path(&d.xml[&b.entry], b.el) {
                 return Err(inv(format!("node {} moved", a.id)));
             }
         }

@@ -398,13 +398,18 @@ impl Document {
                 add("paragraph.format", self.paragraph_format_block_reason(n));
                 let e = edits.get_mut("text.replace").unwrap();
                 e.modes = Some(if e.available {
-                    if self.para_text(n).is_ok_and(|p| p.text.is_empty()) {
-                        vec!["insert".into()]
-                    } else if spans.text_spans.is_empty() {
-                        vec!["replace".into()]
-                    } else {
-                        vec!["replace".into(), "insert".into()]
+                    let mut modes = Vec::new();
+                    if spans.text_spans.iter().any(|s| s.start < s.end)
+                        || self.para_text(n).is_ok_and(|p| {
+                            !p.text.is_empty() && p.preserve_replaceable(self.doc_of(n))
+                        })
+                    {
+                        modes.push("replace".into());
                     }
+                    if !spans.text_spans.is_empty() {
+                        modes.push("insert".into());
+                    }
+                    modes
                 } else {
                     vec![]
                 });

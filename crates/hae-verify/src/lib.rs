@@ -48,7 +48,37 @@ use std::{
 };
 
 type Splice = (Range<usize>, Vec<u8>);
-type Anchors = BTreeMap<String, (usize, BTreeSet<Vec<usize>>)>;
+fn stable_path(doc: &XmlDoc, mut i: usize) -> Vec<(bool, usize)> {
+    let mut path = Vec::new();
+    while let Some(parent) = doc.el(i).parent {
+        let text = hp(doc.el(i), "t");
+        let ordinal = doc
+            .el(parent)
+            .children
+            .iter()
+            .filter(|&&c| hp(doc.el(c), "t") == text)
+            .position(|&c| c == i)
+            .unwrap();
+        path.push((text, ordinal));
+        i = parent;
+    }
+    path.reverse();
+    path
+}
+fn stable_at(doc: &XmlDoc, path: &[(bool, usize)]) -> Result<usize> {
+    let mut i = doc.root();
+    for &(text, n) in path {
+        i = *doc
+            .el(i)
+            .children
+            .iter()
+            .filter(|&&c| hp(doc.el(c), "t") == text)
+            .nth(n)
+            .ok_or_else(|| fail("stable target path missing"))?;
+    }
+    Ok(i)
+}
+type Anchors = BTreeMap<String, (usize, BTreeSet<Vec<(bool, usize)>>)>;
 
 pub(crate) fn fail(message: impl Into<String>) -> EngineError {
     EngineError::new(Code::VerifyFailed, Stage::Save, message)
@@ -209,7 +239,8 @@ fn verify_inner(
             return Err(unsupported("targets must belong to a spine section"));
         }
         let doc = parse(&expected, entry, limits)?;
-        let target = at(&doc, path)?;
+        let original_target = at(&xml[entry], path)?;
+        let target = stable_at(&doc, &stable_path(&xml[entry], original_target))?;
         check_opaque_refs(&xml, entry, &doc, target)?;
         match op {
             VerifyOperation::TextReplace {
@@ -318,7 +349,7 @@ fn verify_inner(
             }
         }
         for path in nested {
-            cache_cuts(&doc, at(&doc, &path)?, &mut cuts);
+            cache_cuts(&doc, stable_at(&doc, &path)?, &mut cuts);
         }
         cuts.sort_by_key(|(r, _)| r.start);
         cuts.dedup_by(|a, b| a.0 == b.0);
@@ -389,7 +420,7 @@ fn anchor(anchors: &mut Anchors, entry: &str, doc: &XmlDoc, p: usize) -> Result<
         .or_insert((top, BTreeSet::new()));
     slot.0 = slot.0.min(top);
     if path.len() > 1 {
-        slot.1.insert(path);
+        slot.1.insert(stable_path(doc, p));
     }
     Ok(())
 }

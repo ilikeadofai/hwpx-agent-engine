@@ -1,5 +1,5 @@
 //! Bounded static PNG/JPEG structure checks and source-preserving media swap.
-use crate::{at, attr, change, fail, hp, parse, unsupported};
+use crate::{attr, change, fail, hp, parse, unsupported};
 use hae_diag::{Limits, Result};
 use hae_package::{PackageInfo, PackageState, XmlMap, NS_HC, NS_HP, NS_HP10};
 use hae_xml::{escape_attr, XmlDoc};
@@ -319,7 +319,7 @@ pub(crate) fn check(
     entry: &str,
     doc: &XmlDoc,
     target: usize,
-    path: &[usize],
+    _path: &[usize],
     bytes: &[u8],
     limits: &Limits,
 ) -> Result<bool> {
@@ -344,7 +344,7 @@ pub(crate) fn check(
     let candidate_doc = candidate_xml
         .get(entry)
         .ok_or_else(|| fail("candidate is missing the target section"))?;
-    let candidate_target = at(candidate_doc, path)?;
+    let candidate_target = crate::stable_at(candidate_doc, &crate::stable_path(doc, target))?;
     if !hp(candidate_doc.el(candidate_target), "pic") {
         return Err(fail("candidate picture target changed shape"));
     }

@@ -141,7 +141,7 @@ pub(crate) struct Draft {
     pub diags: Vec<Diagnostic>,
     pub intents: Vec<Intent>,
     /// Section entry → (lowest top-level paragraph ordinal to clear, extra nested paragraph paths)
-    pub anchors: BTreeMap<String, (usize, Vec<Vec<usize>>)>,
+    pub anchors: BTreeMap<String, (usize, Vec<String>)>,
     /// (old display text, new display text) of edited paragraphs for PrvText.
     pub prv: Vec<(String, String)>,
 }
@@ -183,7 +183,6 @@ impl Draft {
     pub fn anchor(&mut self, para: &Node) {
         let doc: &Arc<XmlDoc> = self.doc.doc_of(para);
         let root = doc.root();
-        let path = doc.path(para.el);
         // Top-level paragraph: the ancestor-or-self whose parent is the root.
         let mut top = para.el;
         while let Some(p) = doc.el(top).parent {
@@ -204,7 +203,7 @@ impl Draft {
             .or_insert((usize::MAX, Vec::new()));
         e.0 = e.0.min(ord);
         if top != para.el {
-            e.1.push(path);
+            e.1.push(para.id.clone());
         }
     }
 }
@@ -318,10 +317,9 @@ fn clear_caches(d: &mut Draft) -> Result<BTreeMap<String, usize>> {
                 cuts.extend(lsa_of(c));
             }
         }
-        for path in nested {
-            if let Some(p) = doc.iter().map(|(i, _)| i).find(|&i| doc.path(i) == path) {
-                cuts.extend(lsa_of(p));
-            }
+        for id in nested {
+            let p = d.doc.require(&id, Some(Kind::Paragraph))?;
+            cuts.extend(lsa_of(p.el));
         }
         cuts.sort_by_key(|r| r.start);
         cuts.dedup();

@@ -242,6 +242,7 @@ fn v02_all_local_control_paragraphs_empty_paragraphs_and_complex_cells_undo_exac
         .collect();
     paths.sort();
     let (mut controls, mut empty, mut multi, mut merged, mut undo) = (0, 0, 0, 0, 0);
+    let mut field_rejected = 0;
     for path in &paths {
         let original = fs::read(path).unwrap();
         let d = hae_model::Document::open(original.clone(), &Limits::default()).unwrap();
@@ -299,6 +300,10 @@ fn v02_all_local_control_paragraphs_empty_paragraphs_and_complex_cells_undo_exac
                 continue;
             };
             let r = exec.call(command, params, Some(revision), false);
+            if !r.ok && r.diagnostics[0].reason.as_deref() == Some("field_boundary_in_range") {
+                field_rejected += 1;
+                continue;
+            }
             assert!(
                 r.ok,
                 "v02 local property node={i} command={command}: {:?}",
@@ -316,7 +321,7 @@ fn v02_all_local_control_paragraphs_empty_paragraphs_and_complex_cells_undo_exac
         }
         assert_eq!(fs::read(path).unwrap(), original);
     }
-    eprintln!("V02_LOCAL_PROPERTIES files={} control_paragraphs={controls} empty_insertions={empty} multi_paragraph_cells={multi} merged_cells={merged} undo_exact={undo}",paths.len());
+    eprintln!("V02_LOCAL_PROPERTIES files={} control_paragraphs={controls} empty_insertions={empty} multi_paragraph_cells={multi} merged_cells={merged} field_rejected={field_rejected} undo_exact={undo}",paths.len());
 }
 
 fn resolve_local_reference(
@@ -438,12 +443,21 @@ fn v02_retry_24_recorded_stage4_rejections_and_undo_exactly() {
                 params["paragraphs"] = json!(vec![text; count]);
                 r = exec.call(command, params.clone(), Some(revision), false);
             }
-            if !r.ok && command == "text.replace" {
-                assert_eq!(r.diagnostics[0].reason.as_deref(), Some("no_text_fragment"));
-                let got = query(&mut exec, "element.get", json!({"target":params["target"]}));
-                params["range"] = json!({"start":0,"end":got["graphemeCount"]});
+            if !r.ok {
+                assert!(
+                    matches!(
+                        r.diagnostics[0].reason.as_deref(),
+                        Some("no_text_fragment" | "field_boundary_in_range")
+                    ),
+                    "unexpected exact retry rejection: {:?}",
+                    r.diagnostics
+                );
                 expanded += 1;
-                r = exec.call(command, params, Some(revision), false);
+                let output = out.0.join("rejected-unchanged.hwpx");
+                query(&mut exec, "document.export", json!({"path":output}));
+                assert!(fs::read(&output).unwrap() == original);
+                fs::remove_file(output).unwrap();
+                continue;
             }
             assert!(
                 r.ok,
@@ -461,6 +475,6 @@ fn v02_retry_24_recorded_stage4_rejections_and_undo_exactly() {
             retried += 1;
         }
     }
-    assert_eq!((seen, retried, excluded), (25, 24, 1));
-    eprintln!("V02_STAGE4_RETRY recorded={seen} succeeded={retried} equation_excluded={excluded} object_only_probes_expanded_to_whole_paragraph={expanded} undo_exact={retried}");
+    assert_eq!((seen, retried + expanded, excluded), (25, 24, 1));
+    eprintln!("V02_STAGE4_RETRY recorded={seen} succeeded={retried} equation_excluded={excluded} exact_request_rejected={expanded} undo_exact={retried}");
 }

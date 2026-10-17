@@ -78,3 +78,6 @@ batch 롤백 뒤 현재 문서에서 재조회한다. 코드는 추가하지 않
 셀의 `merged_cell`·`cell_paragraph_count`·`nested_table`·`no_run`·`range_crosses_control`·
 `unsupported_content_in_range` 등이 포함된다. 셀 전체 교체 거절은 자손 문단의 교체 거절을
 뜻하지 않으며 `childParagraphsEditable`과 자손 문단의 `edits`를 확인한다.
+
+
+0.2 §7-1: preserve 범위 안 필드 시작/끝(하이퍼링크 포함)은 RANGE_CROSSES_CONTROL(reason:field_boundary_in_range)로 거절한다. 개체 전용 문단의 유효한 경계 위치는 길이 0 textSpans로 광고한다.

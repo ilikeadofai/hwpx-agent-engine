@@ -175,7 +175,7 @@ fn format_clone_preserves_unknown_header_data_and_other_paragraph() {
 }
 
 #[test]
-fn object_only_paragraph_can_format_but_has_no_text_replacement() {
+fn object_only_paragraph_can_format_and_insert_at_control_boundaries() {
     let d = fixture(
         r#"<hp:p paraPrIDRef="0"><hp:run><hp:equation/><hp:equation/><hp:equation/></hp:run></hp:p>"#,
     );
@@ -200,13 +200,16 @@ fn object_only_paragraph_can_format_but_has_no_text_replacement() {
     let v = serde_json::to_value(d.outline(d.node(&id).unwrap())).unwrap();
     assert_eq!(
         v["edits"]["text.replace"],
-        serde_json::json!({"available":false,"reason":"no_text_span","modes":[]})
+        serde_json::json!({"available":true,"modes":["insert"]})
     );
     assert_eq!(
         v["edits"]["paragraph.format"],
         serde_json::json!({"available":true})
     );
-    assert_eq!(v["textSpans"], serde_json::json!([]));
+    assert_eq!(
+        v["textSpans"],
+        serde_json::json!([{"start":0,"end":0},{"start":1,"end":1},{"start":2,"end":2},{"start":3,"end":3}])
+    );
     assert_eq!(v["editable"], true);
 }
 

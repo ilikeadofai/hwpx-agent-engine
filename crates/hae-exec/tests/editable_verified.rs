@@ -634,7 +634,7 @@ fn v02_preserve_does_not_skip_first_empty_fragment_with_unknown_attributes() {
     let h = Harness::new();
     let mut exec = h.open(&synthetic(&body));
     let item = paragraphs(&mut exec).remove(0);
-    assert_eq!(item["edits"]["text.replace"]["available"], false);
+    assert_eq!(item["edits"]["text.replace"]["modes"], json!(["insert"]));
     let r=exec.call("text.replace",json!({"target":item["nodeId"],"range":{"start":0,"end":1},"text":"X","controls":"preserve"}),Some(0),false);
     assert!(!r.ok);
     assert_eq!(
@@ -657,4 +657,91 @@ fn v02_cell_reports_preserve_only_child_paragraph_availability() {
         true,
     );
     assert!(r.ok);
+}
+
+#[test]
+fn v02_fields_are_rejected_even_when_controls_are_preserved() {
+    for marker in [
+        "<hp:fieldBegin id=\"1\" type=\"HYPERLINK\"/>",
+        "<hp:fieldEnd beginIDRef=\"1\"/>",
+        "<hp:ctrl><hp:fieldBegin id=\"1\"/></hp:ctrl>",
+    ] {
+        let h = Harness::new();
+        let mut exec = h.open(&synthetic(&p(&format!(
+            "<hp:t>a</hp:t>{marker}<hp:t>b</hp:t>"
+        ))));
+        let item = paragraphs(&mut exec).remove(0);
+        let r=exec.call("text.replace",json!({"target":item["nodeId"],"range":{"start":0,"end":3},"text":"X","controls":"preserve"}),Some(0),true);
+        assert!(!r.ok);
+        assert_eq!(
+            r.diagnostics[0].reason.as_deref(),
+            Some("field_boundary_in_range")
+        );
+    }
+}
+
+#[test]
+fn v02_object_only_paragraph_advertises_and_executes_boundary_insertion() {
+    let body = p("<hp:equation id=\"1\"/><hp:equation id=\"2\"/>");
+    for pos in 0..=2 {
+        let h = Harness::new();
+        let original = synthetic(&body);
+        let mut exec = h.open(&original);
+        let item = paragraphs(&mut exec).remove(0);
+        assert_eq!(
+            item["textSpans"],
+            json!([{"start":0,"end":0},{"start":1,"end":1},{"start":2,"end":2}])
+        );
+        let r = exec.call(
+            "text.replace",
+            json!({"target":item["nodeId"],"range":{"start":pos,"end":pos},"text":"X"}),
+            Some(0),
+            false,
+        );
+        assert!(r.ok, "{:?}", r.diagnostics);
+        let got = query(&mut exec, "element.get", json!({"target":item["nodeId"]}));
+        let mut chars = vec!["\u{fffc}"; 2];
+        chars.insert(pos, "X");
+        assert_eq!(got["text"], chars.join(""));
+        assert!(exec.call("history.undo", json!({}), Some(1), false).ok);
+        let out = h.0.join("undo.hwpx");
+        query(&mut exec, "document.export", json!({"path":out}));
+        assert!(fs::read(out).unwrap() == original);
+    }
+}
+
+#[test]
+fn v02_object_boundary_insertion_keeps_ids_batch_targets_and_project_paths() {
+    for reverse in [false, true] {
+        let h = Harness::new();
+        let original = synthetic(&cell("<hp:t>old</hp:t>"));
+        let mut exec = h.open(&original);
+        let outer = paragraphs(&mut exec).remove(0);
+        let c = query(&mut exec, "element.query", json!({"kind":"cell"}))["matches"][0].clone();
+        let mut steps = vec![
+            json!({"command":"text.replace","params":{"target":outer["nodeId"],"range":{"start":0,"end":0},"text":"X"}}),
+            json!({"command":"cell.setText","params":{"target":c["nodeId"],"text":"NEW"}}),
+        ];
+        if reverse {
+            steps.reverse();
+        }
+        let r = exec.call("command.batch", json!({"steps":steps}), Some(0), false);
+        assert!(r.ok, "{:?}", r.diagnostics);
+        assert_eq!(
+            query(&mut exec, "element.query", json!({"kind":"cell"}))["matches"][0]["nodeId"],
+            c["nodeId"]
+        );
+        let project = h.0.join("session.hwpwork");
+        query(&mut exec, "project.save", json!({"path":project}));
+        assert!(exec.call("history.undo", json!({}), Some(1), false).ok);
+        let out = h.0.join("undo.hwpx");
+        query(&mut exec, "document.export", json!({"path":out}));
+        assert!(fs::read(out).unwrap() == original);
+        query(&mut exec, "document.close", json!({}));
+        query(&mut exec, "document.open", json!({"path":project}));
+        assert_eq!(
+            query(&mut exec, "element.query", json!({"kind":"cell"}))["matches"][0]["nodeId"],
+            c["nodeId"]
+        );
+    }
 }

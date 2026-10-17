@@ -43,6 +43,15 @@ fn plan_replace(
     preserve: bool,
 ) -> Result<(Vec<Splice>, Option<Diagnostic>)> {
     let doc = d.doc.doc_of(para);
+    if preserve && pt.field_in_range(doc, cps.clone()) {
+        return Err(EngineError::new(
+            Code::RangeCrossesControl,
+            Stage::Validate,
+            "preserve range contains a field boundary",
+        )
+        .with_reason("field_boundary_in_range")
+        .with_target(&para.id));
+    }
     let covered: Vec<&hae_model::Piece> = pt
         .pieces
         .iter()
@@ -359,6 +368,20 @@ fn plan_insert(
         return empty_insert(d, para, new);
     }
     // Use the complete span set, not the public 64-span response page.
+    if let Some((_, run, at)) = pt
+        .object_insert_sites(d.doc.doc_of(para))
+        .into_iter()
+        .find(|(g, _, _)| *g == pos)
+    {
+        let q = &d.doc.doc_of(para).el(run).qname;
+        let prefix = q
+            .split_once(':')
+            .map_or(String::new(), |(p, _)| format!("{p}:"));
+        return Ok(vec![(
+            at..at,
+            format!("<{prefix}t>{}</{prefix}t>", escape_text(new)).into_bytes(),
+        )]);
+    }
     let cp = pt.grapheme_cps[pos];
     let doc = d.doc.doc_of(para);
     let safe = |p: &&hae_model::Piece| {

@@ -425,6 +425,20 @@ def v02_view(paragraph):
     return scalars,empty,runs
 
 
+def v02_controls(paragraph):
+    result=[];cp=0
+    for run in paragraph.children:
+        if not hp(run,'run'):continue
+        for unit in run.children:
+            if hp(unit,'secPr'):continue
+            if hp(unit,'t'):
+                for i,gap in enumerate(unit.gaps):
+                    cp+=len(decode_gap(gap))
+                    if i<len(unit.children):result.append((cp,unit.children[i],run,unit));cp+=1
+            else:result.append((cp,unit,run,unit));cp+=1
+    return result
+
+
 def v02_text(paragraph):
     return ''.join(s[4] for s in v02_view(paragraph)[0])
 
@@ -436,6 +450,21 @@ def replace_v02(paragraph,start,end,replacement,preserve=False,empty_cell=False)
     need(type(start) is int and type(end) is int and 0<=start<=end<=len(scalars),'INVALID_RANGE','invalid original grapheme range')
     need(start!=end or replacement or empty_cell,'INVALID_RANGE','empty insertion')
     if start==end:
+        if original and all(t is None for t,*_ in scalars):
+            controls=v02_controls(paragraph)
+            def site(row,before):
+                cp,obj,run,unit=row
+                related=[c for c in controls if c[3] is unit]
+                if (before and cp!=related[0][0]) or (not before and cp!=related[-1][0]):return None
+                return run,unit,before
+            right=next((r for r in controls if r[0]==start),None)
+            left=next((r for r in reversed(controls) if r[0]+1==start),None)
+            picked=(site(right,True) if right else None) or (site(left,False) if left else None)
+            need(picked is not None,'INVALID_RANGE','object boundary has no same-run insertion site')
+            run,unit,before=picked;index=run.children.index(unit)+(0 if before else 1)
+            node=Node(run.tag.rsplit('}',1)[0]+'}t',{},text=replacement,gaps=[xml_text(replacement)],generated=True)
+            run.children.insert(index,node);run.gaps.insert(index+1 if before else index,b'')
+            return bool(replacement)
         if original:
             chosen=scalars[start] if start<len(scalars) and scalars[start][0] is not None else scalars[start-1] if start>0 and scalars[start-1][0] is not None else None
             need(chosen is not None,'INVALID_RANGE','outside insertion spans')
@@ -458,6 +487,8 @@ def replace_v02(paragraph,start,end,replacement,preserve=False,empty_cell=False)
             run.append(node);run.expanded=not run.closing
         return True
     covered=scalars[start:end]
+    if preserve:
+        need(not any(start<=cp<end and any(hp(n,'fieldBegin') or hp(n,'fieldEnd') for n in obj.walk()) for cp,obj,_,_ in v02_controls(paragraph)), 'UNSUPPORTED', 'field_boundary_in_range')
     need(preserve or all(t is not None for t,*_ in covered),'UNSUPPORTED','range crosses controls')
     mapped=[x for x in covered if x[0] is not None]
     need(all(ch not in '\t\r\n' for _,_,_,_,ch in mapped),'UNSUPPORTED','literal/reference control character')
