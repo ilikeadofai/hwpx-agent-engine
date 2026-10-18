@@ -195,6 +195,28 @@ fn inspect_pages() {
     assert_eq!(j["kind"], "section");
 }
 
+/// A cursor is parsed from a `usize`, so a client can send `usize::MAX`. Adding
+/// the limit to it wraps in a release build and sends the page index back to
+/// the start of the document, which a client that follows `nextCursor` loops on
+/// forever.
+#[test]
+fn inspect_clamps_an_out_of_range_cursor_instead_of_wrapping() {
+    let d = open("gyehoek-reference.hwpx");
+    for limit in [1usize, 10, 100] {
+        let (items, next) = d.inspect(usize::MAX, limit);
+        assert!(items.is_empty(), "limit {limit} returned items");
+        assert_eq!(next, None, "limit {limit} returned a cursor to follow");
+        let (items, next) = d.inspect(usize::MAX - 1, limit);
+        assert!(items.is_empty(), "limit {limit} returned items");
+        assert_eq!(next, None, "limit {limit} returned a cursor to follow");
+    }
+    // A cursor beyond the end but below usize::MAX behaves the same way.
+    let beyond = d.nodes.len() + 5;
+    let (items, next) = d.inspect(beyond, 10);
+    assert!(items.is_empty());
+    assert_eq!(next, None);
+}
+
 #[test]
 fn hancom_uri_prefix_is_not_a_supported_namespace() {
     assert!(!is_known_ns(Some("http://www.hancom.co.kr/future/unknown")));

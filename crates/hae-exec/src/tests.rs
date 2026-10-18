@@ -604,6 +604,7 @@ fn retained_verification_logs_are_counted_in_the_session_budget() {
         .unwrap()
         .to_owned();
 
+    let open_only = exec.memory_used_bytes();
     let mut accounted = Vec::new();
     for i in 0..8u64 {
         let r = exec.call(
@@ -617,12 +618,16 @@ fn retained_verification_logs_are_counted_in_the_session_budget() {
         accounted.push(exec.memory_used_bytes());
     }
 
+    // The log is counted: the newest pre-edit package state is a section
+    // generation that is not the current or the initial one.
     assert!(
-        accounted[7] > accounted[1],
-        "accounted memory must grow with retained verification logs: {accounted:?}"
+        accounted[7] > open_only,
+        "retained verification log is not counted: open={open_only} {accounted:?}"
     );
+    // ...and it stays bounded. Only the newest record is read back, so the
+    // figure must not climb with the number of commits.
     assert!(
-        accounted[7] - accounted[1] >= 2 * section_len,
-        "at least two retained section generations must be counted: {accounted:?} section={section_len}"
+        accounted[7] <= open_only + 3 * section_len,
+        "verification log grows with edit count: open={open_only} section={section_len} {accounted:?}"
     );
 }

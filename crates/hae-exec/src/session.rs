@@ -1447,11 +1447,15 @@ impl SessionExecutor {
             ));
         }
 
-        let mut next_steps = (*s.current.verify_steps).clone();
-        next_steps.push(VerifyStepRecord {
+        // Only the newest record is ever consumed: `verify_temporary_hwpx`
+        // reads `last()` once the state has more than one commit, and its
+        // single-entry case compares against the session baseline. Retaining
+        // the earlier records cloned every pre-edit package state per commit
+        // and never read them back.
+        let next_steps = vec![VerifyStepRecord {
             pre_state: s.current.doc.state.clone(),
             ops: verify_ops,
-        });
+        }];
         let next_state = CommittedState {
             doc: applied.doc,
             verify_steps: Arc::new(next_steps),

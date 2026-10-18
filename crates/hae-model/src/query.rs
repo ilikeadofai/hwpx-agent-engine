@@ -680,9 +680,14 @@ impl Document {
     }
 
     /// Paged outline (cursor = index into node order).
+    ///
+    /// A cursor past the end is clamped instead of added to, so an
+    /// out-of-range index cannot wrap the offset back to the start of the
+    /// document and trap a client in a pagination loop.
     pub fn inspect(&self, cursor: usize, limit: usize) -> (Vec<Outline>, Option<usize>) {
-        let end = (cursor + limit).min(self.nodes.len());
-        let items = self.nodes[cursor.min(end)..end]
+        let start = cursor.min(self.nodes.len());
+        let end = start.saturating_add(limit).min(self.nodes.len());
+        let items = self.nodes[start..end]
             .iter()
             .map(|n| self.outline(n))
             .collect();
