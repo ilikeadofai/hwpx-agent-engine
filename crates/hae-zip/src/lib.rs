@@ -594,14 +594,36 @@ fn too_big(what: &str) -> EngineError {
 /// local header and data descriptor; `Replace` keeps the original name, extra
 /// fields, flags (minus the descriptor bit), method, times and attributes.
 pub fn write(src: &Archive, plan: &[OutEntry]) -> Result<Vec<u8>> {
-    let mut out: Vec<u8> = Vec::with_capacity(src.raw.len());
+    write_inner(Some(src), plan)
+}
+
+/// Write an archive that has no predecessor (`document.create`). Only `Add`
+/// entries are allowed; `Keep`/`Replace` fail. Entry order is the plan order
+/// (so `mimetype` stays first) and every entry uses the fixed DOS timestamp
+/// `1980-01-01 00:00:00` chosen by the caller in `Add` semantics, which makes
+/// the output byte-deterministic for the same plan.
+pub fn write_new(plan: &[OutEntry]) -> Result<Vec<u8>> {
+    write_inner(None, plan)
+}
+
+fn write_inner(src: Option<&Archive>, plan: &[OutEntry]) -> Result<Vec<u8>> {
+    let missing = |item: &str| {
+        EngineError::new(
+            Code::StateInvariantError,
+            Stage::Save,
+            format!("{item} entry in an archive without a predecessor"),
+        )
+    };
+    let mut out: Vec<u8> = Vec::with_capacity(src.map_or(0, |s| s.raw.len()));
     let mut written: Vec<Written> = Vec::with_capacity(plan.len());
     let mut names = HashSet::new();
-    let dos_time = src.entries.first().map(|e| {
-        (
-            u16::from_le_bytes([e.central[12], e.central[13]]),
-            u16::from_le_bytes([e.central[14], e.central[15]]),
-        )
+    let dos_time = src.and_then(|s| {
+        s.entries.first().map(|e| {
+            (
+                u16::from_le_bytes([e.central[12], e.central[13]]),
+                u16::from_le_bytes([e.central[14], e.central[15]]),
+            )
+        })
     });
     for item in plan {
         let name = match item {
@@ -618,6 +640,7 @@ pub fn write(src: &Archive, plan: &[OutEntry]) -> Result<Vec<u8>> {
         let offset = u32::try_from(out.len()).map_err(|_| too_big("archive"))?;
         match item {
             OutEntry::Keep(n) => {
+                let src = src.as_ref().ok_or_else(|| missing("Keep"))?;
                 let e = src.get(n).ok_or_else(|| {
                     EngineError::new(
                         Code::StateInvariantError,
@@ -631,6 +654,7 @@ pub fn write(src: &Archive, plan: &[OutEntry]) -> Result<Vec<u8>> {
                 written.push(Written { central });
             }
             OutEntry::Replace(n, payload) => {
+                let src = src.as_ref().ok_or_else(|| missing("Replace"))?;
                 let e = src.get(n).ok_or_else(|| {
                     EngineError::new(
                         Code::StateInvariantError,
@@ -727,9 +751,14 @@ pub fn write(src: &Archive, plan: &[OutEntry]) -> Result<Vec<u8>> {
     put16(&mut out, n);
     put32(&mut out, cd_size);
     put32(&mut out, cd_off);
-    let clen = u16::try_from(src.eocd_comment.len()).map_err(|_| too_big("comment"))?;
-    put16(&mut out, clen);
-    out.extend_from_slice(&src.eocd_comment);
+    match src {
+        Some(src) => {
+            let clen = u16::try_from(src.eocd_comment.len()).map_err(|_| too_big("comment"))?;
+            put16(&mut out, clen);
+            out.extend_from_slice(&src.eocd_comment);
+        }
+        None => put16(&mut out, 0),
+    }
     Ok(out)
 }
 

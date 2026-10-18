@@ -5,11 +5,12 @@ use crate::registry::FieldSetTextParams;
 use crate::registry::{
     command_describe, command_list, BatchStepParam, BookmarkListParams, CellSetFormatParams,
     CellSetSizeParams, CellSetTextParams, CommandBatchParams, CommandDescriptor,
-    DocumentDiffParams, DocumentExportParams, DocumentExportTextParams, DocumentOpenParams,
-    DocumentPreviewParams, EquationSetPropertiesParams, EquationSetScriptParams, ExportTextFormat,
-    FormFillParams, HeaderSetTextParams, Hwp5FileHeaderShape, Hwp5InspectParams,
-    Hwp5InspectResultShape, Hwp5ParagraphShape, Hwp5SectionShape, ImageFitParams,
-    ImageReplaceParams, LineSpacingParam, LinkListParams, MemoListParams, ParagraphFormatParams,
+    DocumentCreateParams, DocumentDiffParams, DocumentExportParams, DocumentExportTextParams,
+    DocumentOpenParams, DocumentPreviewParams, EquationSetPropertiesParams,
+    EquationSetScriptParams, ExportTextFormat, FormFillParams, HeaderSetTextParams,
+    Hwp5FileHeaderShape, Hwp5InspectParams, Hwp5InspectResultShape, Hwp5ParagraphShape,
+    Hwp5SectionShape, ImageFitParams, ImageReplaceParams, LineSpacingParam, LinkListParams,
+    MemoListParams, ParagraphDeleteParams, ParagraphFormatParams, ParagraphInsertParams,
     ParagraphSetStyleParams, ParsedCommand, ProjectSaveParams, SectionSetPageNumberingParams,
     SectionSetPageParams, SectionSetVisibilityParams, SnapshotCreateParams, SnapshotReleaseParams,
     TableDeleteColumnParams, TableDeleteRowParams, TableInsertColumnParams, TableInsertRowParams,
@@ -175,6 +176,42 @@ fn with_structure(
         }
         result["structure"] = v;
     }
+    result
+}
+
+/// Attach per-step `paragraph` reports; `dryRun` drops the new nodeIds because
+/// the candidate is discarded (same rule as `structure`).
+fn with_paragraph(result: Value, reports: &[hae_edit::ParagraphReport], dry_run: bool) -> Value {
+    with_node_reports(result, "paragraph", reports, dry_run, |r| &r.created)
+}
+
+/// Shared dryRun handling for node-creating reports (`structure`, `paragraph`).
+fn with_node_reports<T: serde::Serialize>(
+    mut result: Value,
+    key: &str,
+    reports: &[T],
+    dry_run: bool,
+    created: impl Fn(&T) -> &[hae_edit::CreatedNode],
+) -> Value {
+    if reports.is_empty() {
+        return result;
+    }
+    let mut v = serde_json::to_value(reports).expect("reports serialize");
+    if dry_run {
+        let created_ids: HashSet<&str> = reports
+            .iter()
+            .flat_map(|r| created(r).iter().map(|c| c.node_id.as_str()))
+            .collect();
+        if let Some(ids) = result["changedIds"].as_array_mut() {
+            ids.retain(|id| id.as_str().is_none_or(|id| !created_ids.contains(id)));
+        }
+        for step in v.as_array_mut().into_iter().flatten() {
+            for created in step["created"].as_array_mut().into_iter().flatten() {
+                created["nodeId"] = Value::Null;
+            }
+        }
+    }
+    result[key] = v;
     result
 }
 
@@ -417,8 +454,15 @@ fn add_op_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, op: &Verify
         | VerifyOperation::TableInsertRow { entry, .. }
         | VerifyOperation::TableDeleteRow { entry, .. }
         | VerifyOperation::TableInsertColumn { entry, .. }
-        | VerifyOperation::TableDeleteColumn { entry, .. } => {
+        | VerifyOperation::TableDeleteColumn { entry, .. }
+        | VerifyOperation::ParagraphDelete { entry, .. } => {
             add_slice_bytes(seen, total, entry.as_bytes())
+        }
+        VerifyOperation::ParagraphInsert { entry, text, .. } => {
+            add_slice_bytes(seen, total, entry.as_bytes());
+            if let Some(text) = text {
+                add_slice_bytes(seen, total, text.as_bytes());
+            }
         }
         VerifyOperation::CellSetFormat { entry, format, .. } => {
             add_slice_bytes(seen, total, entry.as_bytes());
@@ -1564,9 +1608,24 @@ impl SessionExecutor {
                     Vec::new(),
                 ))
             }
+            ParsedCommand::ParagraphInsert(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "paragraph.insert".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
+            ParsedCommand::ParagraphDelete(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "paragraph.delete".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
             ParsedCommand::DocumentDiff(p) => self.handle_diff(req, &p),
             ParsedCommand::DocumentPreview(p) => self.handle_preview(req, &p),
             ParsedCommand::ProjectSave(p) => self.handle_project_save(req, &p),
+            ParsedCommand::DocumentCreate(p) => self.handle_document_create(&p),
             ParsedCommand::DocumentExport(p) => self.handle_document_export(req, &p),
             ParsedCommand::DocumentExportText(p) => self.handle_export_text(req, &p),
         }
@@ -1843,7 +1902,9 @@ impl SessionExecutor {
                 snapshots: BTreeMap::new(),
             }
         } else {
-            let input = self.roots.read_input(&path)?;
+            // A `.hwpx` is read from the input root, or from the output root when
+            // `document.create` (or an earlier export) published it there.
+            let input = self.roots.read_input_or_output(&path)?;
             let doc = Document::open(input.bytes, &self.limits)?;
             let baseline = doc.original.clone();
             OpenDocSession {
@@ -2129,6 +2190,58 @@ impl SessionExecutor {
                     ),
                 };
                 Ok((eop, vop))
+            }
+            "paragraph.insert" => {
+                let p: ParagraphInsertParams = serde_json::from_value(step.params.clone())
+                    .map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            e.to_string(),
+                        ))
+                    })?;
+                let (entry, path) = doc
+                    .node(&p.target)
+                    .map(|n| (n.entry.clone(), doc.doc_of(n).path(n.el)))
+                    .unwrap_or_default();
+                let count = p.count.unwrap_or(1);
+                Ok((
+                    EditOp::ParagraphInsert {
+                        target: p.target,
+                        position: p.position.clone(),
+                        text: p.text.clone(),
+                        count: p.count,
+                    },
+                    VerifyOperation::ParagraphInsert {
+                        entry,
+                        path,
+                        position: p.position,
+                        text: p.text,
+                        count,
+                    },
+                ))
+            }
+            "paragraph.delete" => {
+                let p: ParagraphDeleteParams = serde_json::from_value(step.params.clone())
+                    .map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            e.to_string(),
+                        ))
+                    })?;
+                let (entry, path) = doc
+                    .node(&p.target)
+                    .map(|n| (n.entry.clone(), doc.doc_of(n).path(n.el)))
+                    .unwrap_or_default();
+                let count = p.count.unwrap_or(1);
+                Ok((
+                    EditOp::ParagraphDelete {
+                        target: p.target,
+                        count: p.count,
+                    },
+                    VerifyOperation::ParagraphDelete { entry, path, count },
+                ))
             }
             "cell.setSize" => {
                 let p: CellSetSizeParams =
@@ -2826,27 +2939,31 @@ impl SessionExecutor {
         if req.dry_run {
             let outcome = if is_noop { "noop" } else { "applied" };
             return Ok((
-                with_structure(
-                    with_form_fill(
-                        with_replace_all(
-                            json!({
-                                "outcome": outcome,
-                                "dryRun": true,
-                                "beforeVersion": before_version,
-                                "afterVersion": before_version,
-                                "predictedAfterVersion": if is_noop { before_version } else { before_version + 1 },
-                                "changedIds": applied.changed_ids,
-                                "resourceChanges": applied.resource_changes,
-                                "intents": applied.intents,
-                                "stale": applied.stale,
-                                "cacheRemovals": applied.cache_removals,
-                                "historyEvicted": false,
-                            }),
-                            &applied.replace_all,
+                with_paragraph(
+                    with_structure(
+                        with_form_fill(
+                            with_replace_all(
+                                json!({
+                                        "outcome": outcome,
+                                        "dryRun": true,
+                                    "beforeVersion": before_version,
+                                    "afterVersion": before_version,
+                                    "predictedAfterVersion": if is_noop { before_version } else { before_version + 1 },
+                                    "changedIds": applied.changed_ids,
+                                    "resourceChanges": applied.resource_changes,
+                                    "intents": applied.intents,
+                                    "stale": applied.stale,
+                                    "cacheRemovals": applied.cache_removals,
+                                    "historyEvicted": false,
+                                }),
+                                &applied.replace_all,
+                            ),
+                            &applied.form_fill,
                         ),
-                        &applied.form_fill,
+                        &applied.structure,
+                        true,
                     ),
-                    &applied.structure,
+                    &applied.paragraph,
                     true,
                 ),
                 diags,
@@ -2907,25 +3024,29 @@ impl SessionExecutor {
         s.revision += 1;
 
         Ok((
-            with_structure(
-                with_form_fill(
-                    with_replace_all(
-                        json!({
-                            "outcome": "applied",
-                            "beforeVersion": before_version,
-                            "afterVersion": s.revision,
-                            "changedIds": applied.changed_ids,
-                            "resourceChanges": applied.resource_changes,
-                            "intents": applied.intents,
-                            "stale": applied.stale,
-                            "cacheRemovals": applied.cache_removals,
-                            "historyEvicted": history_evicted,
-                        }),
-                        &applied.replace_all,
+            with_paragraph(
+                with_structure(
+                    with_form_fill(
+                        with_replace_all(
+                            json!({
+                                "outcome": "applied",
+                                "beforeVersion": before_version,
+                                "afterVersion": s.revision,
+                                "changedIds": applied.changed_ids,
+                                "resourceChanges": applied.resource_changes,
+                                "intents": applied.intents,
+                                "stale": applied.stale,
+                                "cacheRemovals": applied.cache_removals,
+                                "historyEvicted": history_evicted,
+                            }),
+                            &applied.replace_all,
+                        ),
+                        &applied.form_fill,
                     ),
-                    &applied.form_fill,
+                    &applied.structure,
+                    false,
                 ),
-                &applied.structure,
+                &applied.paragraph,
                 false,
             ),
             diags,
@@ -3184,6 +3305,41 @@ impl SessionExecutor {
                 "sha256": receipt.sha256,
                 "savedVersion": receipt.revision,
                 "revision": s.revision,
+            }),
+            Vec::new(),
+        ))
+    }
+
+    /// document.create: build a brand-new HWPX from the request, verify it
+    /// independently, and publish it as a new file under the output root. No
+    /// document is open and no revision or history changes.
+    fn handle_document_create(
+        &mut self,
+        p: &DocumentCreateParams,
+    ) -> Result<(Value, Vec<Diagnostic>)> {
+        let limits = self.limits;
+        let paragraphs = p.paragraphs.clone().unwrap_or_default();
+        let spec = hae_package::create::DocumentSpec {
+            title: p.title.clone(),
+            paragraphs: paragraphs.clone(),
+        };
+        let expected = hae_verify::CreateSpec {
+            title: p.title.clone(),
+            paragraphs,
+        };
+        let bytes = hae_package::create::create_hwpx(&spec, &limits)?;
+        let receipt = self.roots.publish_new_hwpx(&p.path, &bytes, |cand| {
+            let _ = hae_verify::verify_created(cand, &expected, &limits)?;
+            Ok(())
+        })?;
+        Ok((
+            json!({
+                "path": receipt.path,
+                "sha256": receipt.sha256,
+                "bytes": bytes.len(),
+                "entries": hae_package::create::CREATED_ENTRIES,
+                "paragraphCount": expected.paragraphs.len().max(1),
+                "title": p.title,
             }),
             Vec::new(),
         ))

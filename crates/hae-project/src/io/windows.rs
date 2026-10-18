@@ -829,6 +829,21 @@ impl IoRoots {
     /// its path and file identity as protected against subsequent writes.
     pub fn read_input(&self, path: impl AsRef<Path>) -> Result<InputFile> {
         let resolved = self.resolve_input(path.as_ref(), Stage::Open)?;
+        self.finish_input(resolved)
+    }
+
+    /// Read an HWPX from the input root, or from the output root when the file
+    /// was published there (for example by `document.create`). The input root
+    /// is preferred so a created file can never shadow an input file.
+    pub fn read_input_or_output(&self, path: impl AsRef<Path>) -> Result<InputFile> {
+        let resolved = match self.resolve_input(path.as_ref(), Stage::Open) {
+            Ok(resolved) => resolved,
+            Err(_) => self.resolve_output(path.as_ref(), Stage::Open)?,
+        };
+        self.finish_input(resolved)
+    }
+
+    fn finish_input(&self, resolved: AnchoredParent) -> Result<InputFile> {
         let (bytes, id) =
             self.read_regular_nofollow(&resolved, self.limits.max_hwpx_bytes, Stage::Open)?;
         let sha256 = sha256_hex(&bytes);
@@ -1280,8 +1295,39 @@ impl IoRoots {
     where
         F: FnOnce(&[u8]) -> Result<()>,
     {
+        let bytes = format::export_bytes(doc, &self.limits)?;
+        check_size(bytes.len(), self.limits.max_hwpx_bytes)?;
+        self.publish_new_file("export", path.as_ref(), &bytes, validate)
+    }
+
+    /// Publish caller-provided HWPX bytes as a new file under `output_root`
+    /// (`document.create`). Same root isolation, no-overwrite rule and
+    /// validation order as `export_hwpx`.
+    pub fn publish_new_hwpx<F>(
+        &self,
+        path: impl AsRef<Path>,
+        bytes: &[u8],
+        validate: F,
+    ) -> Result<SaveReceipt>
+    where
+        F: FnOnce(&[u8]) -> Result<()>,
+    {
+        check_size(bytes.len(), self.limits.max_hwpx_bytes)?;
+        self.publish_new_file("created document", path.as_ref(), bytes, validate)
+    }
+
+    fn publish_new_file<F>(
+        &self,
+        what: &str,
+        path: &Path,
+        bytes: &[u8],
+        validate: F,
+    ) -> Result<SaveReceipt>
+    where
+        F: FnOnce(&[u8]) -> Result<()>,
+    {
         let stage = Stage::Export;
-        let resolved = self.resolve_output(path.as_ref(), stage)?;
+        let resolved = self.resolve_output(path, stage)?;
         let existing = target_metadata(&resolved, stage)?;
         self.check_not_protected(
             &resolved.canonical,
@@ -1292,15 +1338,13 @@ impl IoRoots {
             return Err(EngineError::new(
                 Code::TargetExists,
                 stage,
-                "export target already exists",
+                format!("{what} target already exists"),
             ));
         }
 
-        let bytes = format::export_bytes(doc, &self.limits)?;
-        check_size(bytes.len(), self.limits.max_hwpx_bytes)?;
-        let sha256 = sha256_hex(&bytes);
+        let sha256 = sha256_hex(bytes);
         let (temp_name, temp_file, temp_id) =
-            self.write_temp_file(&resolved, &resolved.name, &bytes, stage)?;
+            self.write_temp_file(&resolved, &resolved.name, bytes, stage)?;
         let temp = sibling(&resolved, temp_name);
         let temp_path = temp.canonical.clone();
         let target_path = resolved.canonical.clone();
@@ -1352,13 +1396,13 @@ impl IoRoots {
         if let Some(problem) = post_publish_problem {
             return Err(uncertainty(
                 stage,
-                format!("export published but Windows postcondition failed: {problem}"),
+                format!("{what} published but Windows postcondition failed: {problem}"),
             ));
         }
         if let Err(error) = sync_parent(&resolved, stage, self.take_fault(FaultStep::ParentFsync)) {
             return Err(uncertainty(
                 stage,
-                format!("export published but parent directory sync failed: {error}"),
+                format!("{what} published but parent directory sync failed: {error}"),
             ));
         }
         Ok(receipt)

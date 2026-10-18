@@ -403,6 +403,30 @@ structure_params!(
     TableInsertColumnParams,
     TableDeleteColumnParams
 );
+/// `position` is `before` or `after`; `text` defaults to an empty paragraph.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ParagraphInsertParams {
+    pub target: String,
+    pub position: String,
+    pub text: Option<String>,
+    pub count: Option<usize>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ParagraphDeleteParams {
+    pub target: String,
+    pub count: Option<usize>,
+}
+/// `document.create` needs no open document: it builds a new package and
+/// publishes it under the output root.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DocumentCreateParams {
+    pub path: String,
+    pub paragraphs: Option<Vec<String>>,
+    pub title: Option<String>,
+}
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CellSetSizeParams {
@@ -767,6 +791,35 @@ pub struct TableStructureResultShape {
     pub structure: Vec<Value>,
 }
 
+/// Result of `paragraph.insert`/`paragraph.delete` (batch results carry the
+/// same objects per step in `paragraph`). In `dryRun` the created `nodeId`s are
+/// null because the candidate is discarded.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ParagraphStructureResultShape {
+    pub outcome: String,
+    pub before_version: u64,
+    pub after_version: u64,
+    pub changed_ids: Vec<String>,
+    pub history_evicted: bool,
+    /// Per step: `command`, `entry`, `position` (insert only), `count`,
+    /// `created` [{nodeId, kind}], `removed` [nodeId].
+    pub paragraph: Vec<Value>,
+}
+
+/// Result of `document.create`: a new file under the output root.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentCreateResultShape {
+    pub path: String,
+    pub sha256: String,
+    pub bytes: u64,
+    pub entries: Vec<String>,
+    #[serde(rename = "paragraphCount")]
+    pub paragraph_count: usize,
+    pub title: Option<String>,
+}
+
 /// Result of `text.replaceAll` (batch results carry the same object per step in
 /// `replaceAll`). Ranges are grapheme ranges of the paragraph before the command.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -975,6 +1028,8 @@ pub enum ParsedCommand {
     TableDeleteRow(TableDeleteRowParams),
     TableInsertColumn(TableInsertColumnParams),
     TableDeleteColumn(TableDeleteColumnParams),
+    ParagraphInsert(ParagraphInsertParams),
+    ParagraphDelete(ParagraphDeleteParams),
     LinkList(LinkListParams),
     TrackChangeList(TrackChangeListParams),
     BookmarkList(BookmarkListParams),
@@ -1007,6 +1062,7 @@ pub enum ParsedCommand {
     DocumentDiff(DocumentDiffParams),
     DocumentPreview(DocumentPreviewParams),
     ProjectSave(ProjectSaveParams),
+    DocumentCreate(DocumentCreateParams),
     DocumentExport(DocumentExportParams),
     DocumentExportText(DocumentExportTextParams),
     Hwp5Inspect(Hwp5InspectParams),
@@ -1099,6 +1155,29 @@ fn schema_json<T: JsonSchema>() -> Value {
         schema["properties"]["count"] =
             serde_json::json!({"type":"integer","minimum":1,"maximum":1024,"default":1});
     }
+    if matches!(
+        schema["title"].as_str(),
+        Some("ParagraphInsertParams" | "ParagraphDeleteParams")
+    ) {
+        schema["properties"]["count"] =
+            serde_json::json!({"type":"integer","minimum":1,"maximum":1024,"default":1});
+    }
+    if schema["title"] == "ParagraphInsertParams" {
+        schema["properties"]["position"] = serde_json::json!({
+            "type":"string","enum":["before","after"],
+            "description":"Insert the new paragraphs before or after the target paragraph."
+        });
+        schema["properties"]["text"] = serde_json::json!({
+            "type":"string","description":"Text of the new paragraphs; omitted means empty paragraphs. No tabs or line breaks."
+        });
+    }
+    if schema["title"] == "DocumentCreateParams" {
+        schema["properties"]["paragraphs"] = serde_json::json!({
+            "type":"array","maxItems":65535,"items":{"type":"string"},
+            "description":"Paragraph texts in document order; omitted or empty creates one empty paragraph."
+        });
+        schema["properties"]["title"] = serde_json::json!({"type":"string"});
+    }
     if schema["title"] == "CellSetSizeParams" {
         schema["anyOf"] = serde_json::json!([{"required":["width"]},{"required":["height"]}]);
         for side in ["width", "height"] {
@@ -1124,7 +1203,13 @@ mod schema_tests {
     fn descriptor_schema_version_is_the_registry_contract_not_the_package_version() {
         assert_eq!(REGISTRY_SCHEMA_VERSION, "0.3.0");
         let list = command_list();
-        assert_eq!(list.len(), 57);
+        // The registry is the single source of truth: compare against the
+        // declared command names instead of a hand-kept constant.
+        assert_eq!(list.len(), COMMAND_NAMES.len());
+        assert_eq!(
+            list.iter().map(|d| d.name).collect::<Vec<_>>(),
+            COMMAND_NAMES.to_vec()
+        );
         assert!(list
             .iter()
             .all(|d| d.schema_version == REGISTRY_SCHEMA_VERSION));
@@ -1190,6 +1275,9 @@ mod schema_tests {
             ("document_diff", [true, false, true, false]),
             ("document_preview", [false, false, false, false]),
             ("project_save", [false, true, false, false]),
+            ("paragraph_insert", [false, true, false, false]),
+            ("paragraph_delete", [false, true, false, false]),
+            ("document_create", [false, false, false, false]),
             ("document_export", [false, false, false, false]),
             // Query category, but it publishes a new file: not read-only/idempotent.
             ("document_export_text", [false, false, false, false]),
@@ -1514,6 +1602,18 @@ define_commands! {
         mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
         stage1: true, reason: None, params: TableDeleteColumnParams, output: TableStructureResultShape,
     },
+    ParagraphInsert {
+        name: "paragraph.insert", cli: "paragraph-insert", mcp: "paragraph_insert",
+        summary: "Insert `count` (default 1) paragraphs before or after `target`, cloning its paragraph shape and first run's character shape; `text` (no tabs/breaks) or an empty paragraph; creates new paragraph nodes with new nodeIds; refuses targets inside footnotes/text boxes and targets that own the section properties when inserting before them", category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None, params: ParagraphInsertParams, output: ParagraphStructureResultShape,
+    },
+    ParagraphDelete {
+        name: "paragraph.delete", cli: "paragraph-delete", mcp: "paragraph_delete",
+        summary: "Delete `count` (default 1) paragraphs from `target` on; removes their nodes (Undo restores the same nodeIds); refuses paragraphs holding tables, objects, fields, notes or section properties and refuses emptying a container", category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None, params: ParagraphDeleteParams, output: ParagraphStructureResultShape,
+    },
     LinkList {
         name: "link.list",
         cli: "link-list",
@@ -1805,6 +1905,12 @@ define_commands! {
         mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
         stage1: true, reason: None,
         params: ProjectSaveParams, output: GenericResultShape,
+    },
+    DocumentCreate {
+        name: "document.create", cli: "document-create", mcp: "document_create",
+        summary: "Create a new, openable HWPX document (title and paragraphs; the first paragraph carries the section properties) and publish it as a new file under the output root after independent verification; needs no open document and never overwrites", category: Persistence,
+        mutates: false, doc: false, ver: false, seq: false, dry: false, hist: false,
+        stage1: true, reason: None, params: DocumentCreateParams, output: DocumentCreateResultShape,
     },
     DocumentExport {
         name: "document.export",

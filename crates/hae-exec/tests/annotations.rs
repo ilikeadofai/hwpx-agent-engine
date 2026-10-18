@@ -28,6 +28,18 @@ fn fixture_path(rel: &str) -> PathBuf {
     root().join(rel).canonicalize().expect("fixture must exist")
 }
 
+/// The complex local input is not part of the repository, so tests that need it
+/// skip when it is absent (same rule as `tables.rs`).
+fn local_complex() -> Option<PathBuf> {
+    let p = root().join("spikes/work/stage4-e2e/inputs/04_complex.hwpx");
+    if p.is_file() {
+        Some(p.canonicalize().unwrap())
+    } else {
+        eprintln!("SKIP: optional local complex document absent");
+        None
+    }
+}
+
 const HEADER: &str = r##"<?xml version="1.0" encoding="UTF-8" standalone="yes" ?><hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head" xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph" version="1.2" secCnt="1"><hh:refList><hh:charProperties itemCnt="1"><hh:charPr id="0"/></hh:charProperties><hh:paraProperties itemCnt="1"><hh:paraPr id="0"><hh:align horizontal="LEFT" vertical="BASELINE"/><hh:lineSpacing type="PERCENT" value="160"/></hh:paraPr></hh:paraProperties><hh:styles itemCnt="1"><hh:style id="0"/></hh:styles><hh:borderFills itemCnt="1"><hh:borderFill id="1"><hh:leftBorder type="SOLID"/><hh:rightBorder type="SOLID"/><hh:topBorder type="SOLID"/><hh:bottomBorder type="SOLID"/></hh:borderFill></hh:borderFills><hh:memoProperties itemCnt="2"><hh:memoPr id="7" width="15024" lineWidth="1" lineType="SOLID" lineColor="#000000" fillColor="#CCFF99" activeColor="#FFFF99" memoType="NOMAL"/><hh:memoPr id="8" width="14000" lineWidth="0.6mm" lineType="DOT" lineColor="#C0504D" fillColor="#FDE9E9" activeColor="#F6D8D8" memoType="NORMAL"/></hh:memoProperties></hh:refList></hh:head>"##;
 
 fn p(id: u32, inner: &str) -> String {
@@ -629,7 +641,9 @@ fn memo_list_answer_is_empty_for_a_document_without_memos() {
 
 #[test]
 fn real_memo_document_lists_both_memos_and_preserves_the_bytes() {
-    let doc = fixture_path("spikes/work/stage4-e2e/inputs/04_complex.hwpx");
+    let Some(doc) = local_complex() else {
+        return;
+    };
     let original = fs::read(&doc).unwrap();
     let dir = Tmp::new("hae-memo-real-");
     let mut exec = SessionExecutor::new(doc.parent().unwrap(), &dir.0, Limits::default()).unwrap();
@@ -782,7 +796,13 @@ fn print_real_document_annotation_summaries() {
             "tests/fixtures/corpus/research-school-plan-reference.hwpx",
         ),
     ] {
-        let doc = fixture_path(path);
+        let doc = match name {
+            "04_complex.hwpx" => local_complex(),
+            _ => Some(fixture_path(path)),
+        };
+        let Some(doc) = doc else {
+            continue;
+        };
         let dir = Tmp::new("hae-annotations-print-");
         let mut exec =
             SessionExecutor::new(doc.parent().unwrap(), &dir.0, Limits::default()).unwrap();

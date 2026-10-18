@@ -153,3 +153,29 @@ python3 -m unittest discover -s tests/oracle
 6. 마지막에 기대 패키지와 후보를 항목 바이트 단위로 대조하는 것은 기존과 같습니다(미편집 항목은 원시 압축 바이트까지).
 
 시험: `crates/hae-verify/tests/table_structure.rs`가 편집기 없이 후보 4종(행/열 삽입·삭제)을 바이트 계약대로 손으로 만들어 수용을 확인하고, `rowCnt`·`colCnt`·표 크기·새 셀 주소·밀린 셀 주소 미갱신, 새 셀의 글·테두리·`header`·`name` 오류, 잘못된 위치·행 수, 캐시 미삭제/과삭제, 다른 표 변경, 엉뚱한 행/열 삭제, 병합 셀 삭제·분할 삽입 요청 등 30건 가까운 변조를 거절하는지 봅니다. 한컴 열기 게이트는 [표 구조 편집 한컴 게이트](table-structure-hancom-gate-2026-10-18.md)에 있습니다.
+
+## 0.4 문단 삽입·삭제와 새 문서 (`paragraph.insert`·`paragraph.delete`·`document.create`)
+
+`hae-verify/src/paragraph_structure.rs`와 `hae-verify/src/create.rs`는 `hae-edit`/`hae-model` 의존이 없습니다(설계: [문서·문단 생성 설계](document-paragraph-creation-design.md) §6).
+
+### 문단 삽입·삭제
+
+1. 입력은 요청 원문(`entry`, 문단의 **원시 요소 경로**, `position`, `text`, `count`)과 앞 단계까지의 기대 패키지뿐입니다. 검증기는 대상 문단의 컨테이너를 스스로 찾아 구역 루트/표 셀 `subList` 규칙, 템플릿 run, `secPr` 경계, 삭제 허용 목록, 컨테이너에 남는 문단 수, 구간 연속성을 판정하고, 적법하지 않은 요청은 후보와 상관없이 거절합니다.
+2. 기대 바이트를 원본 XML에 대한 splice로 도출합니다. 새 문단은 대상의 시작 태그에서 `id` 속성과 인접 공백 하나를 뺀 것 + 첫 run 시작 태그 원문 + (`hp:t` 또는 없음)이며, 템플릿 run이 자기닫힘이면 `/>`, 열린 태그면 `></hp:run>` 형태를 유지합니다. 삭제는 삭제 문단들의 원문 범위를 지웁니다.
+3. 캐시 규칙(설계 §5.4): 구역 본문 대상이면 대상의 최상위 문단부터 구역 끝까지의 `linesegarray`를 지웁니다. 표 셀 대상이면 표를 담은 최상위 문단과 표 안의 모든 문단 캐시를 지우고, 앞 단계가 같은 표 아래 기록한 앵커를 버린 뒤 변경 뒤 문서에서 다시 앵커합니다.
+4. 같은 요청 목록의 뒷 단계가 밀린 문단을 가리키면 검증기가 스스로 도출한 경로 사상(`Remap`, `PathRemap::Paragraphs`)으로 원본 주소를 따라가고, 앞 단계가 지운 요소를 가리키면 거절합니다.
+5. `PrvText`는 고치지 않습니다. 삽입한 글·삭제한 글 모두 미리보기 줄을 편집할 수 없으므로 `prv_text_stale`로 보고합니다.
+6. 마지막에 기대 패키지와 후보를 항목 바이트 단위로 대조합니다(미편집 항목은 원시 압축 바이트까지).
+
+시험: `crates/hae-verify/tests/paragraph_structure.rs`가 편집기를 부르지 않고 후보를 손으로 만들어 수용 4건을 확인하고, `id` 유지·문단 모양 오류·글 오류·잘못된 위치·캐시 미삭제·셀 캐시 미삭제·`secPr` 앞 삽입, 엉뚱한 문단 삭제·개수 오류·이웃 과삭제·표 문단 삭제·셀 비우기·캐시 과삭제 등 13건의 변조를 거절하는지 봅니다.
+
+### 새 문서 만들기
+
+새 문서에는 대조할 원본이 없습니다. 그래서 `hae_verify::verify_created(bytes, spec, limits)`가 **요청(`title`, `paragraphs`)에서 기대 패키지 여섯 항목을 독립적으로 다시 만들고**(`hae_package::create`를 호출하지 않음) 다음을 요구합니다.
+
+1. 첫 항목이 `mimetype`이고 STORED이며 값이 `application/hwp+zip`이다.
+2. 항목 이름 목록과 순서가 기대와 정확히 같다(추가·누락·중복 금지).
+3. 항목별 payload가 기대 바이트와 정확히 같다(문단 텍스트·`title`·참조 표·`version.xml`의 `tagetApplication`/`major`·`rootfile@media-type` 포함).
+4. `hae_package::analyze`가 후보를 수용한다.
+
+`document.create`는 이 검증을 통과한 바이트만 출력 루트에 공개합니다(`TARGET_EXISTS`·`PATH_NOT_ALLOWED` 규칙은 `document.export`와 같음). 시험: `crates/hae-verify/tests/created.rs`가 수용 3건과 11종 변조(압축된 `mimetype`, 항목 누락·추가·순서 변경, 잘못된 제목·문단 글, 잘못된 `version.xml`, 잘못된 `container.xml` media-type, `secPr` 누락, 해석되지 않는 `paraPr`, 금지 문자)를 거절하는지 봅니다.

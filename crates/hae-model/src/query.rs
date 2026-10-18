@@ -320,6 +320,26 @@ const TABLE_STRUCTURE_COMMANDS: [&str; 6] = [
     "table.deleteColumn",
 ];
 
+/// Node-set commands for a paragraph's container (0.4).
+const PARAGRAPH_STRUCTURE_COMMANDS: [&str; 2] = ["paragraph.insert", "paragraph.delete"];
+
+/// Elements a deleted paragraph may contain; anything else (pictures,
+/// equations, fields, shapes, notes, section properties, tables) is refused
+/// because its cross references are unverified
+/// (docs/decisions/document-paragraph-creation-design.md §5.3).
+const DELETABLE_PARAGRAPH: [&str; 10] = [
+    "p",
+    "run",
+    "t",
+    "linesegarray",
+    "lineseg",
+    "tab",
+    "lineBreak",
+    "nbSpace",
+    "fwSpace",
+    "hyphen",
+];
+
 impl Document {
     /// Deterministic failures for material edits. No-op requests may bypass the
     /// save gate; those do not constitute an editing capability.
@@ -594,6 +614,9 @@ impl Document {
             Kind::Paragraph => {
                 add("text.replace", self.text_replace_reason(n, spans));
                 add("paragraph.format", self.paragraph_format_block_reason(n));
+                for name in PARAGRAPH_STRUCTURE_COMMANDS {
+                    add(name, self.paragraph_command_block_reason(name, n));
+                }
                 let e = edits.get_mut("text.replace").unwrap();
                 if e.available
                     && !spans.text_spans.iter().any(|span| span.start < span.end)
@@ -1016,6 +1039,102 @@ impl Document {
             .and_then(|v| v.parse::<usize>().ok())
             != Some(rows))
         .then(|| "table_geometry_unsupported".into())
+    }
+
+    /// Source preconditions for `paragraph.insert`/`paragraph.delete` (0.4), shared
+    /// with the editor gate. Position-, count- and content-dependent refusals are
+    /// per-request and not enumerated here (design §5, §9).
+    pub fn paragraph_command_block_reason(&self, command: &str, n: &Node) -> Option<String> {
+        let scope = self.paragraph_scope_block_reason(n);
+        match command {
+            "paragraph.insert" => scope.or_else(|| self.paragraph_template_block_reason(n)),
+            "paragraph.delete" => scope
+                .or_else(|| self.paragraph_delete_content_block_reason(n))
+                .or_else(|| {
+                    // Deleting this paragraph must leave at least one paragraph
+                    // in its container; count-dependent refusals are decided
+                    // per request.
+                    (self.container_paragraphs(n) <= 1)
+                        .then(|| "paragraph_would_empty_container".into())
+                }),
+            _ => None,
+        }
+    }
+
+    /// Container rule (design §5.1): the section root or a table cell's subList.
+    pub fn paragraph_scope_block_reason(&self, n: &Node) -> Option<String> {
+        let doc = self.doc_of(n);
+        if !is_hp(doc.el(n.el).ns.as_deref()) || doc.el(n.el).local != "p" {
+            return Some("paragraph_scope_unsupported".into());
+        }
+        let parent = doc.el(n.el).parent?;
+        let container_ok = if parent == doc.root() {
+            true
+        } else {
+            is_hp(doc.el(parent).ns.as_deref())
+                && doc.el(parent).local == "subList"
+                && doc
+                    .el(parent)
+                    .parent
+                    .is_some_and(|t| is_hp(doc.el(t).ns.as_deref()) && doc.el(t).local == "tc")
+        };
+        (!container_ok).then(|| "paragraph_scope_unsupported".into())
+    }
+
+    /// `paragraph.insert` template rule (design §5.2): the target paragraph must
+    /// have a first `hp:run` carrying `charPrIDRef` to clone.
+    pub fn paragraph_template_block_reason(&self, n: &Node) -> Option<String> {
+        let doc = self.doc_of(n);
+        let has_template = doc
+            .el(n.el)
+            .children
+            .iter()
+            .copied()
+            .filter(|&c| is_hp(doc.el(c).ns.as_deref()) && doc.el(c).local == "run")
+            .any(|r| doc.el(r).attr("charPrIDRef").is_some());
+        (!has_template).then(|| "paragraph_template_unsupported".into())
+    }
+
+    /// Content rule for `paragraph.delete` (design §5.3): text carriers and
+    /// line-breaking decor only. Tables and everything else are refused.
+    /// Returns the reason and the offending element name for diagnostics.
+    pub fn paragraph_delete_content_violation(
+        &self,
+        n: &Node,
+    ) -> Option<(&'static str, Option<String>)> {
+        let doc = self.doc_of(n);
+        for i in std::iter::once(n.el).chain(doc.descendants(n.el)) {
+            let e = doc.el(i);
+            if !is_hp(e.ns.as_deref()) {
+                return Some(("paragraph_content_unsupported", Some(e.qname.clone())));
+            }
+            if e.local == "tbl" {
+                return Some(("paragraph_holds_table", Some(e.qname.clone())));
+            }
+            if !DELETABLE_PARAGRAPH.contains(&e.local.as_str()) {
+                return Some(("paragraph_content_unsupported", Some(e.qname.clone())));
+            }
+        }
+        None
+    }
+
+    /// Content rule as a bare reason (used by capability discovery).
+    pub fn paragraph_delete_content_block_reason(&self, n: &Node) -> Option<String> {
+        self.paragraph_delete_content_violation(n)
+            .map(|(reason, _)| reason.to_string())
+    }
+
+    /// Number of `hp:p` children of a paragraph's container.
+    pub fn container_paragraphs(&self, n: &Node) -> usize {
+        let doc = self.doc_of(n);
+        let Some(parent) = doc.el(n.el).parent else {
+            return 0;
+        };
+        doc.el(parent)
+            .children
+            .iter()
+            .filter(|&&c| is_hp(doc.el(c).ns.as_deref()) && doc.el(c).local == "p")
+            .count()
     }
 
     fn children_deep(&self, n: &Node, kind: Kind) -> Vec<&Node> {
