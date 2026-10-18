@@ -34,6 +34,7 @@
 mod char_format;
 mod contract;
 mod equation;
+mod fields;
 mod fit;
 mod form_fill;
 mod format;
@@ -448,6 +449,28 @@ fn verify_inner(
                     let slot = anchors.entry(entry.into()).or_insert((0, BTreeSet::new()));
                     slot.0 = 0;
                     slot.1.extend(nested);
+                    material = true;
+                }
+            }
+            VerifyOperation::FieldSetText {
+                text,
+                name,
+                fieldid,
+                occurrence,
+                ..
+            } => {
+                if let Some((old, new)) = fields::set_text(
+                    &mut expected,
+                    entry,
+                    &doc,
+                    target,
+                    text,
+                    name.as_deref(),
+                    fieldid.as_deref(),
+                    *occurrence,
+                )? {
+                    anchor(&mut anchors, entry, &doc, target)?;
+                    preview.push((old, new));
                     material = true;
                 }
             }

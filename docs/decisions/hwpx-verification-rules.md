@@ -134,3 +134,8 @@ python3 -m unittest discover -s tests/oracle
 `WIDELY` 원본 용지와 `NARROWLY` 축 교환의 대응은 corpus 및 구현 계약으로 고정했으며,
 모든 네이티브 버전의 표시 결과를 보증하는 것으로 확대하지 않습니다. 가로 용지와 제본 방식별
 시각 비교, Windows 한컴, 공식 XSD 전체 적합성은 별도 검증 대상입니다.
+
+
+### 필드 텍스트 (`field.setText`, 0.3)
+
+검증기는 요청의 문단 경로·name·fieldid·occurrence로 원본 XML의 필드를 독립 선택하고, beginIDRef와 같은 문단 흐름의 시작/끝 마커를 짝지어 값 영역을 재도출합니다. `CLICK_HERE`(실제 한컴 표기)/`CLICKHERE`(합성 픽스처 표기)/`HYPERLINK`의 일반 텍스트만 허용하며 중복·다문단·중첩·개체·탭·CDATA·주석·PI·불투명 값은 거절합니다. 첫 기존 텍스트 carrier에 새 글을 넣고 나머지를 비우는 기대 바이트와 캐시·PrvText 정책을 재계산합니다. 안전한 기존 run이 있는 빈 필드는 hp:t carrier를 추가할 수 있으나 모델 노드는 추가하지 않습니다. 후보의 마커·이름·Command·다른 필드 값·요청 없는 header 변경, 미편집 항목 재인코딩은 거절합니다. 구현은 `crates/hae-verify/src/fields.rs`; hae-edit·hae-model 의존은 없습니다. 근거는 합성 CLICKHERE/HYPERLINK 픽스처와 공개 기안문 서식(`tests/fixtures/corpus/gani-gian.hwpx`·`ilban-gian.hwpx`, 실제 `type="CLICK_HERE"`)이며, 두 실물 서식 후보로 수용·거절 시험을 추가했습니다. 사용자 개인 공문서와 Windows 한컴 실기 검증은 미수행입니다.

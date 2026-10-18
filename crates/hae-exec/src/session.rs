@@ -1,6 +1,7 @@
 //! Session executor: envelope validation, writer/sequence table, transactions,
 //! batch, dryRun, 100-unit Undo/Redo history, snapshots, and resource budgets.
 
+use crate::registry::FieldSetTextParams;
 use crate::registry::{
     command_describe, command_list, BatchStepParam, CellSetFormatParams, CellSetSizeParams,
     CellSetTextParams, CommandBatchParams, CommandDescriptor, DocumentDiffParams,
@@ -251,6 +252,39 @@ fn add_state_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, state: &
     }
 }
 
+/// Parse a `revision:index` page cursor. The revision must be current so a
+/// client following a cursor never mixes pages from two document states.
+fn cursor_offset(cursor: &str, revision: u64, what: &str) -> Result<usize> {
+    let Some((rev_s, idx_s)) = cursor.split_once(':') else {
+        return Err(EngineError::new(
+            Code::InvalidRequest,
+            Stage::Query,
+            format!("invalid {what} cursor format"),
+        ));
+    };
+    let cursor_rev: u64 = rev_s.parse().map_err(|_| {
+        EngineError::new(
+            Code::InvalidRequest,
+            Stage::Query,
+            format!("invalid {what} cursor revision"),
+        )
+    })?;
+    if cursor_rev != revision {
+        return Err(EngineError::new(
+            Code::VersionConflict,
+            Stage::Query,
+            format!("{what} cursor belongs to revision {cursor_rev}, current is {revision}"),
+        ));
+    }
+    idx_s.parse::<usize>().map_err(|_| {
+        EngineError::new(
+            Code::InvalidRequest,
+            Stage::Query,
+            format!("invalid {what} cursor index"),
+        )
+    })
+}
+
 fn add_op_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, op: &VerifyOperation) {
     match op {
         VerifyOperation::EquationSetScript { entry, script, .. } => {
@@ -268,6 +302,19 @@ fn add_op_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, op: &Verify
             .into_iter()
             .flatten()
             {
+                add_slice_bytes(seen, total, v.as_bytes());
+            }
+        }
+        VerifyOperation::FieldSetText {
+            entry,
+            text,
+            name,
+            fieldid,
+            ..
+        } => {
+            add_slice_bytes(seen, total, entry.as_bytes());
+            add_slice_bytes(seen, total, text.as_bytes());
+            for v in [name, fieldid].into_iter().flatten() {
                 add_slice_bytes(seen, total, v.as_bytes());
             }
         }
@@ -840,33 +887,12 @@ impl SessionExecutor {
                         ));
                     }
                 }
-                let offset = if let Some(c) = &p.cursor {
-                    let Some((rev_s, idx_s)) = c.split_once(':') else {
-                        return Err(EngineError::new(
-                            Code::InvalidRequest,
-                            Stage::Query,
-                            "invalid inspect cursor format",
-                        ));
-                    };
-                    let cursor_rev: u64 = rev_s.parse().map_err(|_| {
-                        EngineError::new(Code::InvalidRequest, Stage::Query, "invalid cursor rev")
-                    })?;
-                    if cursor_rev != s.revision {
-                        return Err(EngineError::new(
-                            Code::VersionConflict,
-                            Stage::Query,
-                            format!(
-                                "inspect cursor belongs to revision {cursor_rev}, current is {}",
-                                s.revision
-                            ),
-                        ));
-                    }
-                    idx_s.parse::<usize>().map_err(|_| {
-                        EngineError::new(Code::InvalidRequest, Stage::Query, "invalid cursor index")
-                    })?
-                } else {
-                    0
-                };
+                let offset = p
+                    .cursor
+                    .as_deref()
+                    .map(|c| cursor_offset(c, s.revision, "document.inspect"))
+                    .transpose()?
+                    .unwrap_or(0);
                 let limit = p.limit.unwrap_or(100).clamp(1, 500);
                 let (items, next) = s.current.doc.inspect(offset, limit);
                 let next_cursor = next.map(|n| format!("{}:{n}", s.revision));
@@ -1241,6 +1267,32 @@ impl SessionExecutor {
                 )?;
                 Ok((result, Vec::new()))
             }
+            ParsedCommand::FieldList(p) => {
+                let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+                let offset = p
+                    .cursor
+                    .as_deref()
+                    .map(|c| cursor_offset(c, s.revision, "field.list"))
+                    .transpose()?
+                    .unwrap_or(0);
+                let limit = p.limit.unwrap_or(100).clamp(1, 500);
+                let all = s.current.doc.fields(p.scope.as_deref())?;
+                let start = offset.min(all.len());
+                let end = start.saturating_add(limit).min(all.len());
+                let next = (end < all.len()).then(|| format!("{}:{end}", s.revision));
+                let fields = all[start..end].to_vec();
+                Ok((
+                    json!({"documentId":s.current.doc.document_id,"revision":s.revision,"fields":fields,"nextCursor":next}),
+                    Vec::new(),
+                ))
+            }
+            ParsedCommand::FieldSetText(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "field.setText".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
             ParsedCommand::TextFormat(p) => self.handle_edit_steps(
                 req,
                 &[BatchStepParam {
@@ -2087,6 +2139,38 @@ impl SessionExecutor {
                         entry,
                         path,
                         settings: serde_json::from_value(settings).unwrap(),
+                    },
+                ))
+            }
+
+            "field.setText" => {
+                let p: FieldSetTextParams =
+                    serde_json::from_value(step.params.clone()).map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            e.to_string(),
+                        ))
+                    })?;
+                let (entry, path) = doc
+                    .node(&p.target)
+                    .map(|n| (n.entry.clone(), doc.doc_of(n).path(n.el)))
+                    .unwrap_or_default();
+                Ok((
+                    EditOp::FieldSetText {
+                        target: p.target,
+                        text: p.text.clone(),
+                        name: p.name.clone(),
+                        fieldid: p.fieldid.clone(),
+                        occurrence: p.occurrence,
+                    },
+                    VerifyOperation::FieldSetText {
+                        entry,
+                        path,
+                        text: p.text,
+                        name: p.name,
+                        fieldid: p.fieldid,
+                        occurrence: p.occurrence,
                     },
                 ))
             }

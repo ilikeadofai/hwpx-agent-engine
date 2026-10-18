@@ -20,6 +20,7 @@
 - **그림 교체 (`image_replace`)**: 기존 그림의 위치·크기·캡션을 그대로 유지한 채, 정적 PNG 또는 JPEG 이미지 파일로 교체합니다.
 - **구역 용지·여백·쪽 번호·표시 설정 (0.3, `section.*`)**: 기존 구역 하나의 용지 방향·크기·제본 방식·여백, 쪽 시작 방식과 시작 번호, 첫 쪽 머리말·꼬리말·쪽 번호 숨김과 테두리·채우기 표시, 격자를 조회하고(`section_get_page`) 지정한 항목만 바꿉니다(`section_set_page`, `section_set_page_numbering`, `section_set_visibility`). 조회 값은 XML에 명시된 것만 `explicit`으로, 없는 값은 `unspecified`로 구분해 알려 주며 상속·기본값을 추측하지 않습니다. 자세한 내용은 아래 0.3절 「구역 용지·여백·쪽 번호·표시 설정」을 보세요.
 - **Markdown·HTML로 내보내기 (`document_export_text`)**: 문서(또는 한 구역)를 읽기 전용으로 변환해 새 `.md`/`.html` 파일로 씁니다. 문서·`revision`·되돌리기 이력은 바뀌지 않습니다(아래 ⑧).
+- **누름틀(필드) 조회와 값 채우기 (`field_list`·`field_set_text`, 0.3)**: 공문서 서식의 누름틀(`CLICK_HERE`)·하이퍼링크(`HYPERLINK`) 필드를 찾아 이름·ID·Command 원문·현재 값·채우기 가능 여부를 조회하고, 필드 마커와 서식을 그대로 둔 채 표시 텍스트만 채웁니다.
 - **되돌리기·다시 실행 및 미리보기**: 작업 전 가상 적용(`dryRun`), 변경 내역 비교(`document_diff`), 실행 취소(`history_undo`)·다시 실행(`history_redo`), 외부 렌더러 연동을 통한 PNG/SVG 미리보기(`document_preview`)를 지원합니다.
 
 ### 하지 않는 것 및 한계 (0.2 제외 범위)
@@ -893,3 +894,33 @@ entry의 바이트가 같다는 이유로 동일 미디어 참조로 간주하�
 외부 href는 접근하거나 내려받지 않으며 entry/sha256은 null, status는 `external`입니다.
 외부 그림은 `image.replace` 대상으로 지원하지 않습니다. 내장 여부 플래그가 없으면 원문 값과
 external은 null로 남기되 ZIP payload가 있으면 해시는 제공합니다.
+
+
+## 누름틀·하이퍼링크 필드 조회와 텍스트 채우기 (0.3)
+
+`field.list` (MCP `field_list`, CLI의 `--command field.list`)는 문서의 필드를 읽기 전용으로 조회합니다. `expectedVersion` 없이 호출하며 선택 `scope`에 문단·표·셀·구역 nodeId를 주면 해당 영역과 교차하는 필드만 나옵니다. 각 항목의 `nodeId`는 **시작 마커를 담은 문단**이며, `paragraphIds`에는 다문단 필드가 걸친 문단이 나옵니다.
+
+큰 문서는 `limit`(기본 100, 최대 500)과 `cursor`로 나눠 읽습니다. 결과의 `nextCursor`가 `null`이 아니면 그 값을 그대로 `cursor`에 넣어 다음 쪽을 이어 받습니다. 커서에는 조회 시점 `revision`이 들어 있어, 그 사이 문서가 바뀌면 쪽을 섞지 않고 `VERSION_CONFLICT`로 거절합니다. 커서는 같은 `scope`로 이어서 호출할 때만 의미가 있으므로, 중간에 `scope`를 바꾸려면 첫 쪽부터 다시 읽습니다. 형식이 틀린 커서는 `INVALID_REQUEST`, 목록 밖 인덱스는 빈 쪽과 `null` 커서입니다.
+
+```json
+{"command":"field.list","params":{"limit":100,"cursor":"0:100"}}
+```
+
+결과에는 `type`, `name`, `fieldid`, `id`, 현재 `text`, 빈 값 여부(`empty`), 여러 문단 여부(`multiParagraph`), 중첩 여부(`nested`), 셀 내부 여부(`inCell`), `setTextSupported`와 불가 `reason`이 있습니다. `command`는 Command 파라미터의 해석된 문자열이고 `commandRaw`는 엔터티 표기를 포함한 원래 내부 XML입니다. 필드 이름이 빈 문자열이어도 ID로 선택할 수 있습니다. 한컴이 실제로 쓰는 누름틀 표기는 `CLICK_HERE`이며 합성 픽스처에는 `CLICKHERE` 표기도 있습니다. 이 둘과 `HYPERLINK`만 채우기 후보이고 MEMO·교정부호 등은 조회만 가능합니다. 실제 한컴 서식에서는 `fieldid` 속성이 없고 `id`만 있는 경우가 많아, `fieldid` 선택자는 두 속성을 모두 받습니다.
+
+`field.setText` (MCP `field_set_text`, CLI의 `--command field.setText`)에는 조회 결과의 문단 `target`, 새 `text`, 선택 `name` 또는 `fieldid`를 줍니다. `fieldid`는 XML의 `fieldid` 또는 `id` 중 하나와 일치해야 하며, 두 선택자를 모두 주면 모두 일치해야 합니다. 같은 문단에서 선택자와 일치하는 필드가 여러 개면 **`occurrence`를 명시**해야 합니다(`0`부터 시작). 생략하면 `AMBIGUOUS_TARGET`; 필드나 순번이 없으면 `TARGET_NOT_FOUND`입니다. 이름이 유일한 경우 생략된 순번은 0입니다.
+
+```json
+{"command":"field.setText","expectedVersion":0,"dryRun":true,
+ "params":{"target":"조회한 문단 nodeId","name":"성명","text":"홍길동"}}
+```
+
+`text`에는 탭·줄바꿈을 넣을 수 없습니다. 이 명령은 필드 마커와 모든 속성·파라미터를 그대로 두고 **표시 텍스트만** 바꿉니다. 하이퍼링크의 URL/Command는 바뀌지 않습니다. 기존 run·글자 모양을 유지하며 첫 텍스트 조각에 새 글을 넣고 나머지 조각은 비웁니다(`FORMAT_COLLAPSED` 경고 가능). 빈 필드는 기존 run 안의 빈 텍스트 조각을 채우거나 안전한 위치에 텍스트 carrier를 넣습니다. 새 문단·run·모델 노드는 만들지 않습니다.
+
+여러 문단·중첩·짝이 맞지 않는 마커, 개체·탭·불투명 요소, CDATA·주석·처리 명령(PI)이 있는 필드는 안전하게 거절합니다. `reason`은 각각 `multi_paragraph_field`, `nested_field`, `unpaired_field`, `field_contains_control_or_opaque`, `field_lexical_markup`, `unsupported_field_type`, `no_text_fragment`, `paragraph_not_editable` 중 해당 사유입니다. 안전한 기존 run도 없는 빈 필드는 `no_text_fragment`로 거절합니다.
+
+다른 편집과 동일하게 현재 `expectedVersion`이 필요하고, `dryRun`은 실제 적용·이력 없이 독립 검증을 수행합니다. `command.batch`에 넣으면 전체가 한 revision·Undo 단위이며 실패 시 전체를 취소합니다. 재전송도 공통 writer/requestSequence 규칙을 따릅니다. Undo는 원본 HWPX 바이트를 복원하고 Redo는 편집 바이트를 복원합니다. linesegarray·PrvText 갱신 정책과 미편집 ZIP 항목의 압축 바이트·로컬 헤더 보존 계약도 동일합니다.
+
+검증 근거는 두 갈래입니다. 첫째는 결정론적 생성기 `gen_fields.py`가 만드는 합성 픽스처 `tests/fixtures/editing/fields.hwpx`로, 빈 값·다문단·중첩·개체·탭·CDATA·MEMO·표 셀·중복 이름 같은 경계를 시험합니다. 둘째는 저장소에 공개 서식으로 들어 있는 실제 기안문 표본 `tests/fixtures/corpus/gani-gian.hwpx`(누름틀 13개)와 `tests/fixtures/corpus/ilban-gian.hwpx`(누름틀 23개)이며, 두 문서 모두 한컴이 저장한 `type="CLICK_HERE"` 표기를 씁니다. 실제 표본에서는 표 셀 안 누름틀 채우기, `id`로 지목하기, 여러 필드 일괄 채우기와 Undo 뒤 원본 바이트 복원, 한컴 Linux 열기 게이트까지 확인했습니다.
+
+다만 이 표본은 공개 배포된 **서식 파일**이지 사용자가 실제로 쓰는 공문서가 아니며, Windows 한컴오피스 2024에서의 열기·조판 대조는 아직 하지 않았습니다. Linux 한컴 열기 게이트는 프로세스가 살아남았는지만 보고 내용·조판은 대조하지 않습니다.

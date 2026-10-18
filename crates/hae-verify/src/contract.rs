@@ -208,6 +208,15 @@ pub enum VerifyOperation {
         path: Vec<usize>,
         settings: Visibility,
     },
+    #[serde(rename = "field.setText")]
+    FieldSetText {
+        entry: String,
+        path: Vec<usize>,
+        text: String,
+        name: Option<String>,
+        fieldid: Option<String>,
+        occurrence: Option<usize>,
+    },
     #[serde(rename = "text.format")]
     TextFormat {
         entry: String,
@@ -305,6 +314,7 @@ impl VerifyOperation {
             | Self::SectionSetPage { entry, path, .. }
             | Self::SectionSetPageNumbering { entry, path, .. }
             | Self::SectionSetVisibility { entry, path, .. }
+            | Self::FieldSetText { entry, path, .. }
             | Self::TextFormat { entry, path, .. }
             | Self::TextReplace { entry, path, .. }
             | Self::CellSetText { entry, path, .. }

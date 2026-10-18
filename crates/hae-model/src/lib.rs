@@ -8,6 +8,7 @@
 
 pub mod equation;
 pub mod export_text;
+pub mod fields;
 pub mod links;
 pub mod para;
 pub mod query;

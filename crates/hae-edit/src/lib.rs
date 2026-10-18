@@ -6,6 +6,7 @@
 
 mod char_format;
 mod equation;
+mod fields;
 mod fit;
 mod form_fill;
 mod format;
@@ -98,6 +99,13 @@ pub enum EditOp {
         settings: Visibility,
     },
 
+    FieldSetText {
+        target: String,
+        text: String,
+        name: Option<String>,
+        fieldid: Option<String>,
+        occurrence: Option<usize>,
+    },
     TextFormat {
         target: String,
         range: Range<usize>,
@@ -159,6 +167,7 @@ impl EditOp {
             | EditOp::SectionSetPage { target, .. }
             | EditOp::SectionSetPageNumbering { target, .. }
             | EditOp::SectionSetVisibility { target, .. }
+            | EditOp::FieldSetText { target, .. }
             | EditOp::TextFormat { target, .. }
             | EditOp::TextReplace { target, .. }
             | EditOp::ParagraphFormat { target, .. }
@@ -232,6 +241,15 @@ pub enum Intent {
         entry: String,
         path: Vec<usize>,
         request: serde_json::Value,
+    },
+    #[serde(rename = "field.setText")]
+    FieldSetText {
+        entry: String,
+        path: Vec<usize>,
+        text: String,
+        name: Option<String>,
+        fieldid: Option<String>,
+        occurrence: Option<usize>,
     },
     #[serde(rename = "text.format")]
     TextFormat {
@@ -468,6 +486,20 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
             EditOp::SectionSetVisibility { target, settings } => {
                 section::set_visibility(&mut d, target, settings)
             }
+            EditOp::FieldSetText {
+                target,
+                text,
+                name,
+                fieldid,
+                occurrence,
+            } => fields::set_text(
+                &mut d,
+                target,
+                text,
+                name.as_deref(),
+                fieldid.as_deref(),
+                *occurrence,
+            ),
             EditOp::TextFormat {
                 target,
                 range,

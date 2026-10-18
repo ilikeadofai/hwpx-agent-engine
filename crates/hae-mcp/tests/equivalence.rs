@@ -638,3 +638,99 @@ fn four_interfaces_agree_on_text_replace_all() {
         assert_eq!(r, restored, "{name}: restored export differs");
     }
 }
+
+/// field.setText over the same four interfaces, on a real 간이기안문 template:
+/// paged field.list, dryRun preview, the real fill, and Undo back to the
+/// original bytes.
+fn fields_scenario(input: &Path, export: &Path) -> Vec<Step> {
+    let restored = export.with_file_name("restored.hwpx");
+    let versioned = |mut s: Step| {
+        s.versioned = true;
+        s
+    };
+    let fill = json!({
+        "target": "$fields.fields.0.nodeId",
+        "name": "$fields.fields.0.name",
+        "text": "12345"
+    });
+    vec![
+        Step {
+            save_as: Some("open"),
+            ..step("document.open", json!({ "path": input }))
+        },
+        Step {
+            save_as: Some("fields"),
+            ..step("field.list", json!({ "limit": 5 }))
+        },
+        Step {
+            dry_run: true,
+            ..versioned(step("field.setText", fill.clone()))
+        },
+        versioned(step("field.setText", fill)),
+        step(
+            "element.query",
+            json!({ "kind": "paragraph", "textContains": "12345" }),
+        ),
+        step("document.export", json!({ "path": export })),
+        versioned(step("history.undo", json!({}))),
+        step("document.export", json!({ "path": restored })),
+    ]
+}
+
+#[test]
+fn four_interfaces_agree_on_field_set_text() {
+    const TEMPLATE: &str = "gani-gian.hwpx";
+    let original = fs::read(common::corpus_file(TEMPLATE)).unwrap();
+    type Maker = fn(PathBuf) -> Box<dyn Driver>;
+    let makers: [(&'static str, Maker); 4] = [
+        ("inproc-fields", |dir| Box::new(InProcess { dir })),
+        ("cli-fields", |dir| Box::new(CliScript { dir })),
+        ("jsonl-fields", |dir| Box::new(Jsonl { dir })),
+        ("mcp-fields", |dir| Box::new(Mcp { dir })),
+    ];
+    let mut runs = Vec::new();
+    for (name, make) in makers {
+        let dir = TempDir::new(name);
+        let input = dir.with_corpus(TEMPLATE);
+        let export = dir.path().join("export.hwpx");
+        let steps = fields_scenario(&input, &export);
+        let responses = make(dir.path().to_path_buf()).run(&steps);
+        assert_eq!(responses.len(), steps.len(), "{name}");
+        for (s, r) in steps.iter().zip(&responses) {
+            assert_eq!(r["ok"], true, "{name}: {} failed: {r}", s.command);
+        }
+        let semantic_steps: Vec<Value> = steps
+            .iter()
+            .zip(&responses)
+            .map(|(s, r)| semantic(s.command, r))
+            .collect();
+        runs.push((
+            name,
+            semantic_steps,
+            fs::read(&export).unwrap(),
+            fs::read(dir.path().join("restored.hwpx")).unwrap(),
+        ));
+    }
+    let (_, reference, edited, restored) = &runs[0];
+    assert_eq!(
+        reference[1]["outcome"],
+        Value::Null,
+        "field.list is a query"
+    );
+    assert_eq!(
+        reference[2]["beforeVersion"], 0,
+        "dryRun keeps the revision"
+    );
+    assert_eq!(reference[2]["afterVersion"], 0);
+    assert_eq!(reference[3]["outcome"], "applied");
+    assert_eq!(reference[3]["afterVersion"], 1);
+    assert_eq!(reference[4]["matches"], 1, "the filled value is found once");
+    assert_eq!(reference[6]["outcome"], "applied", "Undo is applied");
+    assert_ne!(edited, &original);
+    assert_eq!(restored, &original, "Undo restores the original bytes");
+    for (name, semantic_steps, e, r) in &runs[1..] {
+        assert_eq!(semantic_steps, reference, "{name}: per-step results differ");
+        assert_eq!(e, edited, "{name}: edited export differs");
+        assert_eq!(r, restored, "{name}: restored export differs");
+    }
+}

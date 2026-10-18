@@ -142,6 +142,9 @@ fn view(doc: &XmlDoc, p: usize) -> View {
 pub(crate) fn paragraph_text(doc: &XmlDoc, p: usize) -> String {
     view(doc, p).text
 }
+pub(crate) fn paragraph_display(doc: &XmlDoc, p: usize) -> String {
+    view(doc, p).text
+}
 pub(crate) fn new_text(s: &str) -> Result<()> {
     if s.chars()
         .any(|c| !is_xml_char(c) || ['\t', '\n', '\r'].contains(&c))
