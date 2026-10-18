@@ -11,6 +11,231 @@ fn meta(version: &str) -> Value {
 }
 
 #[test]
+fn discovery_includes_required_cache_fields_without_initialization() {
+    let t = TempDir::new("discover-cache");
+    let mut c = McpClient::start_raw(t.path());
+    let reply = c.rpc("server/discover", json!({"_meta":meta("2026-07-28")}));
+    assert_eq!(reply["jsonrpc"], "2.0");
+    let result = &reply["result"];
+    assert_eq!(result["resultType"], "complete");
+    assert!(result["supportedVersions"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("2026-07-28")));
+    assert!(result["capabilities"]["tools"].is_object());
+    assert!(result["ttlMs"].as_u64().is_some());
+    assert!(["public", "private"].contains(&result["cacheScope"].as_str().unwrap()));
+    let info = &result["_meta"]["io.modelcontextprotocol/serverInfo"];
+    assert_eq!(info["name"], "hae-mcp");
+    assert!(info["version"].is_string());
+    assert!(c.rpc("tools/list", json!({"_meta":meta("2026-07-28")}))["result"]["tools"].is_array());
+    assert_eq!(c.finish().0, 0);
+}
+
+#[test]
+fn cache_metadata_is_only_on_modern_cacheable_results() {
+    let t = TempDir::new("cache-revisions");
+    let path = t.with_corpus("ilban-gian.hwpx");
+    for version in hae_mcp::SUPPORTED_PROTOCOL_VERSIONS {
+        let modern = *version == "2026-07-28";
+        let mut c = McpClient::start_raw(t.path());
+        let params = if modern {
+            json!({"_meta":meta(version)})
+        } else {
+            let init = c.rpc("initialize", json!({"protocolVersion":version,"capabilities":{},"clientInfo":{"name":"test","version":"1"}}));
+            for field in ["ttlMs", "cacheScope", "resultType"] {
+                assert!(init["result"].get(field).is_none(), "{version}: {init}");
+            }
+            c.notify("notifications/initialized", json!({}));
+            json!({})
+        };
+        let list = c.rpc("tools/list", params.clone());
+        let result = &list["result"];
+        assert_eq!(
+            result["tools"].as_array().unwrap().len(),
+            hae_exec::command_list().len()
+        );
+        if modern {
+            assert_eq!(result["resultType"], "complete");
+            assert!(
+                result["ttlMs"].as_u64().is_some_and(|ttl| ttl > 0),
+                "{result}"
+            );
+            assert_eq!(result["cacheScope"], "public");
+        } else {
+            for field in ["ttlMs", "cacheScope", "resultType"] {
+                assert!(result.get(field).is_none(), "{version}: {field}");
+            }
+        }
+        let mut open = params.clone();
+        open["name"] = json!("document_open");
+        open["arguments"] = json!({"path":path});
+        let opened = c.rpc("tools/call", open);
+        assert_eq!(opened["result"]["isError"], false, "{opened}");
+        let ping = c.rpc("ping", params.clone());
+        for reply in [&opened, &ping] {
+            assert!(reply["result"].get("ttlMs").is_none(), "{reply}");
+            assert!(reply["result"].get("cacheScope").is_none(), "{reply}");
+            assert_eq!(reply["result"].get("resultType").is_some(), modern);
+        }
+        // Public caching is valid because opening a document cannot personalize
+        // the registry, schemas, or descriptions advertised by tools/list.
+        assert_eq!(c.rpc("tools/list", params)["result"], list["result"]);
+        assert_eq!(c.finish().0, 0);
+    }
+}
+
+#[test]
+fn document_handle_guidance_and_recovery_match_each_revision() {
+    let t = TempDir::new("handle-guidance");
+    let path = t.with_corpus("ilban-gian.hwpx");
+    for version in hae_mcp::SUPPORTED_PROTOCOL_VERSIONS {
+        let modern = *version == "2026-07-28";
+        let mut c = McpClient::start_raw(t.path());
+        let params = if modern {
+            json!({"_meta":meta(version)})
+        } else {
+            json!({})
+        };
+        let discovery = if modern {
+            c.rpc("server/discover", params.clone())
+        } else {
+            let init = c.rpc("initialize", json!({"protocolVersion":version,"capabilities":{},"clientInfo":{"name":"test","version":"1"}}));
+            c.notify("notifications/initialized", json!({}));
+            init
+        };
+        let instructions = discovery["result"]["instructions"].as_str().unwrap();
+        for term in [
+            "documentId",
+            "2026-07-28",
+            "required",
+            "initialize",
+            "optional",
+        ] {
+            assert!(
+                instructions.contains(term),
+                "missing {term}: {instructions}"
+            );
+        }
+        let list = c.rpc("tools/list", params.clone());
+        for tool in list["result"]["tools"].as_array().unwrap() {
+            if let Some(property) = tool["inputSchema"]["properties"].get("documentId") {
+                let required = tool["inputSchema"]["required"]
+                    .as_array()
+                    .is_some_and(|r| r.contains(&json!("documentId")));
+                assert_eq!(required, modern, "{} {version}", tool["name"]);
+                let guidance = property["description"].as_str().unwrap();
+                assert!(
+                    guidance.contains(if modern { "Required" } else { "Optional" }),
+                    "{guidance}"
+                );
+                let description = tool["description"].as_str().unwrap();
+                assert!(
+                    description.contains(if modern {
+                        "Required documentId"
+                    } else {
+                        "Optional documentId"
+                    }),
+                    "{description}"
+                );
+            }
+        }
+        let mut call = params.clone();
+        call["name"] = json!("document_open");
+        call["arguments"] = json!({"path":path});
+        let open = c.rpc("tools/call", call.clone());
+        assert_eq!(open["result"]["isError"], false, "{open}");
+        let doc = &open["result"]["structuredContent"]["result"]["documentId"];
+        call["name"] = json!("document_inspect");
+        call["arguments"] = json!({"limit":1});
+        let omitted = c.rpc("tools/call", call.clone());
+        assert_eq!(omitted["result"]["isError"], modern, "{version}: {omitted}");
+        if modern {
+            let diagnostic = &omitted["result"]["structuredContent"]["diagnostics"][0];
+            assert_eq!(diagnostic["code"], "INVALID_REQUEST");
+            let message = diagnostic["message"].as_str().unwrap();
+            for term in ["document_open", "documentId", "arguments"] {
+                assert!(message.contains(term), "{message}");
+            }
+        }
+        call["arguments"]["documentId"] = doc.clone();
+        assert_eq!(c.rpc("tools/call", call)["result"]["isError"], false);
+        assert_eq!(c.finish().0, 0);
+    }
+}
+
+fn assert_standard_formats(value: &Value, path: &str) {
+    match value {
+        Value::Object(object) => {
+            if let Some(format) = object.get("format").and_then(Value::as_str) {
+                assert!(
+                    [
+                        "date-time",
+                        "date",
+                        "time",
+                        "duration",
+                        "email",
+                        "idn-email",
+                        "hostname",
+                        "idn-hostname",
+                        "ipv4",
+                        "ipv6",
+                        "uri",
+                        "uri-reference",
+                        "iri",
+                        "iri-reference",
+                        "uuid",
+                        "uri-template",
+                        "json-pointer",
+                        "relative-json-pointer",
+                        "regex"
+                    ]
+                    .contains(&format),
+                    "nonstandard format {format} at {path}"
+                );
+            }
+            for (key, child) in object {
+                // These keywords contain instance data, not schemas.
+                if !["default", "examples", "const", "enum"].contains(&key.as_str()) {
+                    assert_standard_formats(child, &format!("{path}/{key}"));
+                }
+            }
+        }
+        Value::Array(values) => {
+            for (index, child) in values.iter().enumerate() {
+                assert_standard_formats(child, &format!("{path}/{index}"));
+            }
+        }
+        _ => {}
+    }
+}
+
+#[test]
+fn all_advertised_and_registry_schemas_use_only_standard_formats() {
+    for descriptor in hae_exec::command_list() {
+        assert_standard_formats(
+            &descriptor.input_schema,
+            &format!("{}/input", descriptor.name),
+        );
+        assert_standard_formats(
+            &descriptor.output_schema,
+            &format!("{}/output", descriptor.name),
+        );
+    }
+    let t = TempDir::new("standard-formats");
+    let mut c = McpClient::start(t.path());
+    for params in [json!({}), json!({"_meta":meta("2026-07-28")})] {
+        let list = c.rpc("tools/list", params);
+        for tool in list["result"]["tools"].as_array().unwrap() {
+            for key in ["inputSchema", "outputSchema"] {
+                assert_standard_formats(&tool[key], &format!("{}/{key}", tool["name"]));
+            }
+        }
+    }
+    assert_eq!(c.finish().0, 0);
+}
+
+#[test]
 fn ids_are_exact_and_invalid_ids_never_echo_arbitrary_values() {
     let t = TempDir::new("ids");
     let mut c = McpClient::start(t.path());

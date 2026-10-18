@@ -112,6 +112,8 @@ Undo 뒤 Codex export에는 원래 남아 있던 16개의 `AI-SPARK`와 이전 p
 
 ### M3-F1 — 높음: Claude Code one-shot 세션에서 연결된 서버의 도구가 노출되지 않음
 
+**후속 상태: 엔진 결함으로 원인 확정·수정 후 해결. 아래 Sol의 전체 시나리오 재검증을 참고한다. 다음 문단은 초회 시험 당시의 잠정 판단이다.**
+
 서버는 `connected`로 표시되지만 tool discovery에서 `hae` 도구가 0개여서 Claude Code 자연어 시나리오를 진행할 수 없었다. 현재 증거로는 Claude Code MCP 도구 노출 단계의 연결 차단이며, 엔진 코드 원인은 확인하지 못했다.
 
 재현(현재 폴더의 임시 설정과 prompt 사용):
@@ -124,6 +126,8 @@ claude -p --mcp-config /tmp/m3/claude-mcp.json --strict-mcp-config --allowedTool
 관찰: init의 server status는 `connected`; `ToolSearch` 결과는 `No matching deferred tools found`; HAE 도구 호출과 출력 파일은 0개. 위 한 줄은 최소 재현 prompt이고 실제 전체 시나리오 prompt의 SHA-256은 `/tmp/m3/claude.prompt.sha256`에 기록했다.
 
 ### M3-F2 — 낮음: Inspector가 `uint64` outputSchema 형식을 알 수 없어 경고
+
+**후속 상태: schemars 생성 단계 수정 후 해결. release Inspector tools/list strict와 document_open 1회 모두 경고 0을 확인했다. 다음은 초회 시험 기록이다.**
 
 `document_open` 응답을 거절하지는 않았지만 stderr에 아래 경고가 두 번 나왔다: `unknown format "uint64" ignored in schema at path "#/properties/result/properties/revision"`. 이는 Inspector validator의 schema-format 경고이며 tool result는 `isError:false`, `structuredContent` 포함으로 성공했다.
 
@@ -142,3 +146,36 @@ npx -y @modelcontextprotocol/inspector --cli /home/mattc/Documents/Codex/hwpx-ag
 - `rhwp`가 없어 preview 렌더링은 생략/실패했다. Windows 한컴 조판 확인, 전체 `check.sh`·oracle·evaluate 재실행은 이 M3 연결 세션의 범위에서 수행하지 않았다.
 - Claude 연결 장애는 재시도하지 않아 추가 Haiku 사용량을 발생시키지 않았다.
 - M3 결과 문서와 계획표만 기록 대상으로 삼았다. 엔진 코드 변경과 push는 없다. M4 독립 검증은 별도 단계로 남는다.
+
+
+## 후속: M3-F1 엔진 결함 정정·해결 및 Claude 전체 시나리오 재검증 (2026-10-18, Sol)
+
+**M3-F1: 높음, 해결.** 초회 시험의 “엔진 코드 원인은 확인하지 못했다”는 잠정 판단을 정정한다. Claude Code 2.1.296은 initialize 없이 `server/discover → tools/list`로 MCP 2026-07-28을 사용했고, 엔진이 tools/list 결과에 필수 캐시 필드 ttlMs·cacheScope를 누락하여 클라이언트가 도구 목록 전체를 버렸다. Haiku의 `/tmp/cc-retest/debug-a3.log`에는 두 필드 검증 실패가 있고, 두 필드만 보충한 프록시로 22개 도구 등록·document_open 성공을 실측했다. 비표준 format·outputSchema 제거만으로는 해결되지 않았다는 총괄의 분리 실측도 확인했다.
+
+구현은 현대식 server/discover·tools/list에 `ttlMs:300000`, `cacheScope:"public"`를 공통으로 추가했다. 고정 레지스트리/서버 정보에는 사용자·문서 데이터가 없으므로 public, TTL 5분은 반복 발견 감소와 업그레이드 뒤 재조회 간격을 고려했다. legacy 및 비캐시 결과에는 붙이지 않는다. M3-F2 정수 format과 M4 documentId 안내도 함께 수정했다. 명세 근거·결과 타입 전수 대조·게이트는 [M1·M2 후속 기록](mcp-m1-m2-2026-10-18.md)에 있다.
+
+### 실제 Claude Code 재실행
+
+전역 설정을 바꾸지 않고 `/tmp/hae-sol-cc-m3/mcp.json`에서 `/tmp/sol-target/debug/hae-mcp`를 **직접 실행**했다. 응답을 바꾸는 프록시나 outputSchema/format 제거는 사용하지 않았다. cwd는 `/tmp/hae-sol-cc-m3/session`, 입력/출력은 같은 임시 루트의 in/out이다. 기존 공개 MIT fixture를 복사했고 저장소 입력은 보존했다. 명령:
+
+```bash
+claude -p --mcp-config /tmp/hae-sol-cc-m3/mcp.json --strict-mcp-config --allowedTools "mcp__hae__*" --model haiku --no-session-persistence --output-format stream-json --verbose "$(cat /tmp/hae-sol-cc-m3/prompt.txt)"
+```
+
+CLI **2.1.296**, 모델 **claude-haiku-5-5**, 종료 **0**, 최종 is_error=false다. init 이벤트에서 HAE 도구 **22/22**와 connected를 확인했고, 실제 사용 도구를 ToolSearch로 가져와 같은 세션 안에서 아래를 완료했다.
+
+- document_open → document_inspect(limit 30)·표적 element_query/element_get, 시작 revision 0.
+- 고의 stale expectedVersion=999999는 `VERSION_CONFLICT: expectedVersion 999999 does not match current revision 0`으로 거절됐다. 다음 정상 편집은 expectedVersion=0으로 성공하여 probe가 revision을 바꾸지 않았음도 확인했다.
+- 일반 문단 text_replace(`행복한`→`희망찬`) **0→1**, 그림 문단의 텍스트 범위 [1,22)에 controls=preserve 교체 **1→2**, 한 문단 셀 cell_set_text **2→3**.
+- text_replace_all(`AI-SPARK`→`M3-SPARK`) dryRun은 **3→3**, 실제 실행은 **17문단·17건·skip 0, 3→4**.
+- history_undo 정확히 한 번 **4→5**. 표적 재조회로 세 선행 편집 유지와 원래 AI-SPARK 텍스트 복원을 확인하고 document_export(exportedVersion=5) 완료.
+
+실제 HAE 도구 호출 16개 응답을 별도로 파싱하여 revision·replace-all 17건·Undo 1회·export를 검증했다. 예정한 stale probe 1개 외 도구 실패와 클라이언트 스키마 거절은 없었다. 개체 문단/셀 편집의 FORMAT_COLLAPSED 경고 2개는 응답에 전달됐으며 수정 내용은 적용됐다. 이는 Inspector의 비표준 format 경고와 다른 엔진 진단이다. outputSchema가 있는 22개 도구가 등록되고 실제 결과가 수신된 것은 확인했지만, Claude 내부가 structuredContent를 직접 소비했는지 text JSON을 소비했는지까지는 이 stream 기록으로 구별하지 않는다. Preview는 기존 M3와 같이 rhwp 미설정으로 생략했다. Windows/한컴 조판 검증으로 확대하지 않는다.
+
+### 별도 무결성·재열기 검사
+
+원본과 입력 사본의 실행 전후 SHA-256은 모두 `0b34ae667d371f0183cb6942e9b5c0cde4719f0b5dabe5a4736dbfbb09ac1f60`다. Export `/tmp/hae-sol-cc-m3/out/claude-m3-fixed.hwpx` SHA-256은 `9dd4b442c4cd86e635b0040e56238cc4f5d089a879434433e44af3aca86e2e55`다.
+
+Python ZipFile.testzip() 손상 **0**, ZIP 항목 **46**, BinData **8**, hp:pic **18**, hp:container **19**이며 개체 수는 원본과 같다. 전체 section XML에서 AI-SPARK **17**, M3-SPARK **0**을 확인했고, `희망찬 오늘`과 두 M3 편집 문구도 남았다. 즉 replace-all만 Undo되고 세 선행 편집은 유지됐다. 별도 새 MCP 프로세스에서 export 디렉터리를 input-root/output-root로 지정해 재열기 **ok:true**, nodeCount **1374**, revision **0**을 확인했다. 새 프로세스의 revision 0은 정상이며 이전 세션 핸들/히스토리를 재사용한 것이 아니다. 이 직접 응답에서 content text JSON과 structuredContent가 일치함도 확인했다.
+
+로컬 근거: `/tmp/hae-sol-cc-m3/{before.json,prompt.txt,stream.jsonl,stderr.log,exit-code.txt,verification.json,reopen.json,operations.json}`. prompt SHA-256 `1453699dd38a2cfc584aa96ac7a0ce4e3b69fece8249f033c8508619c605eb56`, 사용 바이너리 SHA-256 `9b59f195dca396563f926bc0761a18d80e85ee584b5c44f92ee009874dd0542f`. CLI 총 비용 **$0.02171007**, modelUsage 기준 input **2823**, output **7395**, cache creation **52778**, cache read **717467**, thinking **3084**다. API 키·인증 정보·전역 설정은 기록/변경하지 않았다. 원문 stream과 HWPX는 로컬에만 남기고 커밋하지 않는다.

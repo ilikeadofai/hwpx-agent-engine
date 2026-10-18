@@ -135,8 +135,12 @@ pub fn description(command: &str) -> Option<&'static str> {
 // ---------------------------------------------------------------------------
 
 /// Shown on every `documentId` input property.
-pub fn document_id_property() -> &'static str {
-    "Optional: defaults to the currently open document; if given it must match the open document. Fails with TARGET_NOT_FOUND on mismatch or SESSION_REQUIRED if no document is open."
+pub fn document_id_property(modern: bool) -> &'static str {
+    if modern {
+        "Required documentId for stateless MCP 2026-07-28 calls: pass the handle returned by document_open in arguments.documentId on every document tool call. The handle lasts until document_close or server exit; reopen after restart."
+    } else {
+        "Optional documentId after legacy initialize: defaults to the currently open document; if given it must match the open document. Fails with TARGET_NOT_FOUND on mismatch or SESSION_REQUIRED if no document is open."
+    }
 }
 
 /// Shown on every `expectedVersion` input property.
@@ -149,7 +153,7 @@ pub fn dry_run_property() -> &'static str {
     "When true, validate and simulate the edit in isolation, returning the predicted outcome, diff, and diagnostics without modifying the document, its `revision`, or session history."
 }
 
-/// Returned as `instructions` from `initialize`.
+/// Returned as `instructions` from `initialize` and `server/discover`.
 pub fn server_instructions() -> &'static str {
-    "Preservation-first HWPX document engine. Workflow: (1) call `document_open` to get `documentId` and `revision`; (2) call `document_inspect` or `element_query` to find target `nodeId`s and text; check per-command `edits` and choose text ranges within paragraph `textSpans` (`editable` means any available command); (3) call edit tools (`text_replace`, `text_replace_all` for document-wide exact find-and-replace, `paragraph_format`, `cell_set_text`, `image_replace`, `command_batch`) with optional `documentId` (defaults to the currently open document; if given it must match the open document) and `expectedVersion` = current revision (use `dryRun: true` to preview without changing anything); (4) on `VERSION_CONFLICT`, re-query before retrying; (5) export to a new `.hwpx` via `document_export` or save a `.hwpwork` project via `project_save`. Text ranges are half-open `[start, end)` extended grapheme cluster indices within a single paragraph. Request sequence numbering is handled automatically by the MCP adapter."
+    "Preservation-first HWPX document engine. Workflow: (1) call `document_open` to get `documentId` and `revision`; (2) call `document_inspect` or `element_query` to find target `nodeId`s and text; check per-command `edits` and choose text ranges within paragraph `textSpans` (`editable` means any available command); (3) call edit tools (`text_replace`, `text_replace_all` for document-wide exact find-and-replace, `paragraph_format`, `cell_set_text`, `image_replace`, `command_batch`) with `documentId` and `expectedVersion` = current revision (use `dryRun: true` to preview without changing anything); (4) on `VERSION_CONFLICT`, re-query before retrying; (5) export to a new `.hwpx` via `document_export` or save a `.hwpwork` project via `project_save`. For stateless MCP 2026-07-28 requests (server/discover then tools/call), documentId is required in arguments on every document tool call; use the handle from document_open. For legacy initialize-based sessions (2025-11-25 and earlier), documentId is optional and defaults to the currently open document. Handles last until document_close or server exit; reopen after restart. Text ranges are half-open `[start, end)` extended grapheme cluster indices within a single paragraph. Request sequence numbering is handled automatically by the MCP adapter."
 }

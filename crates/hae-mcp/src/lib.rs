@@ -1,7 +1,7 @@
 //! hae-mcp: stdio MCP server (JSON-RPC 2.0, one message per line) over the session executor.
 //!
 //! Every registry command becomes one MCP tool (`cell.setText` → `cell_set_text`).
-//! The agent may supply `documentId`, and supplies `expectedVersion`, `dryRun` and the command
+//! The agent supplies `documentId` (optional after legacy initialize), `expectedVersion`, `dryRun` and the command
 //! params only. The adapter issues one writer per connection and numbers
 //! sequence-tracked requests itself (spec §6), so a duplicated agent call
 //! fails with `VERSION_CONFLICT` instead of being applied twice.
@@ -34,6 +34,9 @@ const MODERN_VERSION: &str = "2026-07-28";
 const VERSION_META: &str = "io.modelcontextprotocol/protocolVersion";
 const CAPS_META: &str = "io.modelcontextprotocol/clientCapabilities";
 const INFO_META: &str = "io.modelcontextprotocol/serverInfo";
+// Discovery and the tool registry contain no document or caller-specific data.
+// Cache for five minutes; restart/upgrade changes need no permanent cache.
+const STATIC_METADATA_TTL_MS: u64 = 300_000;
 
 const PARSE_ERROR: i64 = -32700;
 const INVALID_REQUEST: i64 = -32600;
@@ -90,12 +93,23 @@ impl McpServer {
             .commands
             .iter()
             .map(|d| {
-                let description = descriptions::description(d.name).unwrap_or(d.summary);
+                let mut description = descriptions::description(d.name)
+                    .unwrap_or(d.summary)
+                    .to_owned();
+                if d.requires_document {
+                    description.push(' ');
+                    description.push_str(descriptions::document_id_property(modern));
+                }
                 let mut input = input_schema(d);
                 if modern && d.requires_document {
                     let root = input.as_object_mut().unwrap();
-                    root.entry("required").or_insert_with(|| json!([])).as_array_mut().unwrap().push(json!("documentId"));
-                    root["properties"]["documentId"]["description"] = json!("Required explicit handle returned by document_open; retained until document_close or server exit.");
+                    root.entry("required")
+                        .or_insert_with(|| json!([]))
+                        .as_array_mut()
+                        .unwrap()
+                        .push(json!("documentId"));
+                    root["properties"]["documentId"]["description"] =
+                        json!(descriptions::document_id_property(true));
                 }
                 json!({
                     "name": d.mcp_tool_name,
@@ -354,6 +368,12 @@ impl McpServer {
         if modern {
             result["resultType"] = json!("complete");
             result["_meta"] = json!({ INFO_META: server_info() });
+            // Only these implemented methods inherit CacheableResult in
+            // 2026-07-28. Legacy responses and tools/call/ping have no hints.
+            if matches!(method, "server/discover" | "tools/list") {
+                result["ttlMs"] = json!(STATIC_METADATA_TTL_MS);
+                result["cacheScope"] = json!("public");
+            }
         }
         Ok(result)
     }
@@ -385,7 +405,7 @@ impl McpServer {
         {
             self.invalid_tool(
                 &descriptor,
-                "modern calls require an explicit documentId".into(),
+                "Stateless MCP 2026-07-28 calls require documentId: call document_open, then pass its returned documentId in arguments.documentId on every document tool call. Reopen the document after a server restart.".into(),
             )
         } else {
             self.run_tool(&descriptor, arguments)
@@ -526,7 +546,7 @@ pub fn input_schema(d: &CommandDescriptor) -> Value {
     if d.requires_document {
         extra.push((
             "documentId",
-            json!({ "type": "string", "description": descriptions::document_id_property() }),
+            json!({ "type": "string", "description": descriptions::document_id_property(false) }),
             false,
         ));
     }
@@ -536,6 +556,7 @@ pub fn input_schema(d: &CommandDescriptor) -> Value {
             json!({
                 "type": "integer",
                 "minimum": 0,
+                "maximum": u64::MAX,
                 "description": descriptions::expected_version_property(),
             }),
             true,

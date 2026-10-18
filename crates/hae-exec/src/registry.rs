@@ -1,7 +1,11 @@
 //! Single-source command registry and JSON Schema definitions (spec §6, plan 1-17).
 
 use hae_diag::{Code, EngineError, Result, Stage};
-use schemars::{schema_for, JsonSchema};
+use schemars::{
+    generate::SchemaSettings,
+    transform::{RecursiveTransform, RestrictFormats},
+    JsonSchema, Schema,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -352,8 +356,42 @@ pub enum ParsedCommand {
     DocumentExport(DocumentExportParams),
 }
 
+/// Preserve Rust integer ranges as validation keywords before removing the
+/// generator's nonstandard format annotations. Walk schema positions only.
+fn integer_bounds(schema: &mut Schema) {
+    macro_rules! bounds {
+        ($ty:ty) => {
+            (serde_json::json!(<$ty>::MIN), serde_json::json!(<$ty>::MAX))
+        };
+    }
+    let (minimum, maximum) = match schema.get("format").and_then(Value::as_str) {
+        Some("uint") => bounds!(usize),
+        Some("uint8") => bounds!(u8),
+        Some("uint16") => bounds!(u16),
+        Some("uint32") => bounds!(u32),
+        Some("uint64") => bounds!(u64),
+        Some("uint128") => bounds!(u128),
+        Some("int") => bounds!(isize),
+        Some("int8") => bounds!(i8),
+        Some("int16") => bounds!(i16),
+        Some("int32") => bounds!(i32),
+        Some("int64") => bounds!(i64),
+        Some("int128") => bounds!(i128),
+        _ => return,
+    };
+    let object = schema.ensure_object();
+    // Explicit command-specific constraints may be tighter than the Rust type.
+    object.entry("minimum").or_insert(minimum);
+    object.entry("maximum").or_insert(maximum);
+}
+
 fn schema_json<T: JsonSchema>() -> Value {
-    let mut schema = serde_json::to_value(schema_for!(T)).unwrap_or(Value::Null);
+    let schema = SchemaSettings::draft2020_12()
+        .with_transform(RecursiveTransform(integer_bounds))
+        .with_transform(RestrictFormats::default())
+        .into_generator()
+        .into_root_schema_for::<T>();
+    let mut schema = serde_json::to_value(schema).unwrap_or(Value::Null);
     if schema["title"] == "CellSetTextParams" {
         schema["oneOf"] = serde_json::json!([
             {"required":["text"],"not":{"required":["paragraphs"]}},
@@ -369,6 +407,27 @@ fn schema_json<T: JsonSchema>() -> Value {
             serde_json::json!({"type":"integer","minimum":1,"maximum":10000,"default":1000});
     }
     schema
+}
+
+#[cfg(test)]
+mod schema_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn generated_integer_schemas_express_rust_bounds_with_standard_keywords() {
+        for (schema, minimum, maximum) in [
+            (schema_json::<usize>(), json!(0), json!(usize::MAX)),
+            (schema_json::<u32>(), json!(0), json!(u32::MAX)),
+            (schema_json::<u64>(), json!(0), json!(u64::MAX)),
+            (schema_json::<i64>(), json!(i64::MIN), json!(i64::MAX)),
+        ] {
+            assert_eq!(schema["type"], "integer");
+            assert!(schema.get("format").is_none(), "{schema}");
+            assert_eq!(schema["minimum"], minimum);
+            assert_eq!(schema["maximum"], maximum);
+        }
+    }
 }
 
 fn parse_params<T: for<'de> Deserialize<'de>>(params: Value, cmd: &str) -> Result<T> {
