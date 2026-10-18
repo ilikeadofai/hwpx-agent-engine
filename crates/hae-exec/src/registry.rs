@@ -170,6 +170,88 @@ pub struct TextFormatParams {
     pub controls: Controls,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TableSetColumnWidthsParams {
+    pub target: String,
+    pub widths: Option<Vec<u32>>,
+    pub width: Option<u32>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TableSetRowHeightsParams {
+    pub target: String,
+    pub heights: Option<Vec<u32>>,
+    pub height: Option<u32>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CellSetSizeParams {
+    pub target: String,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum BorderFillId {
+    String(String),
+    Number(u32),
+}
+impl BorderFillId {
+    pub fn value(&self) -> String {
+        match self {
+            Self::String(s) => s.clone(),
+            Self::Number(n) => n.to_string(),
+        }
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CellMarginParam {
+    pub left: Option<u32>,
+    pub right: Option<u32>,
+    pub top: Option<u32>,
+    pub bottom: Option<u32>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CellSetFormatParams {
+    pub target: String,
+    pub border_fill_id: Option<BorderFillId>,
+    pub background: Option<String>,
+    pub cell_margin: Option<CellMarginParam>,
+}
+
+pub(crate) fn reject_structure_change(name: &str) -> Result<()> {
+    if matches!(
+        name,
+        "table.addRow"
+            | "table.deleteRow"
+            | "table.addColumn"
+            | "table.deleteColumn"
+            | "table.insertRow"
+            | "table.insertColumn"
+            | "table.insertRows"
+            | "table.deleteRows"
+            | "table.insertColumns"
+            | "table.deleteColumns"
+            | "table.addRows"
+            | "table.addColumns"
+            | "table.removeRow"
+            | "table.removeColumn"
+            | "table.removeRows"
+            | "table.removeColumns"
+    ) {
+        return Err(EngineError::new(
+            Code::Unsupported,
+            Stage::Validate,
+            "row/column creation or deletion requires a separate identity/history contract",
+        )
+        .with_reason("structure_change_unsupported"));
+    }
+    Ok(())
+}
+
 /// Exact-match search and replace over the document or one subtree.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -376,6 +458,10 @@ pub enum ParsedCommand {
     DocumentClose(EmptyParams),
     ElementQuery(ElementQueryParams),
     ElementGet(ElementGetParams),
+    TableSetColumnWidths(TableSetColumnWidthsParams),
+    TableSetRowHeights(TableSetRowHeightsParams),
+    CellSetFormat(CellSetFormatParams),
+    CellSetSize(CellSetSizeParams),
     TextFormat(TextFormatParams),
     TextReplace(TextReplaceParams),
     TextReplaceAll(TextReplaceAllParams),
@@ -444,6 +530,27 @@ fn schema_json<T: JsonSchema>() -> Value {
         schema["properties"]["maxMatches"] =
             serde_json::json!({"type":"integer","minimum":1,"maximum":10000,"default":1000});
     }
+    if matches!(
+        schema["title"].as_str(),
+        Some("TableSetColumnWidthsParams" | "TableSetRowHeightsParams")
+    ) {
+        let (many, one) = if schema["title"] == "TableSetColumnWidthsParams" {
+            ("widths", "width")
+        } else {
+            ("heights", "height")
+        };
+        schema["oneOf"] = serde_json::json!([{"required":[many],"not":{"required":[one]}},{"required":[one],"not":{"required":[many]}}]);
+        schema["properties"][many] = serde_json::json!({"type":"array","minItems":1,"maxItems":1024,"items":{"type":"integer","minimum":1,"maximum":2147483647}});
+        schema["properties"][one] =
+            serde_json::json!({"type":"integer","minimum":1,"maximum":2147483647});
+    }
+    if schema["title"] == "CellSetSizeParams" {
+        schema["anyOf"] = serde_json::json!([{"required":["width"]},{"required":["height"]}]);
+        for side in ["width", "height"] {
+            schema["properties"][side] =
+                serde_json::json!({"type":"integer","minimum":1,"maximum":2147483647});
+        }
+    }
     schema
 }
 
@@ -469,6 +576,10 @@ mod schema_tests {
             ("element_get", [true, false, true, false]),
             ("text_replace", [false, true, false, false]),
             ("text_format", [false, true, false, false]),
+            ("table_set_column_widths", [false, true, false, false]),
+            ("table_set_row_heights", [false, true, false, false]),
+            ("cell_set_format", [false, true, false, false]),
+            ("cell_set_size", [false, true, false, false]),
             ("text_replace_all", [false, true, false, false]),
             ("paragraph_format", [false, true, false, false]),
             ("cell_set_text", [false, true, false, false]),
@@ -594,6 +705,7 @@ macro_rules! define_commands {
         }
 
         pub fn command_describe(name: &str) -> Result<CommandDescriptor> {
+            reject_structure_change(name)?;
             command_list()
                 .into_iter()
                 .find(|c| c.name == name)
@@ -721,6 +833,30 @@ define_commands! {
         mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
         stage1: true, reason: None,
         params: ElementGetParams, output: GetResultShape,
+    },
+    TableSetColumnWidths {
+        name: "table.setColumnWidths", cli: "table-set-column-widths", mcp: "table_set_column_widths",
+        summary: "Set positive absolute column widths (exact widths array or uniform width); resize merged cells by track sums and report adjusted tableSize/changedCells; no new nodes", category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None, params: TableSetColumnWidthsParams, output: MutationResultShape,
+    },
+    TableSetRowHeights {
+        name: "table.setRowHeights", cli: "table-set-row-heights", mcp: "table_set_row_heights",
+        summary: "Set positive row minimum heights (exact heights array or uniform height); synchronize cellSz and table height; effective margins must leave content space", category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None, params: TableSetRowHeightsParams, output: MutationResultShape,
+    },
+    CellSetFormat {
+        name: "cell.setFormat", cli: "cell-set-format", mcp: "cell_set_format",
+        summary: "Set existing borderFillId, background #RRGGBB or none via an existing matching resource, and partial cellMargin; never create or mutate shared resources", category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None, params: CellSetFormatParams, output: MutationResultShape,
+    },
+    CellSetSize {
+        name: "cell.setSize", cli: "cell-set-size", mcp: "cell_set_size",
+        summary: "Resize a nonmerged cell by changing its whole column/row tracks and table total; report affected cells; merged anchors explicitly unsupported", category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None, params: CellSetSizeParams, output: MutationResultShape,
     },
     TextFormat {
         name: "text.format", cli: "text-format", mcp: "text_format",

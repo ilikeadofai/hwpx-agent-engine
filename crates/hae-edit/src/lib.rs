@@ -8,6 +8,7 @@ mod char_format;
 mod format;
 mod image;
 mod replace_all;
+mod table;
 mod text;
 
 use hae_diag::{Code, Diagnostic, EngineError, Result, Stage};
@@ -25,10 +26,30 @@ pub use replace_all::{
     GraphemeRange, MatchPreview, ReplaceAllReport, SkippedGroup, SkippedLocation,
     DEFAULT_MAX_MATCHES, HARD_MAX_MATCHES,
 };
+pub use table::{CellFormat, CellMargin};
 
 /// One edit command (spec §6). Ranges are grapheme-cluster indices.
 #[derive(Debug, Clone)]
 pub enum EditOp {
+    TableSetColumnWidths {
+        target: String,
+        widths: Option<Vec<u32>>,
+        width: Option<u32>,
+    },
+    TableSetRowHeights {
+        target: String,
+        heights: Option<Vec<u32>>,
+        height: Option<u32>,
+    },
+    CellSetFormat {
+        target: String,
+        format: CellFormat,
+    },
+    CellSetSize {
+        target: String,
+        width: Option<u32>,
+        height: Option<u32>,
+    },
     TextFormat {
         target: String,
         range: Range<usize>,
@@ -72,7 +93,11 @@ pub enum EditOp {
 impl EditOp {
     pub fn target(&self) -> &str {
         match self {
-            EditOp::TextFormat { target, .. }
+            EditOp::TableSetColumnWidths { target, .. }
+            | EditOp::TableSetRowHeights { target, .. }
+            | EditOp::CellSetFormat { target, .. }
+            | EditOp::CellSetSize { target, .. }
+            | EditOp::TextFormat { target, .. }
             | EditOp::TextReplace { target, .. }
             | EditOp::ParagraphFormat { target, .. }
             | EditOp::CellSetText { target, .. }
@@ -88,6 +113,24 @@ impl EditOp {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "op", rename_all = "camelCase")]
 pub enum Intent {
+    #[serde(rename = "table.geometry")]
+    TableGeometry {
+        command: String,
+        entry: String,
+        path: Vec<usize>,
+        widths: Vec<u32>,
+        heights: Vec<u32>,
+        #[serde(rename = "tableSize")]
+        table_size: (u32, u32),
+        #[serde(rename = "changedCells")]
+        changed_cells: Vec<String>,
+    },
+    #[serde(rename = "cell.setFormat")]
+    CellFormat {
+        entry: String,
+        path: Vec<usize>,
+        format: CellFormat,
+    },
     #[serde(rename = "text.format")]
     TextFormat {
         entry: String,
@@ -275,6 +318,22 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
     };
     for (i, op) in ops.iter().enumerate() {
         let r = match op {
+            EditOp::TableSetColumnWidths {
+                target,
+                widths,
+                width,
+            } => table::tracks(&mut d, target, widths.as_deref(), *width, true),
+            EditOp::TableSetRowHeights {
+                target,
+                heights,
+                height,
+            } => table::tracks(&mut d, target, heights.as_deref(), *height, false),
+            EditOp::CellSetFormat { target, format } => table::cell_format(&mut d, target, format),
+            EditOp::CellSetSize {
+                target,
+                width,
+                height,
+            } => table::cell_size(&mut d, target, *width, *height),
             EditOp::TextFormat {
                 target,
                 range,

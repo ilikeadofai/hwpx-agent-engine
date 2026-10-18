@@ -1010,7 +1010,7 @@ def parse_args(argv):
     )
     parser.add_argument("--output-dir", required=True,
                         help="판정·로그·산출물을 쓸 새 디렉터리(비어 있어야 함)")
-    parser.add_argument("--binary", default=str(REPO_ROOT / "target/debug/hae-mcp"),
+    parser.add_argument("--binary", default=str(Path(os.environ.get("CARGO_TARGET_DIR", str(REPO_ROOT / "target"))) / "debug/hae-mcp"),
                         help="hae-mcp 실행 파일 경로(기본: target/debug/hae-mcp)")
     parser.add_argument("--rhwp", default=str(REPO_ROOT / "spikes/vendor/rhwp-src/target/release/rhwp"),
                         help="격리 렌더러 rhwp 경로")

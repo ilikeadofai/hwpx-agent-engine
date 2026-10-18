@@ -376,6 +376,20 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 - **`controls: "preserve"`**: `text_replace`와 같은 규칙으로 개체·탭을 그대로 두고 글자만 바꿉니다. 다만 `preserve`가 문단 잠금을 풀어 주지는 않습니다.
 - **응답**: 성공하면 버전이 `afterVersion`으로 올라갑니다. `resourceChanges`에 이번 호출이 글자 모양을 `{"action":"added","kind":"charPr","resourceId":"4"}`로 **새로 만들었는지** `{"action":"reused",...}`로 **재사용했는지**가 담깁니다. 한 호출에 새로 생기는 모양은 최대 하나이고, 같은 `props`를 다른 범위에 다시 주면 같은 `resourceId`를 재사용합니다.
 
+### ④-3 표 치수와 셀 서식 (`table_set_column_widths`, `table_set_row_heights`, `cell_set_format`, `cell_set_size`)
+표의 **칸 크기와 테두리·배경**을 맞춥니다. 표에 행·열을 새로 만들거나 지우지는 않습니다(그건 0.4의 구조 편집 범위입니다).
+
+```json
+{ "documentId": "doc-1", "expectedVersion": 3,
+  "target": "node-tbl1", "widths": [20000, 30000, 25000] }
+```
+
+- **`table.setColumnWidths`**: 열 너비를 HWPUNIT으로 지정합니다. `widths`는 **표의 열 수와 정확히 같아야** 하고, 모든 열을 같은 값으로 하려면 `width`를 씁니다. 병합 셀은 열 합계에 맞춰 함께 조정됩니다.
+- **`table.setRowHeights`**: 행 높이를 지정합니다. 저장된 값은 **최소 높이**라서, 글자가 많으면 한컴이 행을 더 늘릴 수 있습니다. 병합 구조를 확정할 수 없거나 여백 때문에 내용 공간이 남지 않으면 거절합니다.
+- **`cell.setFormat`**: 셀의 **테두리·배경·안 여백**을 바꿉니다. `borderFillId`는 `header.xml`에 **이미 있는** 값만 쓸 수 있고(없으면 `TARGET_NOT_FOUND`), `background`는 `"#RRGGBB"` 또는 `"none"`이며 **테두리가 같은 기존 자원이 있을 때만** 적용됩니다(없으면 `UNSUPPORTED`/`background_resource_unavailable`). `cellMargin`은 `{left,right,top,bottom}` 중 지정한 것만 바뀝니다.
+- **`cell.setSize`**: **병합되지 않은** 셀 하나의 너비·높이를 바꿉니다. 그 셀이 속한 **열/행 트랙 전체**가 바뀌고 교차하는 셀과 표 전체 크기가 함께 조정됩니다. 병합 셀을 직접 지정하면 `UNSUPPORTED`/`merged_cell_size_unsupported`이고, 대신 표 트랙 명령을 쓰세요.
+- **공통**: 네 명령 모두 `expectedVersion`이 필요하고 `dryRun`·`command.batch`·되돌리기를 지원합니다. `intents`에 `tableSize`와 `changedCells`가 담겨 무엇이 바뀌었는지 확인할 수 있습니다. **공유 자원(`header.xml`)을 새로 만들거나 고치지 않습니다.**
+
 ### ⑤ 실행 취소 (`history_undo`)와 다시 실행 (`history_redo`)
 방금 바꾼 문단 서식이 마음에 들지 않아 직전 상태로 되돌립니다. 되돌리기 역시 문서 상태를 바꾸는 작업이므로 현재 버전(`2`)을 `expectedVersion`으로 보냅니다.
 ```json

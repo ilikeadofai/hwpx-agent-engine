@@ -56,12 +56,25 @@ fn cell_set_text() -> &'static str {
     "Replace text in existing cell target (nodeId); merged anchor cells are supported. Supply exactly one of text (one paragraph only) or paragraphs (string array matching the exact existing paragraph count). No new paragraphs are created. Wrong count returns INVALID_ARGUMENT with detail.paragraphCount; multi-paragraph cells with text return UNSUPPORTED and a paragraphs hint. controls=reject is default; controls=preserve keeps inline objects/tabs/line breaks/fields and reports CONTROLS_PRESERVED. Empty paragraphs use the first run; no run, nested tables/cells, unsupported markup/attributes or read-only documents still fail. Check edits[\"cell.setText\"].available and apply its requires guidance: requires.paragraphs=N means supply a string array of exactly N paragraphs, not the number N; requires.controls=preserve means also supply controls=preserve. Requires expectedVersion; on VERSION_CONFLICT re-query. dryRun=true verifies without changing document or history."
 }
 
+fn table_set_column_widths() -> &'static str {
+    "Set table target's positive HWPUNIT widths array (exact colCnt) or uniform width. Updates merged cellSz by column sums and the absolute table width; reports tableSize and changedCells in intents. Zero-spacing, complete, determinable grids only; effective margins require content space. Requires expectedVersion; supports dryRun, atomic batch and exact Undo. No row/column creation."
+}
+fn table_set_row_heights() -> &'static str {
+    "Set table target's positive HWPUNIT heights array (exact rowCnt) or uniform height. Updates each cellSz by row-span sums and the absolute table height. Stored heights are minimum extents; Hancom may grow rows for text. Refuses indeterminate merged grids or margin violations. Requires expectedVersion; supports dryRun, batch and Undo."
+}
+fn cell_set_format() -> &'static str {
+    "Set existing cell target's borderFillId (string or integer), background (#RRGGBB or none), and/or partial cellMargin {left,right,top,bottom}. Unknown IDs return TARGET_NOT_FOUND. Background selects an existing resource with identical borders; no match returns UNSUPPORTED/background_resource_unavailable. Never adds nodes or modifies shared header resources. Margins enable hasMargin and must leave content space. Requires expectedVersion; supports dryRun, batch and Undo."
+}
+fn cell_set_size() -> &'static str {
+    "Set nonmerged cell target's positive HWPUNIT width and/or height. Changes that entire column/row track, propagates dimensions to intersecting cells and the table total, and reports changedCells/tableSize in intents. Direct merged-cell requests return UNSUPPORTED/merged_cell_size_unsupported; use table track commands instead. Requires expectedVersion; supports dryRun, batch and exact Undo."
+}
+
 fn image_replace() -> &'static str {
     "Replace the media of picture `target` (`nodeId` from `document_inspect`/`element_query`) with a static PNG or JPEG file at `imagePath` (inside `--input-root`), preserving the picture's position, size, and caption while leaving other pictures sharing the old media untouched. Requires `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query). Refuses read-only documents, cropped/effect pictures, or animated/non-PNG/JPEG images (`UNSUPPORTED`), disallowed paths (`PATH_NOT_ALLOWED`), or images over 40.96 megapixels (`RESOURCE_LIMIT`). Set `dryRun: true` to preview without changing the document."
 }
 
 fn command_batch() -> &'static str {
-    "Execute multiple edit `steps` (`text.format`, `text.replace`, `text.replaceAll`, `paragraph.format`, `cell.setText`, `image.replace`) atomically as a single revision increment and single undo unit. Requires one top-level `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query); each step's ranges and preconditions are evaluated against the state produced by preceding steps. If any step fails, the entire batch rolls back with no state change and reports the failing step index. Set `dryRun: true` to validate and preview the combined diff without changing the document."
+    "Execute multiple edit `steps` (`text.format`, `text.replace`, `text.replaceAll`, `paragraph.format`, `cell.setText`, `image.replace`, `table.setColumnWidths`, `table.setRowHeights`, `cell.setFormat`, `cell.setSize`) atomically as a single revision increment and single undo unit. Requires one top-level `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query); each step's ranges and preconditions are evaluated against the state produced by preceding steps. If any step fails, the entire batch rolls back with no state change and reports the failing step index. Set `dryRun: true` to validate and preview the combined diff without changing the document."
 }
 
 fn history_undo() -> &'static str {
@@ -130,6 +143,10 @@ pub const TABLE: &[(&str, Describe)] = &[
     ("paragraph.format", paragraph_format),
     ("cell.setText", cell_set_text),
     ("image.replace", image_replace),
+    ("table.setColumnWidths", table_set_column_widths),
+    ("table.setRowHeights", table_set_row_heights),
+    ("cell.setFormat", cell_set_format),
+    ("cell.setSize", cell_set_size),
     ("command.batch", command_batch),
     ("history.undo", history_undo),
     ("history.redo", history_redo),
