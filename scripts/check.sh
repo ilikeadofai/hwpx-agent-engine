@@ -2,6 +2,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # An explicit HAE_RHWP (even a missing path) overrides the local default.
+# Renderer-free mode: run `HAE_RHWP=/nonexistent/rhwp bash scripts/check.sh`.
+# Unsetting HAE_RHWP (env -u) is NOT renderer-free: the vendor default below is still found.
 renderer="${HAE_RHWP:-$PWD/spikes/vendor/rhwp-src/target/release/rhwp}"
 if [[ -f "$renderer" && -x "$renderer" ]]; then
   export HAE_RHWP="$renderer"
@@ -10,6 +12,7 @@ if [[ -f "$renderer" && -x "$renderer" ]]; then
 else
   renderer_available=0
   echo "RENDERER: unavailable ($renderer)"
+  echo "NOTE: renderer-free mode needs HAE_RHWP set to a nonexistent path; unsetting HAE_RHWP still finds the vendor default if it is built"
   echo "SKIP: 13 real renderer tests (4 executor preview + 9 adapter); green means core/sandbox gates passed, rendering untested"
 fi
 cargo fmt --all -- --check
