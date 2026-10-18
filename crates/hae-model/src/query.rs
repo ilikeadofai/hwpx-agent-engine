@@ -617,7 +617,16 @@ impl Document {
             Kind::Table => {
                 let reason = self.table_geometry_block_reason(n);
                 add("table.setColumnWidths", reason.clone());
-                add("table.setRowHeights", reason);
+                add("table.setRowHeights", reason.clone());
+                let structure = reason.or_else(|| self.table_structure_block_reason(n));
+                for name in [
+                    "table.insertRow",
+                    "table.deleteRow",
+                    "table.insertColumn",
+                    "table.deleteColumn",
+                ] {
+                    add(name, structure.clone());
+                }
             }
             Kind::Cell => {
                 let xml = self.doc_of(n);
@@ -843,6 +852,31 @@ impl Document {
             return bad();
         }
         None
+    }
+
+    /// Structure edits additionally need a grid the planner can re-address:
+    /// no cell zones, and an exact `tr` per `rowCnt`.
+    fn table_structure_block_reason(&self, n: &Node) -> Option<String> {
+        let doc = self.doc_of(n);
+        let rows = doc
+            .el(n.el)
+            .children
+            .iter()
+            .filter(|&&c| is_hp(doc.el(c).ns.as_deref()) && doc.el(c).local == "tr")
+            .count();
+        if doc
+            .el(n.el)
+            .children
+            .iter()
+            .any(|&c| is_hp(doc.el(c).ns.as_deref()) && doc.el(c).local == "cellzoneList")
+        {
+            return Some("table_cellzone_unsupported".into());
+        }
+        (doc.el(n.el)
+            .attr_value("rowCnt")
+            .and_then(|v| v.parse::<usize>().ok())
+            != Some(rows))
+        .then(|| "table_geometry_unsupported".into())
     }
 
     fn children_deep(&self, n: &Node, kind: Kind) -> Vec<&Node> {

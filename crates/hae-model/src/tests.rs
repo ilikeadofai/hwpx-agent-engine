@@ -252,3 +252,141 @@ fn duplicate_hwpx_ids_are_all_locked_by_opaque_reference() {
     assert_eq!(paragraphs.len(), 2);
     assert!(paragraphs.iter().all(|n| d.check_editable(n).is_err()));
 }
+
+// ---- table structure commit gate (docs/decisions/table-structure-node-creation-design.md §3)
+
+fn structure_fixture() -> Document {
+    Document::open(
+        std::fs::read(format!(
+            "{}/../../tests/fixtures/tables/structure.hwpx",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap(),
+        &Limits::default(),
+    )
+    .unwrap()
+}
+
+const SECTION0: &str = "Contents/section0.xml";
+
+/// Delete the third `tr` of the first table by hand and return the new state
+/// plus the declaration that matches it.
+fn drop_third_row(d: &Document) -> (PackageState, TableRemap) {
+    let xml = &d.xml[SECTION0];
+    let table = d.nodes.iter().find(|n| n.kind == Kind::Table).unwrap();
+    let trs: Vec<usize> = xml
+        .el(table.el)
+        .children
+        .iter()
+        .copied()
+        .filter(|&c| xml.el(c).local == "tr")
+        .collect();
+    let mut state = d.state.clone();
+    let edited = xml
+        .splice(
+            vec![(xml.el(trs[2]).outer(), Vec::new())],
+            Default::default(),
+        )
+        .unwrap();
+    state.set(SECTION0, edited.bytes().clone());
+    let n = xml.el(table.el).children.len();
+    let first_tr = xml
+        .el(table.el)
+        .children
+        .iter()
+        .position(|&c| c == trs[0])
+        .unwrap();
+    let removed = first_tr + 2;
+    let remap = TableRemap {
+        entry: SECTION0.into(),
+        table: d.stable_path_of(table),
+        children: (0..n)
+            .map(|p| match p.cmp(&removed) {
+                std::cmp::Ordering::Less => Some(p),
+                std::cmp::Ordering::Equal => None,
+                std::cmp::Ordering::Greater => Some(p - 1),
+            })
+            .collect(),
+        cells: Default::default(),
+    };
+    (state, remap)
+}
+
+#[test]
+fn plain_rebuild_still_rejects_any_node_set_change() {
+    let d = structure_fixture();
+    let (state, _) = drop_third_row(&d);
+    let err = d.rebuild(state, Vec::new()).unwrap_err();
+    assert_eq!(err.code(), Code::StateInvariantError);
+}
+
+#[test]
+fn declared_row_removal_keeps_every_other_id_and_reports_the_removed() {
+    let d = structure_fixture();
+    let (state, remap) = drop_third_row(&d);
+    let (d2, delta) = d
+        .rebuild_table_structure(state, Vec::new(), &remap)
+        .unwrap();
+    assert!(delta.created.is_empty());
+    // 3 cells + 4 paragraphs (R2C1 has two) disappear, nothing else.
+    assert_eq!(delta.removed.len(), 7);
+    assert_eq!(d2.nodes.len(), d.nodes.len() - 7);
+    for n in &d2.nodes {
+        let before = d.node(&n.id).expect("no new ids");
+        assert_eq!(before.kind, n.kind);
+    }
+    for id in &delta.removed {
+        assert!(d2.node(id).is_none());
+    }
+}
+
+#[test]
+fn an_undeclared_or_misdeclared_change_is_rejected() {
+    let d = structure_fixture();
+    let (state, good) = drop_third_row(&d);
+    // Declaring nothing removed.
+    let mut none = good.clone();
+    none.children = (0..good.children.len()).map(Some).collect();
+    assert!(d
+        .rebuild_table_structure(state.clone(), Vec::new(), &none)
+        .is_err());
+    // Declaring the wrong row (index 1 instead of 2) removed.
+    let mut wrong = good.clone();
+    let first = good.children.iter().position(Option::is_none).unwrap();
+    wrong.children[first] = Some(first);
+    wrong.children[first - 1] = None;
+    for p in first..wrong.children.len() {
+        wrong.children[p] = Some(p - 1);
+    }
+    assert!(d
+        .rebuild_table_structure(state.clone(), Vec::new(), &wrong)
+        .is_err());
+    // Declared for the wrong entry or table.
+    let mut other = good.clone();
+    other.entry = "Contents/missing.xml".into();
+    assert!(d
+        .rebuild_table_structure(state.clone(), Vec::new(), &other)
+        .is_err());
+    let mut elsewhere = good;
+    elsewhere.table = vec![0];
+    assert!(d
+        .rebuild_table_structure(state, Vec::new(), &elsewhere)
+        .is_err());
+}
+
+#[test]
+fn remap_maps_paths_inside_and_outside_the_table() {
+    let remap = TableRemap {
+        entry: "s".into(),
+        table: vec![1, 0],
+        children: vec![Some(0), Some(1), None, Some(2)],
+        cells: [(1usize, vec![Some(0), None, Some(1)])].into(),
+    };
+    assert_eq!(remap.map(&[0, 4]), Some(vec![0, 4]), "outside");
+    assert_eq!(remap.map(&[1, 0]), Some(vec![1, 0]), "the table itself");
+    assert_eq!(remap.map(&[1, 0, 3, 0, 0]), Some(vec![1, 0, 2, 0, 0]));
+    assert_eq!(remap.map(&[1, 0, 2, 0]), None, "removed row");
+    assert_eq!(remap.map(&[1, 0, 1, 2, 0, 0]), Some(vec![1, 0, 1, 1, 0, 0]));
+    assert_eq!(remap.map(&[1, 0, 1, 1, 0]), None, "removed cell");
+    assert_eq!(remap.map(&[1, 0, 9]), None, "no such child");
+}

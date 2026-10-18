@@ -7,7 +7,7 @@ use hae_package::{PackageInfo, PackageState, NS_HC, NS_HH};
 use hae_xml::XmlDoc;
 use std::collections::{BTreeSet, VecDeque};
 
-fn one(d: &XmlDoc, p: usize, name: &str) -> Result<usize> {
+pub(crate) fn one(d: &XmlDoc, p: usize, name: &str) -> Result<usize> {
     let mut found = d
         .el(p)
         .children
@@ -22,7 +22,7 @@ fn one(d: &XmlDoc, p: usize, name: &str) -> Result<usize> {
     }
     Ok(first)
 }
-fn num(d: &XmlDoc, i: usize, a: &str) -> Result<u32> {
+pub(crate) fn num(d: &XmlDoc, i: usize, a: &str) -> Result<u32> {
     let value = attr(d, i, a)?
         .value
         .parse::<u32>()
@@ -32,7 +32,13 @@ fn num(d: &XmlDoc, i: usize, a: &str) -> Result<u32> {
     }
     Ok(value)
 }
-fn set(d: &XmlDoc, i: usize, a: &str, v: impl ToString, cuts: &mut Vec<Splice>) -> Result<()> {
+pub(crate) fn set(
+    d: &XmlDoc,
+    i: usize,
+    a: &str,
+    v: impl ToString,
+    cuts: &mut Vec<Splice>,
+) -> Result<()> {
     let original = attr(d, i, a)?;
     let want = v.to_string();
     if original.value != want {
@@ -40,15 +46,15 @@ fn set(d: &XmlDoc, i: usize, a: &str, v: impl ToString, cuts: &mut Vec<Splice>) 
     }
     Ok(())
 }
-struct Region {
-    element: usize,
-    size: usize,
-    y: usize,
-    x: usize,
-    dy: usize,
-    dx: usize,
-    width: u32,
-    height: u32,
+pub(crate) struct Region {
+    pub(crate) element: usize,
+    pub(crate) size: usize,
+    pub(crate) y: usize,
+    pub(crate) x: usize,
+    pub(crate) dy: usize,
+    pub(crate) dx: usize,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
 }
 struct Source {
     table: usize,
@@ -57,7 +63,7 @@ struct Source {
     columns: Vec<u32>,
     rows: Vec<u32>,
 }
-fn tracks(regions: &[Region], count: usize, whole: u32, is_x: bool) -> Result<Vec<u32>> {
+pub(crate) fn tracks(regions: &[Region], count: usize, whole: u32, is_x: bool) -> Result<Vec<u32>> {
     // Prefix-coordinate constraint graph. Every known interval is an edge;
     // disconnected boundaries and contradictory cycles are refused.
     let mut graph = vec![Vec::<(usize, i64)>::new(); count + 1];

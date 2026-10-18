@@ -144,6 +144,39 @@ pub enum VerifyOperation {
         heights: Option<Vec<u32>>,
         height: Option<u32>,
     },
+    /// Insert `count` empty rows; the first one gets address `index`.
+    #[serde(rename = "table.insertRow")]
+    TableInsertRow {
+        entry: String,
+        path: Vec<usize>,
+        index: usize,
+        #[serde(default = "one")]
+        count: usize,
+    },
+    #[serde(rename = "table.deleteRow")]
+    TableDeleteRow {
+        entry: String,
+        path: Vec<usize>,
+        index: usize,
+        #[serde(default = "one")]
+        count: usize,
+    },
+    #[serde(rename = "table.insertColumn")]
+    TableInsertColumn {
+        entry: String,
+        path: Vec<usize>,
+        index: usize,
+        #[serde(default = "one")]
+        count: usize,
+    },
+    #[serde(rename = "table.deleteColumn")]
+    TableDeleteColumn {
+        entry: String,
+        path: Vec<usize>,
+        index: usize,
+        #[serde(default = "one")]
+        count: usize,
+    },
     #[serde(rename = "cell.setFormat")]
     CellSetFormat {
         entry: String,
@@ -288,6 +321,9 @@ pub enum VerifyOperation {
         bytes: Vec<u8>,
     },
 }
+fn one() -> usize {
+    1
+}
 /// Structural address of the element whose descendant paragraphs are searched.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -307,6 +343,10 @@ impl VerifyOperation {
                 .map_or(("", &[][..]), |s| (s.entry.as_str(), s.path.as_slice())),
             Self::TableSetColumnWidths { entry, path, .. }
             | Self::TableSetRowHeights { entry, path, .. }
+            | Self::TableInsertRow { entry, path, .. }
+            | Self::TableDeleteRow { entry, path, .. }
+            | Self::TableInsertColumn { entry, path, .. }
+            | Self::TableDeleteColumn { entry, path, .. }
             | Self::CellSetFormat { entry, path, .. }
             | Self::CellSetSize { entry, path, .. }
             | Self::EquationSetScript { entry, path, .. }

@@ -4,7 +4,9 @@
 //! (spec §4, §5). Everything else (parsed XML, the node index, paragraph text
 //! views) is derived and rebuilt by [`Document::rebuild`], which is also the
 //! commit gate: an edit may change payloads but never the sequence of
-//! identity-bearing elements of an entry (0.1 adds or removes no body nodes).
+//! identity-bearing elements of an entry. The one exception is a table
+//! structure edit, which declares a [`TableRemap`] and goes through
+//! [`Document::rebuild_table_structure`] (docs/decisions/table-structure-node-creation-design.md).
 
 pub mod equation;
 pub mod export_text;
@@ -144,6 +146,120 @@ fn identity_elements(doc: &XmlDoc) -> Vec<(usize, Kind)> {
     doc.iter()
         .filter_map(|(i, _)| kind_of(doc, i).map(|k| (i, k)))
         .collect()
+}
+
+/// Declared node-set change of one table (docs/decisions/table-structure-node-creation-design.md §3).
+/// All indexes are structural child positions as counted by `stable_path`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TableRemap {
+    pub entry: String,
+    /// Stable path of the `hp:tbl`; the table itself keeps this path.
+    pub table: Vec<usize>,
+    /// Old structural child position of the table → new position (`None`: removed).
+    pub children: Vec<Option<usize>>,
+    /// Old position of a `tr` → (old position of its `tc` → new position, `None`: removed).
+    pub cells: BTreeMap<usize, Vec<Option<usize>>>,
+}
+
+impl TableRemap {
+    /// Path an old node is expected to have after the change; `None` if removed.
+    pub fn map(&self, path: &[usize]) -> Option<Vec<usize>> {
+        let n = self.table.len();
+        if path.len() <= n || path[..n] != self.table[..] {
+            return Some(path.to_vec());
+        }
+        let first = path[n];
+        let mut out = path[..n].to_vec();
+        out.push((*self.children.get(first)?)?);
+        if let (Some(&second), Some(row)) = (path.get(n + 1), self.cells.get(&first)) {
+            out.push((*row.get(second)?)?);
+            out.extend_from_slice(&path[n + 2..]);
+        } else {
+            out.extend_from_slice(&path[n + 1..]);
+        }
+        Some(out)
+    }
+
+    fn contains(&self, path: &[usize]) -> bool {
+        path.len() > self.table.len() && path[..self.table.len()] == self.table[..]
+    }
+}
+
+/// Ids created and removed by a structure change, in document order.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StructureDelta {
+    pub created: Vec<String>,
+    pub removed: Vec<String>,
+}
+
+#[allow(clippy::type_complexity)]
+fn structural_ids(
+    old_doc: &XmlDoc,
+    old: &[&Node],
+    new_doc: &XmlDoc,
+    new: &[(usize, Kind)],
+    change: &TableRemap,
+) -> Result<(Vec<String>, Vec<String>, Vec<String>)> {
+    let inv = |m: String| EngineError::new(Code::StateInvariantError, Stage::Commit, m);
+    let creatable = |k: Kind| matches!(k, Kind::Cell | Kind::Paragraph);
+    let mut expected: HashMap<Vec<usize>, (Kind, &str)> = HashMap::new();
+    let mut removed = Vec::new();
+    for n in old {
+        let path = stable_path(old_doc, n.el);
+        match change.map(&path) {
+            Some(mapped) => {
+                if expected.insert(mapped, (n.kind, n.id.as_str())).is_some() {
+                    return Err(inv(format!(
+                        "structure change maps two nodes onto one path ({})",
+                        n.id
+                    )));
+                }
+            }
+            None => {
+                if !change.contains(&path) || !creatable(n.kind) {
+                    return Err(inv(format!(
+                        "structure change removes {} {} outside its declared scope",
+                        n.kind.as_str(),
+                        n.id
+                    )));
+                }
+                removed.push(n.id.clone());
+            }
+        }
+    }
+    let mut ids = Vec::with_capacity(new.len());
+    let mut created = Vec::new();
+    for &(i, k) in new {
+        let path = stable_path(new_doc, i);
+        match expected.remove(&path) {
+            Some((ko, id)) if ko == k => ids.push(id.to_string()),
+            Some((ko, id)) => {
+                return Err(inv(format!(
+                    "node {id} changed kind {} -> {}",
+                    ko.as_str(),
+                    k.as_str()
+                )))
+            }
+            None => {
+                if !change.contains(&path) || !creatable(k) {
+                    return Err(inv(format!(
+                        "undeclared new {} element at {:?}",
+                        k.as_str(),
+                        path
+                    )));
+                }
+                let id = new_id("n-")?;
+                created.push(id.clone());
+                ids.push(id);
+            }
+        }
+    }
+    if let Some((_, (_, id))) = expected.iter().next() {
+        return Err(inv(format!(
+            "node {id} has no counterpart after the structure change"
+        )));
+    }
+    Ok((ids, created, removed))
 }
 
 /// One node of the index.
@@ -384,6 +500,31 @@ impl Document {
     /// This is the commit gate (`validate_candidate_state`, spec §4): the new
     /// state must analyze cleanly and keep each section's identity sequence.
     pub fn rebuild(&self, state: PackageState, stale_layout: Vec<String>) -> Result<Document> {
+        self.rebuild_inner(state, stale_layout, None)
+            .map(|(d, _)| d)
+    }
+
+    /// Commit gate for a table structure edit. `change` declares exactly which
+    /// rows/cells of one table moved or were removed; every other node must
+    /// keep its id and stable path. Elements without a surviving counterpart
+    /// must be `Cell`/`Paragraph` below the declared table and receive fresh
+    /// ids (never a reused one).
+    pub fn rebuild_table_structure(
+        &self,
+        state: PackageState,
+        stale_layout: Vec<String>,
+        change: &TableRemap,
+    ) -> Result<(Document, StructureDelta)> {
+        let (d, delta) = self.rebuild_inner(state, stale_layout, Some(change))?;
+        Ok((d, delta.unwrap_or_default()))
+    }
+
+    fn rebuild_inner(
+        &self,
+        state: PackageState,
+        stale_layout: Vec<String>,
+        change: Option<&TableRemap>,
+    ) -> Result<(Document, Option<StructureDelta>)> {
         let inv = |m: String| EngineError::new(Code::StateInvariantError, Stage::Commit, m);
         let (info, xml) = hae_package::analyze_cached(
             &state,
@@ -395,22 +536,38 @@ impl Document {
         if info.sections != self.info.sections {
             return Err(inv("section list changed".into()));
         }
+        if let Some(c) = change {
+            if !info.sections.contains(&c.entry) {
+                return Err(inv(format!(
+                    "structure change names unknown entry {}",
+                    c.entry
+                )));
+            }
+        }
+        let mut delta = change.map(|_| StructureDelta::default());
         let mut ids: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for s in &info.sections {
-            let old: Vec<(Kind, &str)> = self
-                .nodes
-                .iter()
-                .filter(|n| &n.entry == s)
-                .map(|n| (n.kind, n.id.as_str()))
-                .collect();
+            let old: Vec<&Node> = self.nodes.iter().filter(|n| &n.entry == s).collect();
             let new = identity_elements(&xml[s]);
-            if old.len() != new.len() || old.iter().zip(&new).any(|((ko, _), (_, kn))| ko != kn) {
-                return Err(inv(format!("{s}: identity elements changed")));
+            match change.filter(|c| &c.entry == s) {
+                None => {
+                    if old.len() != new.len()
+                        || old.iter().zip(&new).any(|(o, (_, kn))| o.kind != *kn)
+                    {
+                        return Err(inv(format!("{s}: identity elements changed")));
+                    }
+                    ids.insert(s.clone(), old.iter().map(|n| n.id.clone()).collect());
+                }
+                Some(c) => {
+                    let (v, created, removed) =
+                        structural_ids(&self.xml[s], &old, &xml[s], &new, c)?;
+                    ids.insert(s.clone(), v);
+                    if let Some(dl) = delta.as_mut() {
+                        dl.created = created;
+                        dl.removed = removed;
+                    }
+                }
             }
-            ids.insert(
-                s.clone(),
-                old.iter().map(|(_, id)| id.to_string()).collect(),
-            );
         }
         let d = Self::assemble(
             self.document_id.clone(),
@@ -422,13 +579,33 @@ impl Document {
             self.limits,
             stale_layout,
         )?;
-        // Identity ancestry/order is unchanged modulo text-carrier insertion and splitting.
-        for (a, b) in self.nodes.iter().zip(&d.nodes) {
-            if stable_path(&self.xml[&a.entry], a.el) != stable_path(&d.xml[&b.entry], b.el) {
-                return Err(inv(format!("node {} moved", a.id)));
+        // Identity ancestry/order is unchanged modulo text-carrier insertion and
+        // splitting. The declared entry was already compared path by path.
+        let skip = change.map(|c| c.entry.as_str());
+        if skip.is_none() {
+            for (a, b) in self.nodes.iter().zip(&d.nodes) {
+                if stable_path(&self.xml[&a.entry], a.el) != stable_path(&d.xml[&b.entry], b.el) {
+                    return Err(inv(format!("node {} moved", a.id)));
+                }
+            }
+        } else {
+            let new_by_id: HashMap<&str, &Node> =
+                d.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+            for a in self.nodes.iter().filter(|n| Some(n.entry.as_str()) != skip) {
+                let b = new_by_id
+                    .get(a.id.as_str())
+                    .ok_or_else(|| inv(format!("node {} vanished", a.id)))?;
+                if stable_path(&self.xml[&a.entry], a.el) != stable_path(&d.xml[&b.entry], b.el) {
+                    return Err(inv(format!("node {} moved", a.id)));
+                }
             }
         }
-        Ok(d)
+        Ok((d, delta))
+    }
+
+    /// Stable path (run/t transparent) of a node, as used by [`TableRemap`].
+    pub fn stable_path_of(&self, n: &Node) -> Vec<usize> {
+        stable_path(&self.xml[&n.entry], n.el)
     }
 
     pub fn node(&self, id: &str) -> Option<&Node> {

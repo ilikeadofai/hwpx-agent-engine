@@ -18,6 +18,7 @@
 - **표 셀 텍스트 교체 (`cell_set_text`)**: 병합 기준 셀을 포함해 기존 셀의 텍스트를 바꿉니다. 문단 하나는 `text`, 여러 문단은 정확한 기존 문단 수의 `paragraphs` 배열을 줍니다.
 - **라벨로 양식 채우기 (`form_fill`)**: 표에서 라벨 글자("성명" 등)와 정확히 같은 셀을 찾아, 같은 행 오른쪽(없으면 바로 아래)의 **비어 있는** 셀에 값을 채웁니다. 실패한 라벨은 사유와 함께 보고하고, 기본 `strict`에서는 하나라도 실패하면 아무것도 바꾸지 않습니다.
 - **그림 교체 (`image_replace`)**: 기존 그림의 위치·크기·캡션을 그대로 유지한 채, 정적 PNG 또는 JPEG 이미지 파일로 교체합니다.
+- **표 행·열 추가·삭제 (0.3, `table_insert_row`·`table_delete_row`·`table_insert_column`·`table_delete_column`)**: 기존 표에 빈 행·열을 넣거나 지웁니다. 새 셀은 이웃 행(열)의 속성·테두리를 복제하고 글은 비웁니다. 엔진이 처음으로 **노드를 만들고 지우는** 명령이므로 새 `nodeId`와 되돌리기 규칙이 따로 있습니다(아래 ④-4).
 - **구역 용지·여백·쪽 번호·표시 설정 (0.3, `section.*`)**: 기존 구역 하나의 용지 방향·크기·제본 방식·여백, 쪽 시작 방식과 시작 번호, 첫 쪽 머리말·꼬리말·쪽 번호 숨김과 테두리·채우기 표시, 격자를 조회하고(`section_get_page`) 지정한 항목만 바꿉니다(`section_set_page`, `section_set_page_numbering`, `section_set_visibility`). 조회 값은 XML에 명시된 것만 `explicit`으로, 없는 값은 `unspecified`로 구분해 알려 주며 상속·기본값을 추측하지 않습니다. 자세한 내용은 아래 0.3절 「구역 용지·여백·쪽 번호·표시 설정」을 보세요.
 - **Markdown·HTML로 내보내기 (`document_export_text`)**: 문서(또는 한 구역)를 읽기 전용으로 변환해 새 `.md`/`.html` 파일로 씁니다. 문서·`revision`·되돌리기 이력은 바뀌지 않습니다(아래 ⑧).
 - **누름틀(필드) 조회와 값 채우기 (`field_list`·`field_set_text`, 0.3)**: 공문서 서식의 누름틀(`CLICK_HERE`)·하이퍼링크(`HYPERLINK`) 필드를 찾아 이름·ID·Command 원문·현재 값·채우기 가능 여부를 조회하고, 필드 마커와 서식을 그대로 둔 채 표시 텍스트만 채웁니다.
@@ -26,6 +27,8 @@
 
 ### 하지 않는 것 및 한계 (0.2 제외 범위)
 - **전체 HWP/HWPX 기능 지원 아님**: 문단 추가·삭제·합치기·나누기, 표의 행·열 추가 및 삭제, 셀 병합 구조나 문단 수 변경, 수식 새로 만들기, 도형 편집은 0.2에서도 지원하지 않습니다. 구형 `.hwp`(HWP5 바이너리)는 0.3의 **읽기 전용 조회(`hwp5.inspect`)만** 지원하며 편집·쓰기·HWPX 변환은 지원하지 않습니다.
+
+- **전체 HWP/HWPX 기능 지원 아님**: 문단 추가·삭제·합치기·나누기, 셀 병합·분할, 병합 셀을 가르는 행·열 삽입과 병합 셀이 걸린 행·열 삭제, 표 자체의 생성·삭제, 수식 새로 만들기, 도형 편집, 구형 `.hwp`(HWP5 바이너리) 파일 읽기·쓰기는 0.2에서도 지원하지 않습니다.
 - **읽기 전용 문서**: 암호화된 문서는 열지 않으며, 전자서명이나 변경 추적(Track Changes)이 들어 있는 문서는 열어서 내용을 조회하거나 무편집 상태로 내보내는 것만 허용하고 편집은 거절합니다. 변경 추적 표시와 작성자는 `trackchange_list`로 확인합니다.
 - **외부 렌더러 별도 준비 필요**: 이 엔진에는 미리보기 렌더러가 내장되어 있지 않습니다. `document_preview`를 사용하려면 별도의 `rhwp` 실행 파일, `bubblewrap`(`bwrap`) 샌드박스 도구, 읽을 수 있는 글꼴 폴더를 환경 변수(`HAE_RHWP`, `HAE_BWRAP`, `HAE_FONT_DIR`)로 직접 지정해야 합니다.
 - **엔진 구현 완료 범위와 Windows 한컴오피스 실기 호환성(단계 4 예정)의 구분**: 현재 엔진의 파일 편집·보존 검증·격리 미리보기 기능은 구현되어 있으나, 수정된 문서를 실제 Windows 한컴오피스(한글)에서 열었을 때의 실기 호환성 및 조판 대조 검증(단계 4)은 별도 확인 대상입니다. `document_preview`가 만드는 SVG/PNG 이미지와 쪽 번호는 외부 렌더러(`rhwp`)가 어림잡아 계산한 **추정치**이므로 실제 Windows 한컴오피스의 줄바꿈·쪽 나눔·표현 범위와 100% 일치한다고 보장하지 않습니다.
@@ -406,7 +409,7 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 - **응답**: 성공하면 버전이 `afterVersion`으로 올라갑니다. `resourceChanges`에 이번 호출이 글자 모양을 `{"action":"added","kind":"charPr","resourceId":"4"}`로 **새로 만들었는지** `{"action":"reused",...}`로 **재사용했는지**가 담깁니다. 한 호출에 새로 생기는 모양은 최대 하나이고, 같은 `props`를 다른 범위에 다시 주면 같은 `resourceId`를 재사용합니다.
 
 ### ④-3 표 치수와 셀 서식 (`table_set_column_widths`, `table_set_row_heights`, `cell_set_format`, `cell_set_size`)
-표의 **칸 크기와 테두리·배경**을 맞춥니다. 표에 행·열을 새로 만들거나 지우지는 않습니다(그건 0.4의 구조 편집 범위입니다).
+표의 **칸 크기와 테두리·배경**을 맞춥니다. 이 명령들은 노드를 만들거나 지우지 않습니다. 행·열을 넣고 빼는 것은 바로 아래 ④-4입니다.
 
 ```json
 { "documentId": "doc-1", "expectedVersion": 3,
@@ -418,6 +421,23 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 - **`cell.setFormat`**: 셀의 **테두리·배경·안 여백**을 바꿉니다. `borderFillId`는 `header.xml`에 **이미 있는** 값만 쓸 수 있고(없으면 `TARGET_NOT_FOUND`), `background`는 `"#RRGGBB"` 또는 `"none"`이며 **테두리가 같은 기존 자원이 있을 때만** 적용됩니다(없으면 `UNSUPPORTED`/`background_resource_unavailable`). `cellMargin`은 `{left,right,top,bottom}` 중 지정한 것만 바뀝니다.
 - **`cell.setSize`**: **병합되지 않은** 셀 하나의 너비·높이를 바꿉니다. 그 셀이 속한 **열/행 트랙 전체**가 바뀌고 교차하는 셀과 표 전체 크기가 함께 조정됩니다. 병합 셀을 직접 지정하면 `UNSUPPORTED`/`merged_cell_size_unsupported`이고, 대신 표 트랙 명령을 쓰세요.
 - **공통**: 네 명령 모두 `expectedVersion`이 필요하고 `dryRun`·`command.batch`·되돌리기를 지원합니다. `intents`에 `tableSize`와 `changedCells`가 담겨 무엇이 바뀌었는지 확인할 수 있습니다. **공유 자원(`header.xml`)을 새로 만들거나 고치지 않습니다.**
+
+### ④-4 표 행·열 추가·삭제 (`table_insert_row`, `table_delete_row`, `table_insert_column`, `table_delete_column`)
+기존 표에 **빈 행·열을 넣거나**, 지정한 행·열을 **지웁니다**. 엔진이 노드(셀·문단)를 만들고 지우는 유일한 명령이라 규칙이 조금 다릅니다. 설계와 근거는 `docs/decisions/table-structure-node-creation-design.md`에 있습니다.
+
+```json
+{ "documentId": "doc-1", "expectedVersion": 4,
+  "target": "node-tbl1", "index": 3, "count": 2 }
+```
+
+- **`index`는 0부터 센 새 줄의 주소입니다.** `table_insert_row`의 `index: 3`은 "위에 3개 행을 남기고 그 아래에 넣기"(= 3번째 행 뒤)입니다. 범위는 `0` ~ 행 수(맨 뒤에 붙이려면 행 수)입니다. 삭제는 `index`부터 `count`개를 지우며 `0` ~ (행 수 − 1)입니다. `count`는 기본 1, 최대 1024이고 표는 1024행·1024열을 넘을 수 없습니다.
+- **새 셀**: 이웃 행(위 행, 없거나 제목 행이면 아래 행)의 셀 속성·테두리·안 여백을 그대로 복제하고, 글은 비워 문단 하나만 둡니다(그 셀 첫 문단의 문단 모양·글자 모양 유지). 셀 이름(`name`)은 비우고 새 **행**의 제목 표시(`header`)는 끕니다. 열 삽입은 왼쪽 이웃 열(없으면 오른쪽)을 복제하며 제목 셀은 제목 셀로 남습니다.
+- **크기**: 행은 복제한 행의 높이만큼 표 높이가 늘고(삭제는 지운 행 높이만큼 줄고) 열은 **표 전체 너비가 새 열 너비만큼 늘어납니다**(기존 열은 줄이지 않습니다). 쪽 너비를 넘는지는 검사하지 않으니 필요하면 이어서 `table_set_column_widths`로 맞추세요. `rowCnt`/`colCnt`, 모든 셀의 `cellAddr`, 표 `sz`가 함께 갱신되고 저장 전에 독립 검증기가 바이트 단위로 다시 확인합니다.
+- **nodeId**: 새 셀·문단은 **새 `nodeId`**를 받아 결과 `structure[].created`(`nodeId`·`kind`·`row`·`col`)에 나옵니다. 기존 셀은 `nodeId`를 유지하지만 **주소가 밀립니다**(`structure[].shifted`, `changedIds`). 행·열 번호로 대상을 찾았다면 변경 뒤 다시 조회하세요. 삭제된 노드는 `structure[].removed`에 나오며, 그 ID는 다른 요소에 다시 쓰이지 않습니다.
+- **병합 셀**: 삽입은 새 줄의 경계가 병합 셀을 가르면 `UNSUPPORTED`/`insert_inside_merged_cell`로, 복제할 단순한 이웃 줄이 없으면 `no_simple_template_line`으로 거절합니다. 삭제는 구간과 겹치는 셀이 **하나라도 병합(행·열 병합 수 ≠ 1)**이면 `merged_cell_blocks_delete`로 거절하고 `detail.cells`에 해당 셀 주소를 담습니다. 병합을 건드리지 않는 한 같은 표의 다른 행·열은 지울 수 있습니다.
+- **삭제 제한**: 글과 줄바꿈·탭 정도만 든 셀만 지웁니다. 그림·수식·필드·도형·각주가 든 셀은 `delete_content_unsupported`, 표의 모든 행(열)을 지우려 하면 `INVALID_ARGUMENT`/`would_empty_table`, 범위 밖이면 `index_out_of_range`, 열 삭제로 셀이 하나도 없는 행이 생기면 `row_would_become_empty`입니다. 지운 셀의 글자는 미리보기 텍스트(`PrvText`)에서 지우지 않고 `stale.prvText: true`로만 알립니다.
+- **되돌리기**: `history_undo`는 지워진 셀·문단을 **원래 `nodeId`로** 되살리고, 삽입으로 만든 노드는 사라지며 내보낸 파일은 **원본과 바이트가 같습니다**. `history_redo`는 처음 만들었던 **같은 새 `nodeId`**를 복원합니다. `dryRun`은 `structure`를 돌려주지만 후보가 버려지므로 새 노드의 `nodeId`는 `null`이고 `changedIds`에도 새 ID가 들어가지 않습니다(주소가 밀린 기존 셀은 `shifted`에 그대로 나옵니다). `command_batch`에서 앞 단계가 행·열을 바꿔도 뒷 단계의 기존 셀 대상은 따라갑니다. 단 같은 배치에서 앞 단계가 **만든** 노드나 **지운** 노드는 대상이 될 수 없습니다.
+- **그 밖에**: 표와 그 뒤 모든 최상위 문단의 줄 배치 캐시를 지웁니다(한컴이 열 때 다시 계산). 중첩 표, 셀 구역(`cellzoneList`), `cellSpacing ≠ 0`, 상대 크기 표는 `UNSUPPORTED`입니다. `table.addRow` 같은 옛 이름은 계속 `structure_change_unsupported`이고 안내 문구가 새 명령을 가리킵니다.
 
 ### ⑤ 실행 취소 (`history_undo`)와 다시 실행 (`history_redo`)
 방금 바꾼 문단 서식이 마음에 들지 않아 직전 상태로 되돌립니다. 되돌리기 역시 문서 상태를 바꾸는 작업이므로 현재 버전(`2`)을 `expectedVersion`으로 보냅니다.
@@ -554,6 +574,7 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 | `SESSION_REQUIRED` | **세션 유지 필요**: 열린 문서가 없거나, 일회성 실행 모드(`hae run`)에서 이전 호출의 실행 취소(Undo/Redo)를 시도할 때 발생합니다. 이력 기능은 한 세션 안에서만 작동합니다. |
 | `UNKNOWN_WRITER` / `REQUEST_ID_CONFLICT` / `REPLAY_TOO_OLD` / `REQUEST_OUT_OF_ORDER` | **요청 순서·작성자 번호 오류**: JSON-lines 등에서 작성자 ID(`writerId`)나 요청 일련번호(`requestSequence`)가 어긋났을 때 발생합니다. (MCP 클라이언트나 `hae script`를 쓸 때는 번호를 자동 관리하므로 발생하지 않습니다.) |
 | `TARGET_NOT_FOUND` | **대상을 찾을 수 없음**: 지정한 `nodeId`(`target`)가 문서에 없습니다. `document_inspect`나 `element_query`로 정확한 `nodeId`를 다시 찾아 주세요. |
+| `INVALID_ARGUMENT` | **인자 값이 맞지 않음**: 표 행·열 명령의 `index_out_of_range`(범위 밖)·`count_out_of_range`·`table_size_limit`(1024 초과)·`would_empty_table`(모두 지우려 함), 표 치수 값 오류 등입니다. `reason`을 확인하세요. |
 | `AMBIGUOUS_TARGET` | **대상이 모호함**: 조건에 맞는 대상이 여러 개여서 하나로 특정할 수 없을 때 발생합니다. 정확한 `nodeId`를 지정하세요. |
 | `UNSUPPORTED` | **지원하지 않는 편집**: 지원하지 않는 대상을 고치려 할 때 발생합니다. (예: 중첩 표가 있는 셀, 문단이 2개 이상인 셀에 `text` 사용, 전자서명·변경 추적이 있는 읽기 전용 문서, 자르기·효과가 들어간 그림, 애니메이션 PNG 등) |
 | `INVALID_RANGE` | **잘못된 글자 범위**: `text_replace`의 `[start, end)` 범위가 문단 grapheme 수를 벗어났거나 역순입니다. 길이 0 범위는 지원되는 textSpans 위치에 비어 있지 않은 text를 넣을 때만 허용합니다. |
