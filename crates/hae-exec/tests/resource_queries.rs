@@ -472,6 +472,27 @@ fn picture_list_external_references_are_not_fetched_or_given_payload_hashes() {
         detail["outline"]["edits"]["image.replace"]["available"],
         false
     );
+    // The advertisement is backed by a real rejection: an external picture has
+    // no embedded payload to swap, and the refused call changes nothing.
+    let replacement = h.dir.join("replacement.png");
+    fs::write(
+        &replacement,
+        include_bytes!("../../../tests/fixtures/editing/inputs/ok.png"),
+    )
+    .unwrap();
+    let before = h.export();
+    let r = h.exec.call(
+        "image.replace",
+        json!({"target":i,"imagePath":replacement}),
+        Some(0),
+        false,
+    );
+    assert_eq!(r.diagnostics[0].code, Code::Unsupported);
+    assert_eq!(
+        r.diagnostics[0].reason.as_deref(),
+        Some("no_embedded_media")
+    );
+    assert_eq!(h.export(), before, "rejected image.replace changed bytes");
 }
 #[test]
 fn picture_list_crop_effect_shadow_flip_and_reverse_are_observed() {

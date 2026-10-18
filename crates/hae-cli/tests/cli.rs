@@ -522,3 +522,21 @@ fn resource_query_cli_aliases_preserve_export_bytes() {
     assert_eq!(fs::read(before).unwrap(), original);
     assert_eq!(fs::read(after).unwrap(), original);
 }
+
+#[test]
+fn one_shot_run_accepts_cli_aliases_as_canonical_names() {
+    // One-shot `run` resolves the CLI alias exactly like `script` does. No
+    // document is open, but the envelope must already carry the registry name.
+    let output = hae()
+        .args(["run", "--command", "style-list"])
+        .output()
+        .expect("run hae");
+    assert!(!output.status.success(), "no document is open");
+    let response: Value = serde_json::from_slice(&output.stdout).expect("one JSON envelope");
+    assert_eq!(response["command"], json!("style.list"));
+    assert_eq!(response["ok"], json!(false));
+    assert_eq!(
+        response["diagnostics"][0]["code"],
+        json!("SESSION_REQUIRED")
+    );
+}

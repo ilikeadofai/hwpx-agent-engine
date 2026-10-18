@@ -176,7 +176,10 @@ fn hello_malformed_json_and_eof_exit_zero_with_logs_on_stderr_only() {
     // The server keeps serving after errors.
     let list = server.request(None, None, None, "command.list", json!({}), false);
     assert_eq!(list["ok"], true);
-    assert!(list["result"]["commands"].as_array().unwrap().len() >= 21);
+    assert_eq!(
+        list["result"]["commands"].as_array().unwrap().len(),
+        hae_exec::command_list().len()
+    );
 
     let (exit, stderr) = server.finish();
     assert_eq!(exit, 0);
