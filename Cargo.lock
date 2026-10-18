@@ -393,6 +393,7 @@ dependencies = [
  "hae-exec",
  "hae-jsonl",
  "hae-package",
+ "hae-render-rhwp",
  "hae-zip",
  "serde_json",
 ]

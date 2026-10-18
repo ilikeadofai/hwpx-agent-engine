@@ -13,10 +13,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::SystemTime;
 
-const MAX_FONT_FILES: usize = 4096;
+pub const MAX_FONT_FILES: usize = 4096;
 const MAX_FONT_DEPTH: usize = 8;
-const MAX_FONT_BYTES: u64 = 64 * 1024 * 1024;
-const MAX_FONT_FILE_BYTES: u64 = 32 * 1024 * 1024;
+pub const MAX_FONT_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_FONT_FILE_BYTES: u64 = 32 * 1024 * 1024;
 /// (relative path, absolute path, bytes, mtime) of one font file.
 type Listed = (String, PathBuf, u64, Option<SystemTime>);
 
@@ -96,9 +96,6 @@ fn collect(
                 .map(str::to_ascii_lowercase)
                 .unwrap_or_default();
             if FONT_EXTS.contains(&ext.as_str()) {
-                if out.len() >= MAX_FONT_FILES {
-                    return Err(std::io::Error::other("too many font files"));
-                }
                 let rel = p.strip_prefix(root).unwrap_or(&p);
                 out.push((
                     rel.to_string_lossy().into_owned(),
@@ -106,6 +103,9 @@ fn collect(
                     md.len(),
                     md.modified().ok(),
                 ));
+                if out.len() > MAX_FONT_FILES {
+                    return Err(std::io::Error::other("too many font files"));
+                }
             }
         }
         // Symlinks are skipped: they would point outside the audited directory.
@@ -120,6 +120,93 @@ fn scan_fingerprint(dir: &Path) -> std::io::Result<Vec<Listed>> {
     Ok(v)
 }
 
+/// Metadata-only bounded preview preflight. Counts/bytes are lower bounds when
+/// `measurements_complete` is false (directory traversal stopped at a limit/error).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FontScanReport {
+    pub file_count: usize,
+    pub total_bytes: u64,
+    pub measurements_complete: bool,
+    /// Filename heuristic only; does not establish cmap coverage or font validity.
+    pub korean_filename_matches: usize,
+    pub error: Option<String>,
+}
+
+fn validate_listing(listed: &[Listed], max_bytes: u64) -> std::io::Result<()> {
+    let max_bytes = max_bytes.min(MAX_FONT_BYTES);
+    listed.iter().try_fold(0u64, |n, (_, _, bytes, _)| {
+        if *bytes > MAX_FONT_FILE_BYTES {
+            return Err(std::io::Error::other("font exceeds per-file memory limit"));
+        }
+        n.checked_add(*bytes)
+            .filter(|n| *n <= max_bytes)
+            .ok_or_else(|| std::io::Error::other("font payload exceeds memory limit"))
+    })?;
+    // Include payload/database copies and metadata before any payload read.
+    // The adapter supplies (remaining - 1 MiB) / 4 as max_bytes.
+    let reservation: u64 = listed
+        .iter()
+        .map(|(rel, _, bytes, _)| bytes.saturating_mul(4) + 8192 + rel.len() as u64 * 8)
+        .sum();
+    if reservation > max_bytes.saturating_mul(4).saturating_add(1024 * 1024) {
+        return Err(std::io::Error::other("font workspace exceeds memory limit"));
+    }
+    Ok(())
+}
+
+fn preflight(dir: &Path, max_bytes: u64) -> (Vec<Listed>, FontScanReport) {
+    let mut listed = Vec::new();
+    let traversal = collect(dir, dir, 0, &mut 0, &mut listed);
+    listed.sort_by(|a, b| a.0.cmp(&b.0));
+    let measurements_complete = traversal.is_ok();
+    let error = traversal
+        .and_then(|()| validate_listing(&listed, max_bytes))
+        .err();
+    let report = FontScanReport {
+        file_count: listed.len(),
+        total_bytes: listed.iter().fold(0u64, |n, f| n.saturating_add(f.2)),
+        measurements_complete,
+        korean_filename_matches: listed
+            .iter()
+            .filter(|(_, path, _, _)| {
+                let name = path
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_ascii_lowercase()
+                    .replace(['-', '_', ' '], "");
+                [
+                    "notosanskr",
+                    "notoserifkr",
+                    "notosanscjkkr",
+                    "notoserifcjkkr",
+                    "nanum",
+                    "malgun",
+                    "batang",
+                    "gulim",
+                    "dotum",
+                    "나눔",
+                    "맑은",
+                    "바탕",
+                    "굴림",
+                    "돋움",
+                ]
+                .iter()
+                .any(|hint| name.contains(hint))
+            })
+            .count(),
+        error: error.map(|e| e.to_string()),
+    };
+    (listed, report)
+}
+
+/// Apply exactly the preview directory/extension/count/byte/workspace rules,
+/// without reading font payloads or constructing a font database.
+pub fn inspect_font_dir(dir: &Path) -> FontScanReport {
+    preflight(dir, MAX_FONT_BYTES).1
+}
+
 impl FontSet {
     /// Scan and hash `dir`.
     pub fn scan(dir: &Path) -> std::io::Result<FontSet> {
@@ -128,24 +215,9 @@ impl FontSet {
 
     /// Bound the complete font payload before opening any font file.
     pub fn scan_with_budget(dir: &Path, max_bytes: u64) -> std::io::Result<FontSet> {
-        let listed = scan_fingerprint(dir)?;
-        let max_bytes = max_bytes.min(MAX_FONT_BYTES);
-        listed.iter().try_fold(0u64, |n, (_, _, bytes, _)| {
-            if *bytes > MAX_FONT_FILE_BYTES {
-                return Err(std::io::Error::other("font exceeds per-file memory limit"));
-            }
-            n.checked_add(*bytes)
-                .filter(|n| *n <= max_bytes)
-                .ok_or_else(|| std::io::Error::other("font payload exceeds memory limit"))
-        })?;
-        // Include payload/database copies and metadata before any payload read.
-        // The adapter supplies (remaining - 1 MiB) / 4 as max_bytes.
-        let reservation: u64 = listed
-            .iter()
-            .map(|(rel, _, bytes, _)| bytes.saturating_mul(4) + 8192 + rel.len() as u64 * 8)
-            .sum();
-        if reservation > max_bytes.saturating_mul(4).saturating_add(1024 * 1024) {
-            return Err(std::io::Error::other("font workspace exceeds memory limit"));
+        let (listed, report) = preflight(dir, max_bytes);
+        if let Some(error) = report.error {
+            return Err(std::io::Error::other(error));
         }
         let mut payloads = Vec::with_capacity(listed.len());
         let mut files = Vec::with_capacity(listed.len());

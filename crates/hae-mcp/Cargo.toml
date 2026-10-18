@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 hae-diag = { workspace = true }
 hae-exec = { workspace = true }
+hae-render-rhwp = { workspace = true }
 hae-jsonl = { path = "../hae-jsonl" }
 clap = { workspace = true }
 serde_json = { workspace = true }

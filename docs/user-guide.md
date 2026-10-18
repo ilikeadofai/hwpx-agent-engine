@@ -80,7 +80,7 @@ Preview environment (used by document.preview):
 
 1. **`HAE_RHWP`** *(미리보기 사용 시 필수)*: 별도로 준비한 `rhwp` 렌더러 실행 파일의 **절대 경로**입니다. 이 변수를 설정하지 않으면 미리보기 호출 시 `RENDERER_UNAVAILABLE`(`renderer_not_configured`) 오류가 반환됩니다.
 2. **`HAE_BWRAP`** *(기본값: `/usr/bin/bwrap`)*: 렌더러를 네트워크·파일시스템으로부터 격리해 실행하는 `bubblewrap`(`bwrap`) 실행 파일의 **절대 경로**입니다. 엔진은 첫 미리보기 실행 전에 격리 자가 점검(self-test)을 수행하며, `bwrap`이 없거나 격리가 확인되지 않으면 렌더러를 실행하지 않고 거절합니다.
-3. **`HAE_FONT_DIR`** *(기본값: `/usr/share/fonts`)*: 렌더링과 PNG 변환에 사용할 글꼴(`.ttf`, `.otf`, `.ttc`)이 들어 있는 **읽기 가능한 폴더의 절대 경로**입니다. 문서에서 쓰인 글꼴(예: 나눔고딕 등 한글 글꼴)이 이 폴더에 있어야 글자가 깨지지 않고 그려집니다.
+3. **`HAE_FONT_DIR`** *(기본값: `/usr/share/fonts`)*: 렌더링과 PNG 변환에 사용할 글꼴(`.ttf`, `.otf`, `.ttc`, `.otc`, 대소문자 구분 없음)이 들어 있는 **읽기 가능한 폴더의 절대 경로**입니다. **한국어 글꼴 몇 개만 모은 작은 폴더**(예: `/home/user/hwpx-fonts`)를 권장합니다. 기본 시스템 폴더 전체는 상한을 넘겨 미리보기에 실패할 수 있습니다. 제한은 **글꼴 파일 4,096개, 총 64 MiB, 파일당 32 MiB**이며 메타데이터 작업 공간에도 상한을 적용합니다. 재귀 깊이는 8, 방문 항목은 8,192개로 제한하고 심볼릭 링크는 건너뜁니다. 세션의 남은 메모리에 따라 더 일찍 거절할 수 있습니다. 문서에 필요한 한국어 글꼴을 포함하고 `hae-mcp doctor`로 먼저 점검하세요.
 
 ### MCP 설정 JSON 예시 (`hae-mcp`)
 
@@ -124,7 +124,7 @@ HAE_RHWP=/opt/rhwp/bin/rhwp hae-mcp doctor \
   --output-root /home/user/Documents/hwpx-outputs
 ```
 
-`doctor`는 실행 파일·폴더·입출력 권한을 JSON으로 보고합니다. 모두 정상이면 종료 0, 빠진 항목이 있으면 1입니다. 렌더러가 없어도 조회·편집·내보내기는 쓸 수 있습니다. doctor는 렌더러나 한컴을 실행하지 않으므로 sandbox·한글 글꼴·실제 조판은 미리보기와 화면 확인으로 검증합니다.
+`doctor`는 실행 파일·폴더·입출력 권한과 미리보기와 동일한 제한 스캔의 글꼴 파일 수·용량을 JSON으로 보고합니다. 상한 초과는 fonts의 `ok:false`와 해결 안내로 표시하며, `measurementsComplete:false`이면 표시된 수치가 전체 합계의 하한입니다. 한국어 글꼴이 없을 가능성은 `warning`으로 알립니다. 비용이 작은 파일명 휴리스틱(Noto Sans/Serif KR·CJK KR, Nanum, Malgun, Batang, Gulim, Dotum 및 한글 이름)을 사용하며 cmap이나 글꼴 유효성은 검사하지 않습니다. 따라서 경고 유무는 실제 한글 지원을 보장하지 않고, 빈 폴더도 상한 점검은 통과하되 경고가 나옵니다. 모두 정상이면 종료 0, 빠진 항목이 있으면 1입니다. 렌더러가 없어도 조회·편집·내보내기는 쓸 수 있습니다. doctor는 렌더러나 한컴을 실행하지 않으므로 sandbox·한글 글꼴·실제 조판은 미리보기와 화면 확인으로 검증합니다.
 
 ### Claude Code·Codex·opencode·Inspector 연결
 
@@ -134,7 +134,7 @@ Claude Code의 프로젝트 범위 등록([공식 안내](https://code.claude.co
 
 ```bash
 claude mcp add --scope project --transport stdio hwpx-engine \
-  -e HAE_RHWP=/opt/rhwp/bin/rhwp -e HAE_FONT_DIR=/usr/share/fonts \
+  -e HAE_RHWP=/opt/rhwp/bin/rhwp -e HAE_FONT_DIR=/home/user/hwpx-fonts \
   -- /home/user/.local/bin/hae-mcp \
   --input-root /home/user/Documents/hwpx-inputs \
   --output-root /home/user/Documents/hwpx-outputs
@@ -144,7 +144,7 @@ Codex CLI 등록 명령([공식 OpenAI 안내](https://learn.chatgpt.com/docs/ex
 
 ```bash
 codex mcp add hwpx-engine \
-  --env HAE_RHWP=/opt/rhwp/bin/rhwp --env HAE_FONT_DIR=/usr/share/fonts \
+  --env HAE_RHWP=/opt/rhwp/bin/rhwp --env HAE_FONT_DIR=/home/user/hwpx-fonts \
   -- /home/user/.local/bin/hae-mcp \
   --input-root /home/user/Documents/hwpx-inputs \
   --output-root /home/user/Documents/hwpx-outputs
@@ -161,7 +161,7 @@ tool_timeout_sec = 120
 
 [mcp_servers.hwpx-engine.env]
 HAE_RHWP = "/opt/rhwp/bin/rhwp"
-HAE_FONT_DIR = "/usr/share/fonts"
+HAE_FONT_DIR = "/home/user/hwpx-fonts"
 ```
 
 opencode는 프로젝트의 `opencode.json`에 local 서버를 지정합니다([공식 안내](https://opencode.ai/docs/mcp-servers/)).
@@ -173,7 +173,7 @@ opencode는 프로젝트의 `opencode.json`에 local 서버를 지정합니다([
     "hwpx-engine": {
       "type": "local",
       "command": ["/home/user/.local/bin/hae-mcp", "--input-root", "/home/user/Documents/hwpx-inputs", "--output-root", "/home/user/Documents/hwpx-outputs"],
-      "environment": {"HAE_RHWP": "/opt/rhwp/bin/rhwp", "HAE_FONT_DIR": "/usr/share/fonts"},
+      "environment": {"HAE_RHWP": "/opt/rhwp/bin/rhwp", "HAE_FONT_DIR": "/home/user/hwpx-fonts"},
       "enabled": true
     }
   }
@@ -219,7 +219,7 @@ npx -y @modelcontextprotocol/inspector --cli /home/user/.local/bin/hae-mcp \
   ```bash
   HAE_RHWP=/opt/rhwp/bin/rhwp \
   HAE_BWRAP=/usr/bin/bwrap \
-  HAE_FONT_DIR=/usr/share/fonts \
+  HAE_FONT_DIR=/home/user/hwpx-fonts \
   /opt/hwpx-agent-engine/target/release/hae script \
     --input-root /home/user/Documents/hwpx-inputs \
     --output-root /home/user/Documents/hwpx-outputs \
@@ -229,7 +229,7 @@ npx -y @modelcontextprotocol/inspector --cli /home/user/.local/bin/hae-mcp \
   ```bash
   HAE_RHWP=/opt/rhwp/bin/rhwp \
   HAE_BWRAP=/usr/bin/bwrap \
-  HAE_FONT_DIR=/usr/share/fonts \
+  HAE_FONT_DIR=/home/user/hwpx-fonts \
   /opt/hwpx-agent-engine/target/release/hae-jsonl \
     --input-root /home/user/Documents/hwpx-inputs \
     --output-root /home/user/Documents/hwpx-outputs

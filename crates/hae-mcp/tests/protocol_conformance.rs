@@ -515,3 +515,101 @@ fn legacy_batch_wire_budget_preserves_each_request_id() {
     assert_eq!(c.rpc("ping", json!({}))["result"], json!({}));
     assert_eq!(c.finish().0, 0);
 }
+
+// Removing the shared font preflight would make these accept oversized folders.
+fn doctor_fonts(dir: &std::path::Path) -> (Value, bool) {
+    let result = Command::new(HAE_MCP)
+        .args([
+            "doctor",
+            "--input-root",
+            dir.to_str().unwrap(),
+            "--output-root",
+            dir.to_str().unwrap(),
+        ])
+        .env("HAE_RHWP", "/bin/true")
+        .env("HAE_RASTER", "/bin/true")
+        .env("HAE_BWRAP", "/bin/true")
+        .env("HAE_FONT_DIR", dir)
+        .output()
+        .unwrap();
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    (report["checks"]["fonts"].clone(), result.status.success())
+}
+
+#[test]
+fn doctor_rejects_oversized_font_payload_before_reading() {
+    let t = TempDir::new("doctor-font-size");
+    for name in ["a.ttf", "b.OTF", "c.ttc"] {
+        std::fs::File::create(t.path().join(name))
+            .unwrap()
+            .set_len(24 * 1024 * 1024)
+            .unwrap();
+    }
+    let (fonts, success) = doctor_fonts(t.path());
+    assert!(!success);
+    assert_eq!(fonts["ok"], false);
+    assert_eq!(fonts["fileCount"], 3);
+    assert_eq!(fonts["totalBytes"], 75_497_472u64);
+    assert_eq!(fonts["measurementsComplete"], true);
+    assert!(fonts["guidance"].as_str().unwrap().contains("HAE_FONT_DIR"));
+}
+
+#[test]
+fn doctor_accepts_small_folder_and_warns_without_korean_filename() {
+    let t = TempDir::new("doctor-font-small");
+    std::fs::write(t.path().join("Latin.ttf"), b"synthetic").unwrap();
+    std::fs::File::create(t.path().join("ignored.bin"))
+        .unwrap()
+        .set_len(128 * 1024 * 1024)
+        .unwrap();
+    let (fonts, success) = doctor_fonts(t.path());
+    assert!(success);
+    assert_eq!(fonts["fileCount"], 1);
+    assert_eq!(fonts["totalBytes"], 9);
+    assert!(fonts["warning"].is_string());
+    std::fs::rename(
+        t.path().join("Latin.ttf"),
+        t.path().join("NotoSansKR-Regular.ttf"),
+    )
+    .unwrap();
+    let (fonts, success) = doctor_fonts(t.path());
+    assert!(success);
+    assert!(fonts["warning"].is_null());
+}
+
+#[test]
+fn doctor_empty_font_folder_warns() {
+    let t = TempDir::new("doctor-font-empty");
+    let (fonts, success) = doctor_fonts(t.path());
+    assert!(success);
+    assert_eq!(fonts["ok"], true);
+    assert_eq!(fonts["fileCount"], 0);
+    assert_eq!(fonts["totalBytes"], 0);
+    assert!(fonts["warning"].is_string());
+}
+
+#[test]
+fn doctor_rejects_single_font_over_per_file_limit() {
+    let t = TempDir::new("doctor-font-single");
+    std::fs::File::create(t.path().join("large.otc"))
+        .unwrap()
+        .set_len(33 * 1024 * 1024)
+        .unwrap();
+    let (fonts, success) = doctor_fonts(t.path());
+    assert!(!success);
+    assert_eq!(fonts["fileCount"], 1);
+    assert_eq!(fonts["totalBytes"], 34_603_008u64);
+}
+
+#[test]
+fn doctor_rejects_too_many_fonts_with_partial_measurements() {
+    let t = TempDir::new("doctor-font-count");
+    for i in 0..4097 {
+        std::fs::write(t.path().join(format!("{i:04}.ttf")), b"x").unwrap();
+    }
+    let (fonts, success) = doctor_fonts(t.path());
+    assert!(!success);
+    assert_eq!(fonts["fileCount"], 4097);
+    assert_eq!(fonts["totalBytes"], 4097);
+    assert_eq!(fonts["measurementsComplete"], false);
+}
