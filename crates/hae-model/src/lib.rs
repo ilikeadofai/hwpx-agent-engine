@@ -6,6 +6,7 @@
 //! commit gate: an edit may change payloads but never the sequence of
 //! identity-bearing elements of an entry (0.1 adds or removes no body nodes).
 
+pub mod export_text;
 pub mod para;
 pub mod query;
 
@@ -643,5 +644,7 @@ fn references_invalid(info: &PackageInfo, xml: &XmlMap) -> bool {
     false
 }
 
+#[cfg(test)]
+mod export_text_tests;
 #[cfg(test)]
 mod tests;

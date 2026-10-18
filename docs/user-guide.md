@@ -17,6 +17,7 @@
 - **글자 서식 변경 (`text_format`)**: 문단 안의 자소 범위만 굵게·기울임·밑줄·취소선·글자 크기(`100`~`100000` HWPUNIT)·글자색(`#RRGGBB`)으로 바꿉니다. 값이 같은 기존 글자 모양을 재사용하거나 하나를 새로 만들어 붙이고, 범위 밖 글자의 모양은 그대로 둡니다.
 - **표 셀 텍스트 교체 (`cell_set_text`)**: 병합 기준 셀을 포함해 기존 셀의 텍스트를 바꿉니다. 문단 하나는 `text`, 여러 문단은 정확한 기존 문단 수의 `paragraphs` 배열을 줍니다.
 - **그림 교체 (`image_replace`)**: 기존 그림의 위치·크기·캡션을 그대로 유지한 채, 정적 PNG 또는 JPEG 이미지 파일로 교체합니다.
+- **Markdown·HTML로 내보내기 (`document_export_text`)**: 문서(또는 한 구역)를 읽기 전용으로 변환해 새 `.md`/`.html` 파일로 씁니다. 문서·`revision`·되돌리기 이력은 바뀌지 않습니다(아래 ⑧).
 - **되돌리기·다시 실행 및 미리보기**: 작업 전 가상 적용(`dryRun`), 변경 내역 비교(`document_diff`), 실행 취소(`history_undo`)·다시 실행(`history_redo`), 외부 렌더러 연동을 통한 PNG/SVG 미리보기(`document_preview`)를 지원합니다.
 
 ### 하지 않는 것 및 한계 (0.2 제외 범위)
@@ -386,6 +387,66 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
     "path": "/home/user/Documents/hwpx-outputs/report_final.hwpx"
   }
   ```
+
+### ⑧ Markdown·HTML로 내보내기 (`document_export_text`)
+문서 내용을 에이전트가 읽거나 웹·메모 도구로 옮기고 싶을 때 씁니다. **조회 명령**이라 문서를 바꾸지 않고, `revision`을 올리지 않으며, `expectedVersion`도 필요 없습니다. 결과 본문은 응답이 아니라 **파일**에 쓰고, 응답에는 요약(경로·크기·SHA-256·개수)만 담습니다. 그래서 큰 문서도 응답 한도(4 MiB)를 넘지 않습니다.
+
+```json
+{
+  "documentId": "doc-1",
+  "path": "/home/user/Documents/hwpx-outputs/report.md",
+  "format": "markdown"
+}
+```
+
+| 인자 | 설명 |
+|---|---|
+| `path` | `--output-root` 안의 **새 파일** 절대 경로. 이미 있으면 `TARGET_EXISTS`로 거절하고 덮어쓰지 않습니다. 루트 밖·링크·`..` 경로는 `PATH_NOT_ALLOWED`입니다. 확장자는 `markdown`이면 `.md`/`.markdown`, `html`이면 `.html`/`.htm`이어야 하며 아니면 `INVALID_ARGUMENT`(reason `extension_mismatch`)입니다. 텍스트 파일이 `.hwpx` 같은 문서 확장자를 얻지 못하게 하려는 규칙입니다. |
+| `format` | `"markdown"` 또는 `"html"` |
+| `scope` | (선택) 구역 `nodeId`. 주면 그 구역만, 안 주면 모든 구역. 구역이 아닌 `nodeId`는 `UNSUPPORTED`(reason `wrong_kind`)입니다. |
+| `includeNotes` | (선택, 기본 `true`) `false`면 각주·미주를 본문 표시와 목록에서 모두 뺍니다. 머리말·꼬리말은 영향받지 않습니다. |
+
+**변환 규칙** (확인한 구조만 바꾸고, 해석하지 못하는 요소는 숨기지 않고 표시합니다)
+
+| 문서 요소 | Markdown | HTML |
+|---|---|---|
+| 문단 | 문단. 탭은 `&emsp;`, 줄바꿈은 `\`+줄바꿈(표 셀 안은 `<br>`) | `<p>`, 탭 `&emsp;`, 줄바꿈 `<br>` |
+| 문단 정렬 가운데·오른쪽 | **무시**하고 문단 바로 위에 `<!-- hwpx: 문단 정렬(가운데) 무시됨 -->` 주석을 남김. 문서 머리 안내에 곳수 표시 | `style="text-align:center"` / `right` |
+| 표 | 파이프 표. 문법상 머리글 행이 필요해 **빈 머리글 행**을 넣음(첫 행을 머리글로 단정하지 않음) | `<table>`·`<tr>`·`<td>` |
+| 병합 셀 | 셀을 **반복하지 않고** 덮인 칸을 비움. 표 앞에 주석, 문서 머리 안내에 `병합 셀이 있는 표: 표 N` | `colspan`·`rowspan` |
+| 그림 | ``[그림] `파일명` (미디어 항목 `BinData/…`, SHA-256 …)`` + 캡션. **이미지 파일은 만들지 않음**(`![]()` 링크 없음) | `<figure data-media-entry data-sha256>` + `<figcaption>`, `<img>` 없음 |
+| 수식 | `hp:script` 원문을 변환 없이 코드(`` `…` ``, 줄바꿈이 있으면 `<code>`)로 감쌈 | `<code class="hwpx-equation">` |
+| 각주·미주 | 위치에 `[^fn1]`/`[^en1]`, 문서 끝에 `## 각주`·`## 미주` 목록 | 위치에 위 첨자 링크, 끝에 `<ol>` 목록 |
+| 머리말·꼬리말 | 문서 머리의 `## 머리말·꼬리말` 절(구역·적용 쪽 표시) | 같은 이름의 `<section>` |
+| 특수문자 | `` \ ` * _ [ ] < > & \| ~ $ ``를 백슬래시로 이스케이프, 줄 첫머리의 `#`·`-`·`+`·`=`·`1.`·들여쓰기는 목록·제목·코드로 바뀌지 않게 처리 | `& < > " '`를 엔티티로 |
+
+문서 머리에는 `> **변환 안내**` 상자가 붙어 변환한 개수, 무시·생략한 것, 변환하지 못한 것을 적습니다. 구역이 둘 이상이면 Markdown은 구역마다 주석(`<!-- hwpx: 구역 N nodeId … -->`), HTML은 `<section data-node-id>`로 나눕니다.
+
+**변환하지 못하는 것**: 글상자·도형·묶음 개체(`rect`, `container` 등), 메모(`hiddenComment`), 해석할 수 없는 표(셀 주소가 겹치거나 병합 칸에 주소가 없는 표), 그리고 Markdown의 중첩 표는 본문에 `⟦미지원: 이름⟧` 표시를 남기고 응답 `counts.unsupported`에 개수를 셉니다. 이런 개체 **안에** 있던 문단·표·그림은 `counts.insideUnsupported`로 따로 셉니다. 제목 스타일·글꼴·색·밑줄 같은 서식과 책갈피·필드 경계·쪽 번호 표지는 옮기지 않습니다(필드 경계와 쪽 번호 표지는 `counts.ignoredMarkers`에 셈). 구조가 어떤 문서에서 나왔는지는 아래 "검증 범위"를 보세요.
+
+**크기 한도**: 결과 파일이 `max_text_export_bytes`(기본 16 MiB)를 넘으면 `RESOURCE_LIMIT`(reason `text_export_too_large`)으로 거절하고 `detail.limitBytes`에 한도를, `detail.producedBytes`에 만들어진 크기를 알려 줍니다. 파일은 만들어지지 않습니다.
+
+**응답 예** (본문은 파일에만 있음)
+
+```json
+{
+  "path": "/home/user/Documents/hwpx-outputs/report.md",
+  "format": "markdown",
+  "bytes": 38812,
+  "sha256": "6bb33f5c…",
+  "revision": 0,
+  "scope": null,
+  "includeNotes": true,
+  "counts": {"paragraphs": 411, "tables": 24, "pictures": 2, "equations": 0, "footnotes": 0, "endnotes": 0,
+             "headers": 2, "footers": 0, "mergedTables": 7, "alignmentIgnored": 115, "notesOmitted": 0,
+             "unsupported": {"container": 1, "nestedTable": 1}, "insideUnsupported": {"paragraphs": 0, "tables": 0, "pictures": 0, "equations": 0},
+             "ignoredMarkers": {"colPr": 1, "newNum": 1, "pageHiding": 2, "pageNum": 1}}
+}
+```
+
+`counts.paragraphs`는 본문·표 셀·각주·머리말·캡션을 가리지 않고 **내용이 있는** 문단 수입니다. 이 도구는 MCP `readOnlyHint`를 `false`로 광고합니다(조회 명령이지만 파일을 새로 쓰기 때문입니다).
+
+**검증 범위**: 공개 코퍼스 문서(`tests/fixtures/corpus/`)의 표·병합 셀·그림·머리말·탭·줄바꿈 변환은 실제 문서로 실행해 확인했습니다. 코퍼스에는 **각주·미주, 그림·표 캡션, 수식이 없어서** 이 세 가지는 `hp:ctrl > hp:footNote/endNote > hp:subList`, `hp:pic > hp:caption > hp:subList`, `hp:equation > hp:script` 구조를 가정한 합성 문서로만 시험했습니다(머리말 구조와 `hp:script`는 저장소의 기존 편집 시험 자료에 같은 모양이 있습니다). 실제 한컴 문서의 각주·캡션으로 확인한 것이 아닙니다. 각주 번호는 문서 속 번호가 아니라 **문서 순서대로 새로 매긴 값**입니다.
 
 ---
 

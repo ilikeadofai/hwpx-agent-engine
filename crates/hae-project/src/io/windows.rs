@@ -110,6 +110,22 @@ fn path_err(stage: Stage, message: impl Into<String>) -> EngineError {
     EngineError::new(Code::PathNotAllowed, stage, message)
 }
 
+fn text_too_large(limit: u64, produced: usize) -> EngineError {
+    EngineError::new(
+        Code::ResourceLimit,
+        Stage::Export,
+        format!(
+            "text export is {produced} bytes, over the limit max_text_export_bytes = {limit} bytes"
+        ),
+    )
+    .with_reason("text_export_too_large")
+    .with_detail(serde_json::json!({
+        "limit": "max_text_export_bytes",
+        "limitBytes": limit,
+        "producedBytes": produced,
+    }))
+}
+
 fn io_err(stage: Stage, message: impl Into<String>) -> EngineError {
     EngineError::new(Code::IoError, stage, message)
 }
@@ -1343,6 +1359,89 @@ impl IoRoots {
             return Err(uncertainty(
                 stage,
                 format!("export published but parent directory sync failed: {error}"),
+            ));
+        }
+        Ok(receipt)
+    }
+
+    /// Publish Markdown/HTML text as a new file under `output_root`.
+    /// Never overwrites existing files or protected inputs; the size is
+    /// bounded by `max_text_export_bytes`.
+    pub fn export_text(
+        &self,
+        path: impl AsRef<Path>,
+        bytes: &[u8],
+        revision: u64,
+    ) -> Result<SaveReceipt> {
+        let stage = Stage::Export;
+        let max = self.limits.max_text_export_bytes;
+        if bytes.len() as u64 > max {
+            return Err(text_too_large(max, bytes.len()));
+        }
+        let resolved = self.resolve_output(path.as_ref(), stage)?;
+        let existing = target_metadata(&resolved, stage)?;
+        self.check_not_protected(
+            &resolved.canonical,
+            existing.as_ref().map(|(_, id)| *id),
+            stage,
+        )?;
+        if existing.is_some() {
+            return Err(EngineError::new(
+                Code::TargetExists,
+                stage,
+                "export target already exists",
+            ));
+        }
+
+        let sha256 = sha256_hex(bytes);
+        let (temp_name, temp_file, temp_id) =
+            self.write_temp_file(&resolved, &resolved.name, bytes, stage)?;
+        let temp = sibling(&resolved, temp_name);
+        let temp_path = temp.canonical.clone();
+        let target_path = resolved.canonical.clone();
+        let mut post_publish_problem = None;
+        let pre_publish = (|| -> Result<()> {
+            let (reread, reread_id) = self.read_regular_nofollow(&temp, max, stage)?;
+            if reread_id != temp_id || reread != bytes {
+                return Err(io_err(stage, "temporary export identity or bytes changed"));
+            }
+            if self.take_fault(FaultStep::TempFsync) {
+                return Err(io_err(stage, "injected temp fsync failure"));
+            }
+            temp_file
+                .sync_all()
+                .map_err(|error| io_err(stage, format!("sync temp export: {error}")))?;
+            validate_parent(&resolved, stage)?;
+            if self.take_fault(FaultStep::Rename) {
+                return Err(io_err(stage, "injected rename failure"));
+            }
+            post_publish_problem =
+                publish_new(&resolved, &temp_path, &target_path, &temp_id, stage)?
+                    .post_publish_problem;
+            Ok(())
+        })();
+        if let Err(error) = pre_publish {
+            drop(temp_file);
+            cleanup_temp(&temp_path, &temp_id);
+            return Err(error);
+        }
+        drop(temp_file);
+
+        let receipt = SaveReceipt {
+            path: resolved.canonical.clone(),
+            sha256,
+            revision,
+        };
+        if let Some(problem) = post_publish_problem {
+            return Err(uncertainty(
+                stage,
+                format!("text export published but Windows postcondition failed: {problem}"),
+            ));
+        }
+        if let Err(error) = sync_parent(&resolved, stage, self.take_fault(FaultStep::ParentFsync)) {
+            return Err(uncertainty(
+                stage,
+                format!("text export published but parent directory sync failed: {error}"),
             ));
         }
         Ok(receipt)

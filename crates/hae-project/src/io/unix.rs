@@ -114,6 +114,22 @@ fn io_err(stage: Stage, message: impl Into<String>) -> EngineError {
     EngineError::new(Code::IoError, stage, message)
 }
 
+fn text_too_large(limit: u64, produced: usize) -> EngineError {
+    EngineError::new(
+        Code::ResourceLimit,
+        Stage::Export,
+        format!(
+            "text export is {produced} bytes, over the limit max_text_export_bytes = {limit} bytes"
+        ),
+    )
+    .with_reason("text_export_too_large")
+    .with_detail(serde_json::json!({
+        "limit": "max_text_export_bytes",
+        "limitBytes": limit,
+        "producedBytes": produced,
+    }))
+}
+
 fn canonical_segments(path: &Path, stage: Stage) -> Result<Vec<String>> {
     let raw = path.as_os_str().as_bytes();
     if raw.is_empty() || raw[0] != b'/' || raw.contains(&0) {
@@ -1006,5 +1022,93 @@ impl IoRoots {
             sha256,
             revision: 0,
         })
+    }
+
+    /// Publish Markdown/HTML text as a new file under `output_root`.
+    /// Never overwrites existing files or protected inputs; the size is
+    /// bounded by `max_text_export_bytes`.
+    pub fn export_text(
+        &self,
+        path: impl AsRef<Path>,
+        bytes: &[u8],
+        revision: u64,
+    ) -> Result<SaveReceipt> {
+        let stage = Stage::Export;
+        let max = self.limits.max_text_export_bytes;
+        if bytes.len() as u64 > max {
+            return Err(text_too_large(max, bytes.len()));
+        }
+        let a = self.resolve_output(path.as_ref(), stage)?;
+        let existing_stat = statat(&a.dir, a.name.as_str(), AtFlags::SYMLINK_NOFOLLOW).ok();
+        self.check_not_protected(&a.canonical, existing_stat.as_ref().map(stat_id), stage)?;
+        if existing_stat.is_some() {
+            return Err(EngineError::new(
+                Code::TargetExists,
+                stage,
+                "export target already exists",
+            ));
+        }
+
+        let sha256 = sha256_hex(bytes);
+        let (tmp_name, tmp_fd) = self.write_temp_file(&a.dir, &a.name, bytes, stage)?;
+        let pre_publish = (|| -> Result<()> {
+            let (reread, _) = Self::read_regular_nofollow(&a.dir, &tmp_name, max, stage)?;
+            if reread != bytes {
+                return Err(io_err(stage, "temporary text export bytes changed"));
+            }
+            if self.take_fault(FaultStep::TempFsync) {
+                return Err(io_err(stage, "injected temp fsync failure"));
+            }
+            fsync(&tmp_fd).map_err(|e| io_err(stage, format!("fsync temp export: {e}")))?;
+            if self.take_fault(FaultStep::Rename) {
+                return Err(io_err(stage, "injected rename failure"));
+            }
+            renameat_with(
+                &a.dir,
+                tmp_name.as_str(),
+                &a.dir,
+                a.name.as_str(),
+                RenameFlags::NOREPLACE,
+            )
+            .map_err(|e| {
+                if e == rustix::io::Errno::EXIST {
+                    EngineError::new(
+                        Code::TargetExists,
+                        stage,
+                        "export target created concurrently",
+                    )
+                } else {
+                    io_err(stage, format!("renameat_with export: {e}"))
+                }
+            })?;
+            Ok(())
+        })();
+        if let Err(e) = pre_publish {
+            let _ = unlinkat(&a.dir, tmp_name.as_str(), AtFlags::empty());
+            return Err(e);
+        }
+
+        let receipt = SaveReceipt {
+            path: a.canonical,
+            sha256,
+            revision,
+        };
+        let parent_sync = if self.take_fault(FaultStep::ParentFsync) {
+            Err(rustix::io::Errno::IO)
+        } else {
+            fsync(&a.dir)
+        };
+        if let Err(e) = parent_sync {
+            return Err(EngineError::new(
+                Code::SaveDurabilityUncertain,
+                stage,
+                format!("text export published but parent directory fsync failed: {e}"),
+            )
+            .with_detail(serde_json::json!({
+                "path": receipt.path,
+                "sha256": receipt.sha256,
+            })));
+        }
+        Ok(receipt)
     }
 }

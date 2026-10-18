@@ -282,6 +282,44 @@ pub struct DocumentExportParams {
     pub path: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ExportTextFormat {
+    Markdown,
+    Html,
+}
+
+/// `document.exportText`: write the document as Markdown or HTML to a new file.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DocumentExportTextParams {
+    /// New file under `--output-root` (absolute path; never overwritten).
+    /// Must end in `.md`/`.markdown` for `markdown` or `.html`/`.htm` for `html`.
+    pub path: String,
+    pub format: ExportTextFormat,
+    /// Section nodeId; only that section is exported. Default: every section.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// Include footnotes and endnotes (default true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_notes: Option<bool>,
+}
+
+/// Result of `document.exportText`; the text itself is only in the file.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportTextResultShape {
+    pub path: String,
+    pub format: ExportTextFormat,
+    pub bytes: u64,
+    pub sha256: String,
+    /// Document revision that was read; unchanged by this command.
+    pub revision: u64,
+    pub scope: Option<String>,
+    pub include_notes: bool,
+    pub counts: hae_model::export_text::ExportCounts,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MutationResultShape {
@@ -384,6 +422,7 @@ pub enum ParsedCommand {
     DocumentPreview(DocumentPreviewParams),
     ProjectSave(ProjectSaveParams),
     DocumentExport(DocumentExportParams),
+    DocumentExportText(DocumentExportTextParams),
 }
 
 /// Preserve Rust integer ranges as validation keywords before removing the
@@ -472,6 +511,8 @@ mod schema_tests {
             ("document_preview", [false, false, false, false]),
             ("project_save", [false, true, false, false]),
             ("document_export", [false, false, false, false]),
+            // Query category, but it publishes a new file: not read-only/idempotent.
+            ("document_export_text", [false, false, false, false]),
         ];
         let commands = command_list();
         assert_eq!(commands.len(), expected.len());
@@ -559,7 +600,8 @@ macro_rules! define_commands {
                         category: CommandCategory::$cat,
                         mutates_content: $mutates,
                         annotations: {
-                            let read_only = matches!(CommandCategory::$cat, CommandCategory::Introspection | CommandCategory::Query) || $name == "document.diff";
+                            // `document.exportText` is a Query that publishes a file, so it is not read-only.
+                            let read_only = (matches!(CommandCategory::$cat, CommandCategory::Introspection | CommandCategory::Query) && $name != "document.exportText") || $name == "document.diff";
                             ToolAnnotations {
                                 read_only_hint: read_only,
                                 destructive_hint: $mutates || matches!(CommandCategory::$cat, CommandCategory::History | CommandCategory::Lifecycle) || matches!($name, "project.save" | "snapshot.release"),
@@ -838,6 +880,16 @@ define_commands! {
         mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
         stage1: true, reason: None,
         params: DocumentExportParams, output: GenericResultShape,
+    },
+    DocumentExportText {
+        name: "document.exportText",
+        cli: "document-export-text",
+        mcp: "document_export_text",
+        summary: "Write the document as Markdown or HTML to a new file (tables, merged cells, pictures as media references, equations as raw script, notes, headers/footers); never changes the document",
+        category: Query,
+        mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
+        stage1: true, reason: None,
+        params: DocumentExportTextParams, output: ExportTextResultShape,
     },
 }
 

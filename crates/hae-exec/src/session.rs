@@ -3,14 +3,19 @@
 
 use crate::registry::{
     command_describe, command_list, BatchStepParam, CellSetTextParams, CommandBatchParams,
-    CommandDescriptor, DocumentDiffParams, DocumentExportParams, DocumentOpenParams,
-    DocumentPreviewParams, ImageReplaceParams, LineSpacingParam, ParagraphFormatParams,
-    ParsedCommand, ProjectSaveParams, SnapshotCreateParams, SnapshotReleaseParams,
-    TextFormatParams, TextReplaceAllParams, TextReplaceParams,
+    CommandDescriptor, DocumentDiffParams, DocumentExportParams, DocumentExportTextParams,
+    DocumentOpenParams, DocumentPreviewParams, ExportTextFormat, ImageReplaceParams,
+    LineSpacingParam, ParagraphFormatParams, ParsedCommand, ProjectSaveParams,
+    SnapshotCreateParams, SnapshotReleaseParams, TextFormatParams, TextReplaceAllParams,
+    TextReplaceParams,
 };
 use hae_diag::{Code, Diagnostic, EngineError, Limits, Result, Stage};
 use hae_edit::{Alignment, Applied, EditOp, ImageBytes, LineSpacing};
-use hae_model::{query::Query, Document, Kind};
+use hae_model::{
+    export_text::{ExportOptions, TextFormat},
+    query::Query,
+    Document, Kind,
+};
 use hae_package::{sha256_hex, PackageState, NS_HH};
 use hae_project::{IoRoots, ProjectBinding};
 use hae_render_rhwp::{AdapterConfig, RhwpAdapter};
@@ -961,6 +966,7 @@ impl SessionExecutor {
             ParsedCommand::DocumentPreview(p) => self.handle_preview(req, &p),
             ParsedCommand::ProjectSave(p) => self.handle_project_save(req, &p),
             ParsedCommand::DocumentExport(p) => self.handle_document_export(req, &p),
+            ParsedCommand::DocumentExportText(p) => self.handle_export_text(req, &p),
         }
     }
 
@@ -1776,6 +1782,70 @@ impl SessionExecutor {
                 "sha256": receipt.sha256,
                 "exportedVersion": s.revision,
                 "unmodifiedPassthrough": s.current.doc.is_unmodified(),
+            }),
+            Vec::new(),
+        ))
+    }
+
+    /// document.exportText: reads the committed document and publishes one new
+    /// Markdown/HTML file. The session, revision and history are not touched.
+    fn handle_export_text(
+        &mut self,
+        req: &RequestEnvelope,
+        p: &DocumentExportTextParams,
+    ) -> Result<(Value, Vec<Diagnostic>)> {
+        let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+        if let Some(ev) = req.expected_version {
+            if ev != s.revision {
+                return Err(EngineError::new(
+                    Code::VersionConflict,
+                    Stage::Export,
+                    "expectedVersion mismatch on document.exportText",
+                ));
+            }
+        }
+        let allowed: &[&str] = match p.format {
+            ExportTextFormat::Markdown => &["md", "markdown"],
+            ExportTextFormat::Html => &["html", "htm"],
+        };
+        let ext = Path::new(&p.path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase);
+        if !ext.as_deref().is_some_and(|e| allowed.contains(&e)) {
+            return Err(EngineError::new(
+                Code::InvalidArgument,
+                Stage::Request,
+                format!(
+                    "path must end in .{} for this format so a text file never takes a document extension",
+                    allowed.join(" or .")
+                ),
+            )
+            .with_reason("extension_mismatch"));
+        }
+        let include_notes = p.include_notes.unwrap_or(true);
+        let exported = s.current.doc.export_text(&ExportOptions {
+            format: match p.format {
+                ExportTextFormat::Markdown => TextFormat::Markdown,
+                ExportTextFormat::Html => TextFormat::Html,
+            },
+            scope: p.scope.as_deref(),
+            include_notes,
+            max_bytes: self.limits.max_text_export_bytes,
+        })?;
+        let receipt = self
+            .roots
+            .export_text(&p.path, exported.text.as_bytes(), s.revision)?;
+        Ok((
+            json!({
+                "path": receipt.path,
+                "format": p.format,
+                "bytes": exported.text.len(),
+                "sha256": receipt.sha256,
+                "revision": s.revision,
+                "scope": p.scope,
+                "includeNotes": include_notes,
+                "counts": exported.counts,
             }),
             Vec::new(),
         ))

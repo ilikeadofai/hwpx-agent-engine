@@ -39,6 +39,7 @@ fn initialize_ping_and_tools_list_cover_every_registry_command() {
                 .replace('.', "_")
                 .replace("setText", "set_text")
                 .replace("replaceAll", "replace_all")
+                .replace("exportText", "export_text")
         );
         assert_eq!(name, command.mcp_tool_name);
         assert!(

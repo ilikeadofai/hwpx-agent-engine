@@ -7,10 +7,11 @@ pub mod session;
 pub use registry::{
     command_describe, command_list, BatchStepParam, CellSetTextParams, CommandBatchParams,
     CommandCategory, CommandDescribeParams, CommandDescriptor, DocumentDiffParams,
-    DocumentExportParams, DocumentInspectParams, DocumentOpenParams, DocumentPreviewParams,
-    ElementGetParams, ElementQueryParams, EmptyParams, ImageReplaceParams, LineSpacingParam,
-    ParagraphFormatParams, ParsedCommand, ProjectSaveParams, SnapshotCreateParams,
-    SnapshotReleaseParams, TextRangeParam, TextReplaceAllParams, TextReplaceParams, COMMAND_NAMES,
+    DocumentExportParams, DocumentExportTextParams, DocumentInspectParams, DocumentOpenParams,
+    DocumentPreviewParams, ElementGetParams, ElementQueryParams, EmptyParams, ExportTextFormat,
+    ExportTextResultShape, ImageReplaceParams, LineSpacingParam, ParagraphFormatParams,
+    ParsedCommand, ProjectSaveParams, SnapshotCreateParams, SnapshotReleaseParams, TextRangeParam,
+    TextReplaceAllParams, TextReplaceParams, COMMAND_NAMES,
 };
 pub use session::{RequestEnvelope, ResponseEnvelope, SessionExecutor};
 
