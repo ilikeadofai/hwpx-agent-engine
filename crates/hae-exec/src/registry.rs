@@ -9,6 +9,11 @@ use schemars::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub use hae_model::query::{
+    ColumnSettings, DocumentStatsParams, DocumentStatsResult, NoteItem, NoteListParams,
+    NoteListResult, PageMargin, PageSettings, SectionInfo, SectionListParams, SectionListResult,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum CommandCategory {
@@ -365,6 +370,9 @@ pub enum ParsedCommand {
     CommandDescribe(CommandDescribeParams),
     DocumentOpen(DocumentOpenParams),
     DocumentInspect(DocumentInspectParams),
+    DocumentStats(DocumentStatsParams),
+    SectionList(SectionListParams),
+    NoteList(NoteListParams),
     DocumentClose(EmptyParams),
     ElementQuery(ElementQueryParams),
     ElementGet(ElementGetParams),
@@ -453,6 +461,9 @@ mod schema_tests {
             ("command_describe", [true, false, true, false]),
             ("document_open", [false, true, false, false]),
             ("document_inspect", [true, false, true, false]),
+            ("document_stats", [true, false, true, false]),
+            ("section_list", [true, false, true, false]),
+            ("note_list", [true, false, true, false]),
             ("document_close", [false, true, false, false]),
             ("element_query", [true, false, true, false]),
             ("element_get", [true, false, true, false]),
@@ -650,6 +661,36 @@ define_commands! {
         mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
         stage1: true, reason: None,
         params: DocumentInspectParams, output: InspectResultShape,
+    },
+    DocumentStats {
+        name: "document.stats",
+        cli: "document-stats",
+        mcp: "document_stats",
+        summary: "Return document summary metrics across structural elements and character count",
+        category: Query,
+        mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
+        stage1: true, reason: None,
+        params: DocumentStatsParams, output: DocumentStatsResult,
+    },
+    SectionList {
+        name: "section.list",
+        cli: "section-list",
+        mcp: "section_list",
+        summary: "List document sections with paper dimensions, margins, and column layouts",
+        category: Query,
+        mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
+        stage1: true, reason: None,
+        params: SectionListParams, output: SectionListResult,
+    },
+    NoteList {
+        name: "note.list",
+        cli: "note-list",
+        mcp: "note_list",
+        summary: "List footnotes and endnotes with numbering, body paragraphs, and references",
+        category: Query,
+        mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
+        stage1: true, reason: None,
+        params: NoteListParams, output: NoteListResult,
     },
     DocumentClose {
         name: "document.close",

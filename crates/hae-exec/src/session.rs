@@ -767,6 +767,65 @@ impl SessionExecutor {
                     Vec::new(),
                 ))
             }
+            ParsedCommand::DocumentStats(p) => {
+                let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+                if let Some(ev) = req.expected_version {
+                    if ev != s.revision {
+                        return Err(EngineError::new(
+                            Code::VersionConflict,
+                            Stage::Query,
+                            "expectedVersion mismatch on document.stats",
+                        ));
+                    }
+                }
+                let res = s.current.doc.stats(s.revision, p.scope.as_deref())?;
+                let val = serde_json::to_value(res).map_err(|e| {
+                    EngineError::new(Code::StateInvariantError, Stage::Query, e.to_string())
+                })?;
+                Ok((val, Vec::new()))
+            }
+            ParsedCommand::SectionList(p) => {
+                let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+                if let Some(ev) = req.expected_version {
+                    if ev != s.revision {
+                        return Err(EngineError::new(
+                            Code::VersionConflict,
+                            Stage::Query,
+                            "expectedVersion mismatch on section.list",
+                        ));
+                    }
+                }
+                let res = s
+                    .current
+                    .doc
+                    .section_list(s.revision, p.limit, p.cursor.as_deref())?;
+                let val = serde_json::to_value(res).map_err(|e| {
+                    EngineError::new(Code::StateInvariantError, Stage::Query, e.to_string())
+                })?;
+                Ok((val, Vec::new()))
+            }
+            ParsedCommand::NoteList(p) => {
+                let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+                if let Some(ev) = req.expected_version {
+                    if ev != s.revision {
+                        return Err(EngineError::new(
+                            Code::VersionConflict,
+                            Stage::Query,
+                            "expectedVersion mismatch on note.list",
+                        ));
+                    }
+                }
+                let res = s.current.doc.note_list(
+                    s.revision,
+                    p.kind.as_deref(),
+                    p.limit,
+                    p.cursor.as_deref(),
+                )?;
+                let val = serde_json::to_value(res).map_err(|e| {
+                    EngineError::new(Code::StateInvariantError, Stage::Query, e.to_string())
+                })?;
+                Ok((val, Vec::new()))
+            }
             ParsedCommand::ElementQuery(p) => {
                 let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
                 let q = Query {

@@ -96,6 +96,18 @@ fn project_save() -> &'static str {
     "Atomically verify and save the open document, original baseline, and stable `nodeId` map to a `.hwpwork` project file under `--output-root` (`path` is required on first save and optional thereafter). Overwrites the bound project on subsequent saves. Does not change content `revision` or history, and returns `savedVersion`. Refuses if a first-save target already exists (`TARGET_EXISTS`), if the bound file on disk was modified externally (`EXTERNAL_MODIFICATION`), or if the path is outside `--output-root` (`PATH_NOT_ALLOWED`)."
 }
 
+fn document_stats() -> &'static str {
+    "Return document-wide or scoped summary metrics across structural elements (sections, paragraphs, tables, cells, pictures, equations), controls (fields, footnotes, endnotes, memos), and total extended grapheme cluster character count. When `scope` is supplied (nodeId of section, table, cell, or paragraph), counts only elements within that subtree. Read-only; does not modify the document or increment revision."
+}
+
+fn section_list() -> &'static str {
+    "List document sections in spine order with paragraph counts and paper/column settings (orientation, width, height, margins, column count, and page start number). Reports exact XML attributes and marks missing/inherited settings as unspecified without guessing. Supports cursor pagination (`limit`, `cursor`). Read-only; does not modify the document or increment revision."
+}
+
+fn note_list() -> &'static str {
+    "List footnotes and endnotes across the document with note kind, numbering, body paragraph nodeId, combined text, and referring paragraph nodeId. Reports null when note number is not found in XML. Supports kind filter (`footnote` or `endnote`) and cursor pagination (`limit`, `cursor`). Read-only; does not modify the document or increment revision."
+}
+
 fn document_export() -> &'static str {
     "Independently verify preservation invariants and write the current document (`documentId`) to a new `.hwpx` file at `path` (inside `--output-root`). Original input files are never overwritten, and exporting to an existing file is refused with `TARGET_EXISTS` (`PATH_NOT_ALLOWED` if outside `--output-root`, `VERIFY_FAILED` if verification fails). Read-only with respect to session state and `revision`."
 }
@@ -106,6 +118,9 @@ pub const TABLE: &[(&str, Describe)] = &[
     ("command.describe", command_describe),
     ("document.open", document_open),
     ("document.inspect", document_inspect),
+    ("document.stats", document_stats),
+    ("section.list", section_list),
+    ("note.list", note_list),
     ("document.close", document_close),
     ("element.query", element_query),
     ("element.get", element_get),

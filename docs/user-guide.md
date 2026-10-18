@@ -269,6 +269,48 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 - 같은 개요 계약을 `document_inspect.items`, `element_query.matches`, `element_get.outline`에 제공합니다. inspect 기본 페이지는 100개(최대 500개)입니다. 조회 최상위 `editable`(inspect/open)은 문서 전체 권한을 뜻하며 개별 노드의 편집 가능성과 구분합니다. `edits[명령].requires`가 있으면 그 인자를 반드시 함께 보냅니다. 예를 들어 `requires:{controls:"preserve"}`인 셀과 preserve 전용 `modes:["replace"]` 문단은 기본 `controls:"reject"` 대신 preserve가 필요합니다. 다문단 셀의 `requires:{paragraphs:3}`은 `paragraphs`에 정확히 문자열 3개의 배열을 보내라는 뜻입니다(숫자 3을 전달하는 것이 아닙니다). 개체도 있으면 `requires:{paragraphs:3,controls:"preserve"}`로 두 요건이 함께 표시됩니다. `requires`가 없으면 광고된 구간·모드는 기본 인자를 기준으로 합니다. `available`은 현재 노드에 지원되는 편집 경로가 있다는 뜻으로, 잘못된 인자·버전·자원 한도까지 면제하지는 않습니다.
 - 표의 특정 칸을 찾을 때는 `kind: "cell"`, `table: "<표 nodeId>"`, `row: 0`, `col: 0`(0부터 시작하는 행·열 번호)으로 검색하거나 `element_get`으로 문단 전체 텍스트와 글자 수를 확인합니다.
 
+### ②-2 문서 요약 통계 조회 (`document_stats`, `document.stats`)
+문서의 전체 규모와 구조적 요소를 한눈에 파악합니다. 큰 문서를 다루거나 에이전트가 작업 계획을 세울 때 전체 문단·표·셀·그림·수식·각주·미주·메모 수와 전체 글자 수(grapheme 기준)를 빠르게 확인할 수 있습니다.
+```json
+{
+  "documentId": "doc-1"
+}
+```
+특정 구역·표·셀·문단 아래만 집계하려면 `scope`에 해당 요소의 `nodeId`를 지정합니다.
+```json
+{
+  "documentId": "doc-1",
+  "scope": "n-table1"
+}
+```
+- **응답**: `revision`, `scope`, `sections`(구역 수), `topLevelParagraphs`(구역 직속 최상위 문단 수), `paragraphs`(전체 문단 수), `tables`(표 수), `cells`(셀 수), `pictures`(그림 수), `equations`(수식 수), `fields`(필드 시작 태그 수), `footnotes`(각주 수), `endnotes`(미주 수), `notes`(각주+미주 총합), `memos`(메모 수), `totalChars`(grapheme 기준 전체 글자 수), `totalNodes`(고유 nodeId를 부여받은 노드 총수)가 반환됩니다.
+- **읽기 전용 안전성**: 문서를 전혀 수정하지 않으며, `expectedVersion`이 필요하지 않습니다. 응답의 `revision`으로 조회 기준 시점을 확인합니다.
+
+### ②-3 구역 및 용지·단 목록 조회 (`section_list`, `section.list`)
+문서의 구역(Section) 목록과 각 구역의 용지 크기, 방향, 여백, 단(Column) 설정, 시작 쪽 번호를 content.hpf spine 순서대로 돌려줍니다.
+```json
+{
+  "documentId": "doc-1",
+  "limit": 10
+}
+```
+- **응답**: `revision`, `total`(전체 구역 수), `nextCursor`(다음 페이지 커서), 그리고 구역 배열 `sections`가 반환됩니다. 각 구역 객체는 `section`(0부터 시작하는 spine 순서), `nodeId`, `paragraphs`(구역 내 문단 수), `topLevelParagraphs`(최상위 문단 수), `page`(용지 설정), `column`(단 설정)을 포함합니다.
+- **추측 금지와 출처 명시**: XML에 명시적인 용지 설정(`secPr`/`pagePr`)이나 단 설정(`colPr`)이 없으면 기본값을 임의로 지어내지 않고 `"source": "unspecified"`와 함께 속성값을 `null`로 보고합니다. 명시되어 있는 경우 `"source": "explicit"`와 함께 원본 속성(`rawOrientation: "WIDELY" | "NARROWLY"`, 정규화된 `orientation: "portrait" | "landscape"`, HWPUNIT 단위의 `width`, `height`, 여백 `left`, `right`, `top`, `bottom`, `header`, `footer`, `gutter`, 단 수 `colCount`, 단 종류 `colType`)을 사실 그대로 보고합니다.
+- **커서 페이징**: 큰 문서에서 응답 예산을 초과하지 않도록 `limit`(기본 100, 최대 1000)과 `cursor`(`"<revision>:<offset>"`)를 지원합니다.
+
+### ②-4 각주 및 미주 목록 조회 (`note_list`, `note.list`)
+문서에 포함된 각주(`footnote`)와 미주(`endnote`) 목록을 번호, 담고 있는 본문 문단 nodeId, 텍스트, 참조 위치와 함께 돌려줍니다.
+```json
+{
+  "documentId": "doc-1",
+  "kind": "footnote",
+  "limit": 50
+}
+```
+- **응답**: `revision`, `total`, `nextCursor`, 그리고 각주·미주 항목 배열 `notes`가 반환됩니다. 각 항목은 `kind`(`"footnote"` 또는 `"endnote"`), `number`(정수 번호 또는 `null`), `rawNumber`(XML 원문 표기), `paragraphNodeId`(주석 내부 본문 문단의 nodeId), `text`(주석 본문 텍스트), `referenceParagraphNodeId`(해당 주석이 참조된 본문 문단의 nodeId)를 담습니다.
+- **추측 금지**: XML 속성에 번호가 없으면 임의의 번호를 생성하지 않고 `number: null`로 둡니다.
+- **필터 및 페이징**: `kind`에 `"footnote"` 또는 `"endnote"`를 지정해 원하는 주석만 걸러낼 수 있으며, `limit`와 `cursor`로 페이징을 지원합니다.
+
 ### ③ 텍스트 교체 (`text_replace`)
 문단의 `edits["text.replace"].available`이 true이고 `[0,5)`가 한 `textSpans` 구간에 포함되는지 확인합니다. 찾아낸 문단(`node-p1`)에서 앞의 5글자(`"탐구 보고서"`, 범위 `[0, 5)`)를 `"최종 연구 보고서"`로 바꿉니다. 편집 명령에는 항상 현재 버전 번호를 `expectedVersion`으로 함께 보냅니다.
 ```json

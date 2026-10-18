@@ -126,6 +126,191 @@ fn num(s: Option<String>) -> Option<u32> {
     s.and_then(|v| v.parse().ok())
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DocumentStatsParams {
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentStatsResult {
+    pub document_id: String,
+    pub revision: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    pub sections: usize,
+    pub top_level_paragraphs: usize,
+    pub paragraphs: usize,
+    pub tables: usize,
+    pub cells: usize,
+    pub pictures: usize,
+    pub equations: usize,
+    pub fields: usize,
+    pub footnotes: usize,
+    pub endnotes: usize,
+    pub notes: usize,
+    pub memos: usize,
+    pub total_chars: usize,
+    pub total_nodes: usize,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SectionListParams {
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SectionListResult {
+    pub document_id: String,
+    pub revision: u64,
+    pub sections: Vec<SectionInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    pub total: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SectionInfo {
+    pub section: usize,
+    pub node_id: String,
+    pub paragraphs: usize,
+    pub top_level_paragraphs: usize,
+    pub page: PageSettings,
+    pub column: ColumnSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PageSettings {
+    /// \"explicit\" if found in secPr/pagePr, \"unspecified\" if absent/inherited.
+    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub orientation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_orientation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub margin: Option<PageMargin>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_starts_on: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_page_number: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PageMargin {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub left: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub right: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bottom: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub header: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footer: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gutter: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ColumnSettings {
+    /// \"explicit\" if colPr found, \"unspecified\" if absent.
+    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub col_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub col_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layout: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub same_size: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub same_gap: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NoteListParams {
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteListResult {
+    pub document_id: String,
+    pub revision: u64,
+    pub notes: Vec<NoteItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    pub total: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteItem {
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub number: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_number: Option<String>,
+    pub paragraph_node_id: String,
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference_paragraph_node_id: Option<String>,
+}
+
+fn scan_para_controls(
+    doc: &hae_xml::XmlDoc,
+    el_idx: usize,
+    is_root: bool,
+    fields: &mut usize,
+    footnotes: &mut usize,
+    endnotes: &mut usize,
+    memos: &mut usize,
+) {
+    if !is_root && is_hp(doc.el(el_idx).ns.as_deref()) && doc.el(el_idx).local == "p" {
+        return;
+    }
+    let el = doc.el(el_idx);
+    if is_hp(el.ns.as_deref()) {
+        match el.local.as_str() {
+            "fieldBegin" => {
+                *fields += 1;
+                if el.attr_value("type") == Some("MEMO") {
+                    *memos += 1;
+                }
+            }
+            "footNote" => *footnotes += 1,
+            "endNote" => *endnotes += 1,
+            _ => {}
+        }
+    }
+    for &child in &el.children {
+        scan_para_controls(doc, child, false, fields, footnotes, endnotes, memos);
+    }
+}
+
 impl Document {
     /// Deterministic failures for material edits. No-op requests may bypass the
     /// save gate; those do not constitute an editing capability.
@@ -768,6 +953,459 @@ impl Document {
         Ok(QueryResult {
             matches,
             unaligned_matches: unaligned,
+        })
+    }
+
+    pub fn stats(&self, revision: u64, scope: Option<&str>) -> Result<DocumentStatsResult> {
+        let scope_id = if let Some(target) = scope {
+            let n = self.require(target, None)?;
+            if !matches!(
+                n.kind,
+                Kind::Section | Kind::Table | Kind::Cell | Kind::Paragraph
+            ) {
+                return Err(EngineError::new(
+                    Code::InvalidRequest,
+                    Stage::Query,
+                    format!(
+                        "scope must be section, table, cell, or paragraph, found {:?}",
+                        n.kind
+                    ),
+                ));
+            }
+            Some(target.to_string())
+        } else {
+            None
+        };
+        let in_scope = |m: &Node| {
+            if let Some(target) = scope {
+                m.id == target || self.is_descendant(m, target)
+            } else {
+                true
+            }
+        };
+
+        let mut sections = 0;
+        let mut top_level_paragraphs = 0;
+        let mut paragraphs = 0;
+        let mut tables = 0;
+        let mut cells = 0;
+        let mut pictures = 0;
+        let mut equations = 0;
+        let mut total_nodes = 0;
+        let mut total_chars = 0;
+        let mut scope_paras = Vec::new();
+
+        for n in &self.nodes {
+            if !in_scope(n) {
+                continue;
+            }
+            total_nodes += 1;
+            match n.kind {
+                Kind::Section => sections += 1,
+                Kind::Paragraph => {
+                    paragraphs += 1;
+                    if let Some(parent_id) = &n.parent {
+                        if self
+                            .node(parent_id)
+                            .map(|p| p.kind == Kind::Section)
+                            .unwrap_or(false)
+                        {
+                            top_level_paragraphs += 1;
+                        }
+                    }
+                    if let Ok(pt) = self.para_text(n) {
+                        total_chars += pt.grapheme_len();
+                    }
+                    scope_paras.push(n);
+                }
+                Kind::Table => tables += 1,
+                Kind::Cell => cells += 1,
+                Kind::Picture => pictures += 1,
+                Kind::Equation => equations += 1,
+                Kind::Opaque => {}
+            }
+        }
+
+        let mut fields = 0;
+        let mut footnotes = 0;
+        let mut endnotes = 0;
+        let mut memos = 0;
+
+        for p in scope_paras {
+            let doc = self.doc_of(p);
+            scan_para_controls(
+                doc,
+                p.el,
+                true,
+                &mut fields,
+                &mut footnotes,
+                &mut endnotes,
+                &mut memos,
+            );
+        }
+
+        Ok(DocumentStatsResult {
+            document_id: self.document_id.clone(),
+            revision,
+            scope: scope_id,
+            sections,
+            top_level_paragraphs,
+            paragraphs,
+            tables,
+            cells,
+            pictures,
+            equations,
+            fields,
+            footnotes,
+            endnotes,
+            notes: footnotes + endnotes,
+            memos,
+            total_chars,
+            total_nodes,
+        })
+    }
+
+    pub fn section_list(
+        &self,
+        revision: u64,
+        limit: Option<usize>,
+        cursor: Option<&str>,
+    ) -> Result<SectionListResult> {
+        let mut sections = Vec::new();
+
+        for (si, s_entry) in self.info.sections.iter().enumerate() {
+            let doc = &self.xml[s_entry];
+            let sec_node = self
+                .nodes
+                .iter()
+                .find(|n| n.entry == *s_entry && n.kind == Kind::Section);
+            let node_id = sec_node.map(|n| n.id.clone()).unwrap_or_default();
+
+            let section_paras: Vec<&Node> = self
+                .nodes
+                .iter()
+                .filter(|n| n.section == si && n.kind == Kind::Paragraph)
+                .collect();
+            let paragraphs = section_paras.len();
+            let top_level_paragraphs = section_paras
+                .iter()
+                .filter(|n| {
+                    n.parent
+                        .as_ref()
+                        .and_then(|p| self.node(p))
+                        .map(|pn| pn.kind == Kind::Section)
+                        .unwrap_or(false)
+                })
+                .count();
+
+            let sec_pr_el = doc
+                .iter()
+                .find_map(|(i, el)| (is_hp(el.ns.as_deref()) && el.local == "secPr").then_some(i));
+
+            let page = if let Some(spi) = sec_pr_el {
+                let page_pr_el = doc
+                    .el(spi)
+                    .children
+                    .iter()
+                    .copied()
+                    .find(|&c| is_hp(doc.el(c).ns.as_deref()) && doc.el(c).local == "pagePr");
+
+                if let Some(ppi) = page_pr_el {
+                    let pel = doc.el(ppi);
+                    let raw_orientation = pel.attr_value("landscape").map(str::to_string);
+                    let orientation = match raw_orientation.as_deref() {
+                        Some(s) if s.eq_ignore_ascii_case("WIDELY") => Some("portrait".to_string()),
+                        Some(s) if s.eq_ignore_ascii_case("NARROWLY") => {
+                            Some("landscape".to_string())
+                        }
+                        Some(s) if s.eq_ignore_ascii_case("PORTRAIT") => {
+                            Some("portrait".to_string())
+                        }
+                        Some(s) if s.eq_ignore_ascii_case("LANDSCAPE") => {
+                            Some("landscape".to_string())
+                        }
+                        _ => None,
+                    };
+                    let width = pel.attr_value("width").and_then(|v| v.parse().ok());
+                    let height = pel.attr_value("height").and_then(|v| v.parse().ok());
+
+                    let margin_el =
+                        pel.children.iter().copied().find(|&c| {
+                            is_hp(doc.el(c).ns.as_deref()) && doc.el(c).local == "margin"
+                        });
+                    let margin = margin_el.map(|mi| {
+                        let mel = doc.el(mi);
+                        PageMargin {
+                            left: mel.attr_value("left").and_then(|v| v.parse().ok()),
+                            right: mel.attr_value("right").and_then(|v| v.parse().ok()),
+                            top: mel.attr_value("top").and_then(|v| v.parse().ok()),
+                            bottom: mel.attr_value("bottom").and_then(|v| v.parse().ok()),
+                            header: mel.attr_value("header").and_then(|v| v.parse().ok()),
+                            footer: mel.attr_value("footer").and_then(|v| v.parse().ok()),
+                            gutter: mel.attr_value("gutter").and_then(|v| v.parse().ok()),
+                        }
+                    });
+
+                    let start_num_el =
+                        doc.el(spi).children.iter().copied().find(|&c| {
+                            is_hp(doc.el(c).ns.as_deref()) && doc.el(c).local == "startNum"
+                        });
+                    let page_starts_on = start_num_el
+                        .and_then(|sni| doc.el(sni).attr_value("pageStartsOn").map(str::to_string));
+                    let start_page_number = start_num_el.and_then(|sni| {
+                        doc.el(sni).attr_value("page").and_then(|v| v.parse().ok())
+                    });
+
+                    PageSettings {
+                        source: "explicit".to_string(),
+                        orientation,
+                        raw_orientation,
+                        width,
+                        height,
+                        margin,
+                        page_starts_on,
+                        start_page_number,
+                    }
+                } else {
+                    PageSettings {
+                        source: "unspecified".to_string(),
+                        orientation: None,
+                        raw_orientation: None,
+                        width: None,
+                        height: None,
+                        margin: None,
+                        page_starts_on: None,
+                        start_page_number: None,
+                    }
+                }
+            } else {
+                PageSettings {
+                    source: "unspecified".to_string(),
+                    orientation: None,
+                    raw_orientation: None,
+                    width: None,
+                    height: None,
+                    margin: None,
+                    page_starts_on: None,
+                    start_page_number: None,
+                }
+            };
+
+            let col_pr_el = doc
+                .iter()
+                .find_map(|(i, el)| (is_hp(el.ns.as_deref()) && el.local == "colPr").then_some(i));
+
+            let column = if let Some(cpi) = col_pr_el {
+                let cel = doc.el(cpi);
+                ColumnSettings {
+                    source: "explicit".to_string(),
+                    col_count: cel.attr_value("colCount").and_then(|v| v.parse().ok()),
+                    col_type: cel.attr_value("type").map(str::to_string),
+                    layout: cel.attr_value("layout").map(str::to_string),
+                    same_size: cel.attr_value("sameSz").map(|v| v == "1"),
+                    same_gap: cel.attr_value("sameGap").and_then(|v| v.parse().ok()),
+                }
+            } else {
+                ColumnSettings {
+                    source: "unspecified".to_string(),
+                    col_count: None,
+                    col_type: None,
+                    layout: None,
+                    same_size: None,
+                    same_gap: None,
+                }
+            };
+
+            sections.push(SectionInfo {
+                section: si,
+                node_id,
+                paragraphs,
+                top_level_paragraphs,
+                page,
+                column,
+            });
+        }
+
+        let total = sections.len();
+        let offset = if let Some(c) = cursor {
+            let Some((rev_s, idx_s)) = c.split_once(':') else {
+                return Err(EngineError::new(
+                    Code::InvalidRequest,
+                    Stage::Query,
+                    "invalid section cursor format",
+                ));
+            };
+            let cursor_rev: u64 = rev_s.parse().map_err(|_| {
+                EngineError::new(Code::InvalidRequest, Stage::Query, "invalid cursor rev")
+            })?;
+            if cursor_rev != revision {
+                return Err(EngineError::new(
+                    Code::VersionConflict,
+                    Stage::Query,
+                    format!(
+                        "section cursor belongs to revision {cursor_rev}, current is {revision}"
+                    ),
+                ));
+            }
+            idx_s.parse::<usize>().map_err(|_| {
+                EngineError::new(Code::InvalidRequest, Stage::Query, "invalid cursor index")
+            })?
+        } else {
+            0
+        };
+
+        let limit_val = limit.unwrap_or(100).min(1000);
+        let start = offset.min(total);
+        let end = start.saturating_add(limit_val).min(total);
+        let page_items = sections[start..end].to_vec();
+        let next_cursor = if end < total {
+            Some(format!("{revision}:{end}"))
+        } else {
+            None
+        };
+
+        Ok(SectionListResult {
+            document_id: self.document_id.clone(),
+            revision,
+            sections: page_items,
+            next_cursor,
+            total,
+        })
+    }
+
+    pub fn note_list(
+        &self,
+        revision: u64,
+        filter_kind: Option<&str>,
+        limit: Option<usize>,
+        cursor: Option<&str>,
+    ) -> Result<NoteListResult> {
+        let mut notes = Vec::new();
+
+        for s_entry in &self.info.sections {
+            let doc = &self.xml[s_entry];
+            for (i, el) in doc.iter() {
+                if !is_hp(el.ns.as_deref()) {
+                    continue;
+                }
+                let kind_str = match el.local.as_str() {
+                    "footNote" => "footnote",
+                    "endNote" => "endnote",
+                    _ => continue,
+                };
+
+                if let Some(fk) = filter_kind {
+                    if !fk.eq_ignore_ascii_case(kind_str) {
+                        continue;
+                    }
+                }
+
+                let raw_number = el.attr_value("number").map(str::to_string);
+                let number = raw_number.as_deref().and_then(|v| v.parse().ok());
+
+                let reference_paragraph_node_id = doc
+                    .ancestors(i)
+                    .find(|&a| is_hp(doc.el(a).ns.as_deref()) && doc.el(a).local == "p")
+                    .and_then(|pa| {
+                        self.nodes
+                            .iter()
+                            .find(|n| n.entry == *s_entry && n.el == pa)
+                    })
+                    .map(|n| n.id.clone());
+
+                let sub_list_el = el
+                    .children
+                    .iter()
+                    .copied()
+                    .find(|&c| is_hp(doc.el(c).ns.as_deref()) && doc.el(c).local == "subList");
+
+                let mut note_paras = Vec::new();
+                if let Some(sli) = sub_list_el {
+                    for &c in &doc.el(sli).children {
+                        if is_hp(doc.el(c).ns.as_deref()) && doc.el(c).local == "p" {
+                            if let Some(pn) =
+                                self.nodes.iter().find(|n| n.entry == *s_entry && n.el == c)
+                            {
+                                note_paras.push(pn);
+                            }
+                        }
+                    }
+                }
+
+                let paragraph_node_id = note_paras
+                    .first()
+                    .map(|pn| pn.id.clone())
+                    .unwrap_or_default();
+                let text = if !note_paras.is_empty() {
+                    note_paras
+                        .iter()
+                        .map(|pn| self.node_text(pn))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                } else {
+                    doc.descendants(i)
+                        .filter_map(|d| {
+                            let del = doc.el(d);
+                            (is_hp(del.ns.as_deref()) && del.local == "t")
+                                .then(|| doc.direct_text(d))
+                        })
+                        .collect::<Vec<_>>()
+                        .join("")
+                };
+
+                notes.push(NoteItem {
+                    kind: kind_str.to_string(),
+                    number,
+                    raw_number,
+                    paragraph_node_id,
+                    text,
+                    reference_paragraph_node_id,
+                });
+            }
+        }
+
+        let total = notes.len();
+        let offset = if let Some(c) = cursor {
+            let Some((rev_s, idx_s)) = c.split_once(':') else {
+                return Err(EngineError::new(
+                    Code::InvalidRequest,
+                    Stage::Query,
+                    "invalid note cursor format",
+                ));
+            };
+            let cursor_rev: u64 = rev_s.parse().map_err(|_| {
+                EngineError::new(Code::InvalidRequest, Stage::Query, "invalid cursor rev")
+            })?;
+            if cursor_rev != revision {
+                return Err(EngineError::new(
+                    Code::VersionConflict,
+                    Stage::Query,
+                    format!("note cursor belongs to revision {cursor_rev}, current is {revision}"),
+                ));
+            }
+            idx_s.parse::<usize>().map_err(|_| {
+                EngineError::new(Code::InvalidRequest, Stage::Query, "invalid cursor index")
+            })?
+        } else {
+            0
+        };
+
+        let limit_val = limit.unwrap_or(100).min(1000);
+        let start = offset.min(total);
+        let end = start.saturating_add(limit_val).min(total);
+        let page_items = notes[start..end].to_vec();
+        let next_cursor = if end < total {
+            Some(format!("{revision}:{end}"))
+        } else {
+            None
+        };
+
+        Ok(NoteListResult {
+            document_id: self.document_id.clone(),
+            revision,
+            notes: page_items,
+            next_cursor,
+            total,
         })
     }
 }
