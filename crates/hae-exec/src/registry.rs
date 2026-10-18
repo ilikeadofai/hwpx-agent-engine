@@ -139,7 +139,13 @@ pub struct TextReplaceParams {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FieldListParams {
+    #[serde(default)]
     pub scope: Option<String>,
+    /// Paging cursor from a previous `nextCursor` (`revision:index`).
+    #[serde(default)]
+    pub cursor: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -156,6 +162,7 @@ pub struct FieldListResultShape {
     pub document_id: String,
     pub revision: u64,
     pub fields: Vec<hae_model::fields::FieldInfo>,
+    pub next_cursor: Option<String>,
 }
 
 /// Character properties are deliberately bounded; fontRef is not supported.
@@ -727,13 +734,13 @@ define_commands! {
     },
     FieldList {
         name: "field.list", cli: "field-list", mcp: "field_list",
-        summary: "List field markers, names/IDs, raw Command, current values and safe filling availability in a document or scope",
+        summary: "List field markers, names/IDs, raw Command, current values and safe filling availability in a document or scope, paged with nextCursor",
         category: Query, mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
         stage1: true, reason: None, params: FieldListParams, output: FieldListResultShape,
     },
     FieldSetText {
         name: "field.setText", cli: "field-set-text", mcp: "field_set_text",
-        summary: "Fill CLICKHERE/HYPERLINK text in one paragraph, preserving markers/parameters/runs; rejects ambiguous or unsafe fields",
+        summary: "Fill CLICK_HERE/CLICKHERE/HYPERLINK text in one paragraph, preserving markers/parameters/runs; rejects ambiguous or unsafe fields",
         category: Mutation, mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
         stage1: true, reason: None, params: FieldSetTextParams, output: MutationResultShape,
     },

@@ -224,7 +224,10 @@ impl Document {
                     Some("multi_paragraph_field")
                 } else if nested || crossing {
                     Some("nested_field")
-                } else if !matches!(e.attr_value("type"), Some("CLICKHERE" | "HYPERLINK")) {
+                } else if !matches!(
+                    e.attr_value("type"),
+                    Some("CLICK_HERE" | "CLICKHERE" | "HYPERLINK")
+                ) {
                     Some("unsupported_field_type")
                 } else if lexical {
                     Some("field_lexical_markup")

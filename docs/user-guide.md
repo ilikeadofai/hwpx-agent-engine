@@ -17,6 +17,7 @@
 - **글자 서식 변경 (`text_format`)**: 문단 안의 자소 범위만 굵게·기울임·밑줄·취소선·글자 크기(`100`~`100000` HWPUNIT)·글자색(`#RRGGBB`)으로 바꿉니다. 값이 같은 기존 글자 모양을 재사용하거나 하나를 새로 만들어 붙이고, 범위 밖 글자의 모양은 그대로 둡니다.
 - **표 셀 텍스트 교체 (`cell_set_text`)**: 병합 기준 셀을 포함해 기존 셀의 텍스트를 바꿉니다. 문단 하나는 `text`, 여러 문단은 정확한 기존 문단 수의 `paragraphs` 배열을 줍니다.
 - **그림 교체 (`image_replace`)**: 기존 그림의 위치·크기·캡션을 그대로 유지한 채, 정적 PNG 또는 JPEG 이미지 파일로 교체합니다.
+- **누름틀(필드) 조회와 값 채우기 (`field_list`·`field_set_text`, 0.3)**: 공문서 서식의 누름틀(`CLICK_HERE`)·하이퍼링크(`HYPERLINK`) 필드를 찾아 이름·ID·Command 원문·현재 값·채우기 가능 여부를 조회하고, 필드 마커와 서식을 그대로 둔 채 표시 텍스트만 채웁니다.
 - **되돌리기·다시 실행 및 미리보기**: 작업 전 가상 적용(`dryRun`), 변경 내역 비교(`document_diff`), 실행 취소(`history_undo`)·다시 실행(`history_redo`), 외부 렌더러 연동을 통한 PNG/SVG 미리보기(`document_preview`)를 지원합니다.
 
 ### 하지 않는 것 및 한계 (0.2 제외 범위)
@@ -501,11 +502,13 @@ cell.setText는 실제 존재하는 병합 기준 셀도 지원한다. 한 문�
 
 `field.list` (MCP `field_list`, CLI의 `--command field.list`)는 문서의 필드를 읽기 전용으로 조회합니다. `expectedVersion` 없이 호출하며 선택 `scope`에 문단·표·셀·구역 nodeId를 주면 해당 영역과 교차하는 필드만 나옵니다. 각 항목의 `nodeId`는 **시작 마커를 담은 문단**이며, `paragraphIds`에는 다문단 필드가 걸친 문단이 나옵니다.
 
-결과에는 `type`, `name`, `fieldid`, `id`, 현재 `text`, 빈 값 여부(`empty`), 여러 문단 여부(`multiParagraph`), 중첩 여부(`nested`), 셀 내부 여부(`inCell`), `setTextSupported`와 불가 `reason`이 있습니다. `command`는 Command 파라미터의 해석된 문자열이고 `commandRaw`는 엔터티 표기를 포함한 원래 내부 XML입니다. 필드 이름이 빈 문자열이어도 ID로 선택할 수 있습니다. CLICKHERE·HYPERLINK만 채우기 후보이고 MEMO·교정부호 등은 조회만 가능합니다.
+큰 문서는 `limit`(기본 100, 최대 500)과 `cursor`로 나눠 읽습니다. 결과의 `nextCursor`가 `null`이 아니면 그 값을 그대로 `cursor`에 넣어 다음 쪽을 이어 받습니다. 커서에는 조회 시점 `revision`이 들어 있어, 그 사이 문서가 바뀌면 쪽을 섞지 않고 `VERSION_CONFLICT`로 거절합니다. 커서는 같은 `scope`로 이어서 호출할 때만 의미가 있으므로, 중간에 `scope`를 바꾸려면 첫 쪽부터 다시 읽습니다. 형식이 틀린 커서는 `INVALID_REQUEST`, 목록 밖 인덱스는 빈 쪽과 `null` 커서입니다.
 
 ```json
-{"command":"field.list","params":{}}
+{"command":"field.list","params":{"limit":100,"cursor":"0:100"}}
 ```
+
+결과에는 `type`, `name`, `fieldid`, `id`, 현재 `text`, 빈 값 여부(`empty`), 여러 문단 여부(`multiParagraph`), 중첩 여부(`nested`), 셀 내부 여부(`inCell`), `setTextSupported`와 불가 `reason`이 있습니다. `command`는 Command 파라미터의 해석된 문자열이고 `commandRaw`는 엔터티 표기를 포함한 원래 내부 XML입니다. 필드 이름이 빈 문자열이어도 ID로 선택할 수 있습니다. 한컴이 실제로 쓰는 누름틀 표기는 `CLICK_HERE`이며 합성 픽스처에는 `CLICKHERE` 표기도 있습니다. 이 둘과 `HYPERLINK`만 채우기 후보이고 MEMO·교정부호 등은 조회만 가능합니다. 실제 한컴 서식에서는 `fieldid` 속성이 없고 `id`만 있는 경우가 많아, `fieldid` 선택자는 두 속성을 모두 받습니다.
 
 `field.setText` (MCP `field_set_text`, CLI의 `--command field.setText`)에는 조회 결과의 문단 `target`, 새 `text`, 선택 `name` 또는 `fieldid`를 줍니다. `fieldid`는 XML의 `fieldid` 또는 `id` 중 하나와 일치해야 하며, 두 선택자를 모두 주면 모두 일치해야 합니다. 같은 문단에서 선택자와 일치하는 필드가 여러 개면 **`occurrence`를 명시**해야 합니다(`0`부터 시작). 생략하면 `AMBIGUOUS_TARGET`; 필드나 순번이 없으면 `TARGET_NOT_FOUND`입니다. 이름이 유일한 경우 생략된 순번은 0입니다.
 
@@ -520,4 +523,6 @@ cell.setText는 실제 존재하는 병합 기준 셀도 지원한다. 한 문�
 
 다른 편집과 동일하게 현재 `expectedVersion`이 필요하고, `dryRun`은 실제 적용·이력 없이 독립 검증을 수행합니다. `command.batch`에 넣으면 전체가 한 revision·Undo 단위이며 실패 시 전체를 취소합니다. 재전송도 공통 writer/requestSequence 규칙을 따릅니다. Undo는 원본 HWPX 바이트를 복원하고 Redo는 편집 바이트를 복원합니다. linesegarray·PrvText 갱신 정책과 미편집 ZIP 항목의 압축 바이트·로컬 헤더 보존 계약도 동일합니다.
 
-검증 근거는 `tests/fixtures/editing/fields.hwpx`와 결정론적 생성기 `gen_fields.py`를 사용하는 **합성 시험**입니다. 로컬 입력 문서에는 실제 CLICKHERE가 없어 **실제 공문서/CLICKHERE 양식 검증을 수행하지 못했습니다**. Linux 한컴 열기 게이트는 Windows 한컴 실기 검증이나 내용·조판의 시각 대조를 대신하지 않습니다.
+검증 근거는 두 갈래입니다. 첫째는 결정론적 생성기 `gen_fields.py`가 만드는 합성 픽스처 `tests/fixtures/editing/fields.hwpx`로, 빈 값·다문단·중첩·개체·탭·CDATA·MEMO·표 셀·중복 이름 같은 경계를 시험합니다. 둘째는 저장소에 공개 서식으로 들어 있는 실제 기안문 표본 `tests/fixtures/corpus/gani-gian.hwpx`(누름틀 13개)와 `tests/fixtures/corpus/ilban-gian.hwpx`(누름틀 23개)이며, 두 문서 모두 한컴이 저장한 `type="CLICK_HERE"` 표기를 씁니다. 실제 표본에서는 표 셀 안 누름틀 채우기, `id`로 지목하기, 여러 필드 일괄 채우기와 Undo 뒤 원본 바이트 복원, 한컴 Linux 열기 게이트까지 확인했습니다.
+
+다만 이 표본은 공개 배포된 **서식 파일**이지 사용자가 실제로 쓰는 공문서가 아니며, Windows 한컴오피스 2024에서의 열기·조판 대조는 아직 하지 않았습니다. Linux 한컴 열기 게이트는 프로세스가 살아남았는지만 보고 내용·조판은 대조하지 않습니다.

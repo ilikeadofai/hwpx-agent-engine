@@ -235,6 +235,39 @@ fn add_state_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, state: &
     }
 }
 
+/// Parse a `revision:index` page cursor. The revision must be current so a
+/// client following a cursor never mixes pages from two document states.
+fn cursor_offset(cursor: &str, revision: u64, what: &str) -> Result<usize> {
+    let Some((rev_s, idx_s)) = cursor.split_once(':') else {
+        return Err(EngineError::new(
+            Code::InvalidRequest,
+            Stage::Query,
+            format!("invalid {what} cursor format"),
+        ));
+    };
+    let cursor_rev: u64 = rev_s.parse().map_err(|_| {
+        EngineError::new(
+            Code::InvalidRequest,
+            Stage::Query,
+            format!("invalid {what} cursor revision"),
+        )
+    })?;
+    if cursor_rev != revision {
+        return Err(EngineError::new(
+            Code::VersionConflict,
+            Stage::Query,
+            format!("{what} cursor belongs to revision {cursor_rev}, current is {revision}"),
+        ));
+    }
+    idx_s.parse::<usize>().map_err(|_| {
+        EngineError::new(
+            Code::InvalidRequest,
+            Stage::Query,
+            format!("invalid {what} cursor index"),
+        )
+    })
+}
+
 fn add_op_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, op: &VerifyOperation) {
     match op {
         VerifyOperation::FieldSetText {
@@ -739,33 +772,12 @@ impl SessionExecutor {
                         ));
                     }
                 }
-                let offset = if let Some(c) = &p.cursor {
-                    let Some((rev_s, idx_s)) = c.split_once(':') else {
-                        return Err(EngineError::new(
-                            Code::InvalidRequest,
-                            Stage::Query,
-                            "invalid inspect cursor format",
-                        ));
-                    };
-                    let cursor_rev: u64 = rev_s.parse().map_err(|_| {
-                        EngineError::new(Code::InvalidRequest, Stage::Query, "invalid cursor rev")
-                    })?;
-                    if cursor_rev != s.revision {
-                        return Err(EngineError::new(
-                            Code::VersionConflict,
-                            Stage::Query,
-                            format!(
-                                "inspect cursor belongs to revision {cursor_rev}, current is {}",
-                                s.revision
-                            ),
-                        ));
-                    }
-                    idx_s.parse::<usize>().map_err(|_| {
-                        EngineError::new(Code::InvalidRequest, Stage::Query, "invalid cursor index")
-                    })?
-                } else {
-                    0
-                };
+                let offset = p
+                    .cursor
+                    .as_deref()
+                    .map(|c| cursor_offset(c, s.revision, "document.inspect"))
+                    .transpose()?
+                    .unwrap_or(0);
                 let limit = p.limit.unwrap_or(100).clamp(1, 500);
                 let (items, next) = s.current.doc.inspect(offset, limit);
                 let next_cursor = next.map(|n| format!("{}:{n}", s.revision));
@@ -835,9 +847,20 @@ impl SessionExecutor {
             }
             ParsedCommand::FieldList(p) => {
                 let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
-                let fields = s.current.doc.fields(p.scope.as_deref())?;
+                let offset = p
+                    .cursor
+                    .as_deref()
+                    .map(|c| cursor_offset(c, s.revision, "field.list"))
+                    .transpose()?
+                    .unwrap_or(0);
+                let limit = p.limit.unwrap_or(100).clamp(1, 500);
+                let all = s.current.doc.fields(p.scope.as_deref())?;
+                let start = offset.min(all.len());
+                let end = start.saturating_add(limit).min(all.len());
+                let next = (end < all.len()).then(|| format!("{}:{end}", s.revision));
+                let fields = all[start..end].to_vec();
                 Ok((
-                    json!({"documentId":s.current.doc.document_id,"revision":s.revision,"fields":fields}),
+                    json!({"documentId":s.current.doc.document_id,"revision":s.revision,"fields":fields,"nextCursor":next}),
                     Vec::new(),
                 ))
             }

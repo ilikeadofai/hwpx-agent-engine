@@ -290,6 +290,61 @@ fn field_set_without_text_carrier_uses_existing_run_and_keeps_node_ids() {
     h.export();
 }
 
+#[test]
+fn field_list_pages_with_a_revision_bound_cursor() {
+    let mut h = Harness::new();
+    let all = h.list();
+    assert_eq!(all.len(), 17);
+    let first = q(&mut h.exec, "field.list", json!({"limit":4}));
+    assert_eq!(first["fields"].as_array().unwrap().len(), 4);
+    assert_eq!(first["nextCursor"], "0:4");
+    assert_eq!(first["fields"][0]["id"], all[0]["id"]);
+    let mut seen = first["fields"].as_array().unwrap().clone();
+    let mut cursor = first["nextCursor"].clone();
+    while !cursor.is_null() {
+        let page = q(
+            &mut h.exec,
+            "field.list",
+            json!({"limit":4,"cursor":cursor.clone()}),
+        );
+        seen.extend(page["fields"].as_array().unwrap().clone());
+        cursor = page["nextCursor"].clone();
+    }
+    assert_eq!(seen, all);
+    // limit 0 clamps up, a huge limit clamps down without inventing a cursor.
+    let clamped = q(&mut h.exec, "field.list", json!({"limit":0}));
+    assert_eq!(clamped["fields"].as_array().unwrap().len(), 1);
+    assert_eq!(clamped["nextCursor"], "0:1");
+    let big = q(&mut h.exec, "field.list", json!({"limit":100000}));
+    assert_eq!(big["fields"].as_array().unwrap().len(), 17);
+    assert!(big["nextCursor"].is_null());
+    // A cursor past the end is an empty page, not a wrapped one.
+    let past = q(&mut h.exec, "field.list", json!({"cursor":"0:99"}));
+    assert_eq!(past["fields"].as_array().unwrap().len(), 0);
+    assert!(past["nextCursor"].is_null());
+    for (wrong, code) in [
+        ("garbage", Code::InvalidRequest),
+        ("0:", Code::InvalidRequest),
+        ("x:1", Code::InvalidRequest),
+        ("9:1", Code::VersionConflict),
+    ] {
+        let r = h
+            .exec
+            .call("field.list", json!({"cursor":wrong}), None, false);
+        assert_eq!(r.diagnostics[0].code, code, "{wrong}");
+    }
+    // A cursor from the pre-edit revision is refused instead of mixing pages.
+    assert!(h.set("2", "new", 0, false).ok);
+    let r = h
+        .exec
+        .call("field.list", json!({"cursor":"0:4"}), None, false);
+    assert_eq!(r.diagnostics[0].code, Code::VersionConflict);
+    let page = q(&mut h.exec, "field.list", json!({"limit":4}));
+    assert_eq!(page["nextCursor"], "1:4");
+    assert!(h.exec.call("history.undo", json!({}), Some(1), false).ok);
+    h.original();
+}
+
 fn variant(mut h: Harness, from: &str, to: &str) -> Harness {
     let a = hae_zip::Archive::open(
         include_bytes!("../../../tests/fixtures/editing/fields.hwpx").to_vec(),

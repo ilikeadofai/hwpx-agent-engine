@@ -48,7 +48,10 @@ pub(crate) fn set_text(
         .get(occurrence.unwrap_or(0))
         .ok_or_else(|| fail("field selector not found"))?;
     let start = doc.el(begin);
-    if !matches!(start.attr_value("type"), Some("CLICKHERE" | "HYPERLINK")) {
+    if !matches!(
+        start.attr_value("type"),
+        Some("CLICK_HERE" | "CLICKHERE" | "HYPERLINK")
+    ) {
         return Err(unsupported("unsupported field type"));
     }
     let id = start

@@ -85,3 +85,5 @@ batch 롤백 뒤 현재 문서에서 재조회한다. 코드는 추가하지 않
 0.3 `text.format`은 새 코드를 만들지 않는다. 길이 0·역전·문단 밖 범위는 INVALID_RANGE, CDATA·주석·PI 교차와 해석 불가 속성은 UNSUPPORTED_CONTENT_IN_RANGE, 필드 경계는 field_boundary_in_range, 외부 namespace 요소를 품은 문단은 contains_opaque(UNSUPPORTED)로 0.2와 같은 코드를 쓴다.
 
 0.2 §7-2: text.replaceAll은 건너뛴 일치를 MATCHES_SKIPPED(경고)로, 여러 글자 모양이 합쳐진 일치를 하나의 FORMAT_COLLAPSED(경고, detail.matches)로 알린다. 빈 find·탭/줄바꿈이 든 text는 INVALID_REQUEST, maxMatches가 1..10000 밖이면 INVALID_ARGUMENT, 없는 scope는 TARGET_NOT_FOUND다.
+
+0.3 `field.list`·`field.setText`도 새 코드를 만들지 않는다. 조회는 scope가 문단·표·셀·구역이 아니면 INVALID_ARGUMENT, 없는 scope는 TARGET_NOT_FOUND, 커서 형식 오류는 INVALID_REQUEST, 다른 revision의 커서는 VERSION_CONFLICT다. 편집의 선택자 모호는 AMBIGUOUS_TARGET, 선택자 없음·순번 밖은 TARGET_NOT_FOUND이며, 지원하지 않는 필드 종류와 안전하지 않은 값 영역은 UNSUPPORTED_CONTENT_IN_RANGE에 reason을 담아 거절한다. reason 값: unsupported_field_type, multi_paragraph_field, nested_field, unpaired_field, field_lexical_markup, field_contains_control_or_opaque, no_text_fragment, paragraph_not_editable.
