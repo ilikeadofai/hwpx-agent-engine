@@ -354,7 +354,7 @@ fn every_editing_fixture_and_synthetic_advertisement_survives_executor_verificat
         .filter(|p| p.extension().is_some_and(|e| e == "hwpx"))
         .collect();
     paths.sort();
-    assert_eq!(paths.len(), 18);
+    assert_eq!(paths.len(), 19);
     let mut checked = 0;
     for path in paths {
         let bytes = fs::read(&path).unwrap();

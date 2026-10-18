@@ -674,6 +674,10 @@ impl Document {
                     }
                 }
             }
+            Kind::Equation => {
+                add("equation.setScript", self.equation_script_block_reason(n));
+                add("equation.setProperties", None);
+            }
             Kind::Picture => add("image.replace", self.picture_block_reason(n)),
             _ => {}
         }

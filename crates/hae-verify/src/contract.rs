@@ -65,6 +65,18 @@ pub struct CharProps {
     pub text_color: Option<String>,
 }
 
+/// Equation request properties are independent of the editor's type.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EquationProps {
+    pub base_line: Option<u32>,
+    pub text_color: Option<String>,
+    pub font: Option<String>,
+    pub base_unit: Option<u32>,
+    pub line_mode: Option<String>,
+    pub version: Option<String>,
+}
+
 /// Paths count ELEMENT children, root = []. Requests are applied in order to
 /// an independently derived state, never to editor-produced text. A range is
 /// measured in extended graphemes of that step's pre-edit paragraph.
@@ -98,6 +110,18 @@ pub enum VerifyOperation {
         path: Vec<usize>,
         width: Option<u32>,
         height: Option<u32>,
+    },
+    #[serde(rename = "equation.setScript")]
+    EquationSetScript {
+        entry: String,
+        path: Vec<usize>,
+        script: String,
+    },
+    #[serde(rename = "equation.setProperties")]
+    EquationSetProperties {
+        entry: String,
+        path: Vec<usize>,
+        props: EquationProps,
     },
     #[serde(rename = "text.format")]
     TextFormat {
@@ -179,6 +203,8 @@ impl VerifyOperation {
             | Self::TableSetRowHeights { entry, path, .. }
             | Self::CellSetFormat { entry, path, .. }
             | Self::CellSetSize { entry, path, .. }
+            | Self::EquationSetScript { entry, path, .. }
+            | Self::EquationSetProperties { entry, path, .. }
             | Self::TextFormat { entry, path, .. }
             | Self::TextReplace { entry, path, .. }
             | Self::CellSetText { entry, path, .. }

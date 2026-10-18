@@ -291,8 +291,16 @@ fn unsupported_text_attributes_and_grapheme_edges_are_not_advertised() {
     let eq = fixture(r#"<hp:p><hp:run><hp:equation/></hp:run></hp:p>"#);
     let n = eq.nodes.iter().find(|n| n.kind == Kind::Equation).unwrap();
     let v = serde_json::to_value(eq.outline(n)).unwrap();
-    assert_eq!(v["edits"], serde_json::json!({}));
-    assert_eq!(v["editable"], false);
+    // An equation is now editable through its own property command. A bare
+    // <hp:equation/> has no hp:script, so the script command reports itself
+    // unavailable with a reason instead of promising an edit it cannot make.
+    assert_eq!(v["edits"]["equation.setProperties"]["available"], true);
+    assert_eq!(v["edits"]["equation.setScript"]["available"], false);
+    assert_eq!(
+        v["edits"]["equation.setScript"]["reason"],
+        "equation_script_shape"
+    );
+    assert_eq!(v["editable"], true);
     assert!(v.get("textSpans").is_none());
 }
 

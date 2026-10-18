@@ -20,7 +20,7 @@
 - **되돌리기·다시 실행 및 미리보기**: 작업 전 가상 적용(`dryRun`), 변경 내역 비교(`document_diff`), 실행 취소(`history_undo`)·다시 실행(`history_redo`), 외부 렌더러 연동을 통한 PNG/SVG 미리보기(`document_preview`)를 지원합니다.
 
 ### 하지 않는 것 및 한계 (0.2 제외 범위)
-- **전체 HWP/HWPX 기능 지원 아님**: 문단 추가·삭제·합치기·나누기, 표의 행·열 추가 및 삭제, 셀 병합 구조나 문단 수 변경, 수식 새로 만들기 및 편집, 도형 편집, 구형 `.hwp`(HWP5 바이너리) 파일 읽기·쓰기는 0.2에서도 지원하지 않습니다.
+- **전체 HWP/HWPX 기능 지원 아님**: 문단 추가·삭제·합치기·나누기, 표의 행·열 추가 및 삭제, 셀 병합 구조나 문단 수 변경, 수식 새로 만들기, 도형 편집, 구형 `.hwp`(HWP5 바이너리) 파일 읽기·쓰기는 0.2에서도 지원하지 않습니다.
 - **읽기 전용 문서**: 암호화된 문서는 열지 않으며, 전자서명이나 변경 추적(Track Changes)이 들어 있는 문서는 열어서 내용을 조회하거나 무편집 상태로 내보내는 것만 허용하고 편집은 거절합니다.
 - **외부 렌더러 별도 준비 필요**: 이 엔진에는 미리보기 렌더러가 내장되어 있지 않습니다. `document_preview`를 사용하려면 별도의 `rhwp` 실행 파일, `bubblewrap`(`bwrap`) 샌드박스 도구, 읽을 수 있는 글꼴 폴더를 환경 변수(`HAE_RHWP`, `HAE_BWRAP`, `HAE_FONT_DIR`)로 직접 지정해야 합니다.
 - **엔진 구현 완료 범위와 Windows 한컴오피스 실기 호환성(단계 4 예정)의 구분**: 현재 엔진의 파일 편집·보존 검증·격리 미리보기 기능은 구현되어 있으나, 수정된 문서를 실제 Windows 한컴오피스(한글)에서 열었을 때의 실기 호환성 및 조판 대조 검증(단계 4)은 별도 확인 대상입니다. `document_preview`가 만드는 SVG/PNG 이미지와 쪽 번호는 외부 렌더러(`rhwp`)가 어림잡아 계산한 **추정치**이므로 실제 Windows 한컴오피스의 줄바꿈·쪽 나눔·표현 범위와 100% 일치한다고 보장하지 않습니다.
@@ -551,3 +551,31 @@ cell.setText는 실제 존재하는 병합 기준 셀도 지원한다. 한 문�
 ```
 
 결과에는 `replacementCount`, `paragraphCount`, `skippedCount`, `skipped[]`, `matches[]`(앞 200곳 미리보기)와 `changedIds`가 담깁니다. 일치는 명령 시작 시점의 문단 기준 grapheme `range`로 보고합니다. 바꾼 문단마다 줄 배치 캐시를 지우는 규칙은 `command.batch`와 같아, 구역마다 가장 앞서 바뀐 최상위 문단(셀은 표를 담은 최상위 문단)부터 구역 끝까지 지웁니다. PrvText는 문단 옛 문장이 미리보기에서 한 번만 나올 때만 바뀌고 아니면 `stale`로 알립니다. 잠긴 문단(불투명 요소가 가리키는 문단 등)은 건너뜁니다. 수식·필드의 내용은 어떤 경우에도 바꾸지 않습니다.
+
+## 수식 조회·편집 (0.3)
+
+기존 수식은 `equation.list` / MCP `equation_list`로 찾습니다. `scope`는 문단·구역·표·셀·수식의 nodeId이며 자신과 하위 요소를 포함합니다. `limit`은 1~500(기본 100), `nextCursor`를 다음 호출의 `cursor`에 그대로 줍니다. 커서는 문서·scope·revision에 묶이고 편집·Undo 후에는 다시 조회합니다. 수식이 없는 범위는 빈 `items`와 `nextCursor: null`입니다.
+
+각 항목은 수식 `nodeId`, 담은 문단 `paragraphNodeId`, XML의 수식 `id`, `script`, `scriptRaw`, `shapeComment`, `size`(hp:sz의 모든 속성), `baseLine`, `textColor`, `font`, `baseUnit`, `lineMode`, `version`, `textWrap`, `textFlow`, `treatAsChar`를 반환합니다. `script`는 XML 엔티티를 해석한 수식 문자열이고, **`scriptRaw`는 엔티티 표기를 포함한 hp:script 내부 XML 원문**입니다. 빈 스크립트는 `""`, 누락된/중복된 script는 `null`입니다. CDATA는 조회할 수 있지만 편집은 거절합니다. `equation.get` / `equation_get`의 `target`은 수식 nodeId이며 같은 항목과 문단 앞 60자소의 `paragraphTextPreview`를 `equation` 아래 반환합니다.
+
+`equation.setScript` / `equation_set_script`:
+
+```json
+{"target":"수식-nodeId","script":"{x} over {2} + a < b & c"}
+```
+
+사용자는 XML로 미리 이스케이프하지 않은 스크립트를 줍니다. 엔진은 `text.replace`와 같은 XML 텍스트 이스케이프 경로를 사용합니다. 수식 속성·크기·위치·바깥 여백·설명은 원본 바이트를 보존합니다. 빈 script 요소(`hp:script/` 포함)는 채울 수 있지만 없는 script를 새로 만들지는 않습니다. 수식 모델 노드도 추가하지 않습니다. 같은 문자열 요청은 원본 엔티티 표기까지 보존하는 noop입니다.
+
+빈/공백 전용 문자열과 XML 금지 문자는 `INVALID_REQUEST`입니다. 원본 script의 CDATA·주석·PI·자식 요소·속성·중복/누락, 새 문자열의 역슬래시·큰따옴표·제어 문자(탭/줄바꿈 포함)·`<!`/`<?` 표기·맞지 않는 중괄호는 `UNSUPPORTED`로 거절합니다. 역슬래시/큰따옴표의 수식 전용 이스케이프 규칙은 확인하지 못했으므로 변환하거나 추측하지 않습니다. HWP 수식 문자열의 전체 문법·명령어 및 LaTeX/MathML 변환은 검증하지 않습니다. 보통 문자, 중괄호 그룹, `over`, `TIMES` 등 입력은 문자열 그대로 보존합니다. 수식의 수학적 의미나 조판이 유효하다는 보장은 별도 네이티브 확인이 필요합니다.
+
+`equation.setProperties` / `equation_set_properties`:
+
+```json
+{"target":"수식-nodeId","props":{"baseLine":70,"textColor":"#123456","font":"HancomEQN","baseUnit":1200,"lineMode":"CHAR","version":"Equation Version 60"}}
+```
+
+여섯 속성 중 지정한 것만 바꿉니다. 최소 하나가 필요합니다. `baseLine`은 uint32, `baseUnit`은 양의 uint32, 색은 `#RRGGBB`, `lineMode`는 `CHAR` 또는 `LINE`, font/version은 제어 문자 없는 비어 있지 않은 XML 문자열입니다. 글꼴의 설치 여부·version의 네이티브 지원 여부는 검사하지 않습니다. script와 hp:sz는 바이트 그대로 보존하며 새 크기를 계산하지 않습니다. 요청한 속성이 없으면 기존 equation 시작 태그에 그 속성만 추가합니다.
+
+두 편집은 현재 `expectedVersion`, `dryRun`, `command.batch`, Undo/Redo를 지원합니다(MCP에서는 이 필드를 인자에 포함). batch 전체가 한 revision·Undo 단위이며 나중 단계 거절 시 전체를 취소합니다. 기존 linesegarray E 정책(수식이 든 문단부터 구역 끝 + 편집한 중첩 문단)을 적용하고, 문단의 표시 텍스트는 바꾸지 않으므로 PrvText는 그대로 둡니다. 미편집 ZIP 항목의 원시 압축 데이터·로컬 헤더를 보존합니다. 독립 저장 검증기는 원본 + 요청에서 기대 변경을 계산해 다른 수식, 크기, 위치, 설명, 요청 밖 속성 또는 원문 재인코딩을 거절합니다.
+
+속성 근거: 한컴 공개 [EquationType](https://github.com/hancom-io/hwpx-owpml-model/blob/main/OWPML/Class/Para/EquationType.h)와 [lineMode 정의](https://github.com/hancom-io/hwpx-owpml-model/blob/main/OWPML/Class/enumdef.h). [공식 도움말](https://help.hancom.com/hoffice110/ko-KR/Hwp/insert/equation/equation.htm)은 `1 over 2` 스크립트 입력을 설명합니다. 이 자료만으로 수식 전용 이스케이프 문법 전체를 확인했다고 주장하지 않습니다.

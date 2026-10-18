@@ -100,3 +100,11 @@ python3 -m unittest discover -s tests/oracle
 - `crates/hae-verify/src/image.rs` — 그림
 - `crates/hae-verify/src/contract.rs` — 요청(`VerifyOperation`) 정의
 - `crates/hae-verify/tests/` — 거절·수용 시험
+
+## 수식 편집 추가 (0.3)
+
+`equation.setScript`와 `equation.setProperties`는 `crates/hae-verify/src/equation.rs`의 독립 구현으로 원본 XML + 요청만에서 기대 바이트를 계산합니다. 편집기/모델에 의존하지 않습니다. script 텍스트 변경은 XML escape_text를 사용하며 속성·sz·pos·outMargin·shapeComment·다른 수식·원문 표기는 그대로 요구합니다. 속성 편집은 요청한 여섯 속성만 허용하고 script·sz를 그대로 요구합니다. linesegarray E 정책과 기존 PrvText 정책을 유지합니다. `verify_archive`는 미편집 항목의 원시 압축 데이터/로컬 헤더 보존까지 요구합니다.
+
+지원하지 않는 원본 script 마크업 및 확인되지 않은 역슬래시/큰따옴표/제어문자 표기는 거절합니다. 전체 HWP 수식 문법이나 조판 검증은 하지 않습니다. `crates/hae-verify/tests/equations.rs`는 hae-edit/hae-model을 사용하지 않고 후보를 손으로 구성합니다.
+
+로컬 한컴 게이트(2026-10-18, hoffice-hwp 11.20.0.989 offscreen): `tests/fixtures/editing/equations.hwpx`에 `equation.setScript`와 `equation.setProperties`를 적용해 `document.export`한 산출물 1건이 PASS(생존)했습니다. 이는 "열렸는가"만 본 결과이며 Windows 한컴오피스 2024의 조판·화면 일치를 뜻하지 않습니다.

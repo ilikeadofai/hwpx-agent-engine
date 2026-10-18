@@ -5,6 +5,7 @@
 //! invalidation and PrvText run once at the end of a batch (spec §8, §11).
 
 mod char_format;
+mod equation;
 mod format;
 mod image;
 mod replace_all;
@@ -20,6 +21,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 pub use char_format::CharProps;
+pub use equation::EquationProps;
 pub use format::{Alignment, LineSpacing};
 pub use image::ImageBytes;
 pub use replace_all::{
@@ -49,6 +51,14 @@ pub enum EditOp {
         target: String,
         width: Option<u32>,
         height: Option<u32>,
+    },
+    EquationSetScript {
+        target: String,
+        script: String,
+    },
+    EquationSetProperties {
+        target: String,
+        props: EquationProps,
     },
     TextFormat {
         target: String,
@@ -97,6 +107,8 @@ impl EditOp {
             | EditOp::TableSetRowHeights { target, .. }
             | EditOp::CellSetFormat { target, .. }
             | EditOp::CellSetSize { target, .. }
+            | EditOp::EquationSetScript { target, .. }
+            | EditOp::EquationSetProperties { target, .. }
             | EditOp::TextFormat { target, .. }
             | EditOp::TextReplace { target, .. }
             | EditOp::ParagraphFormat { target, .. }
@@ -130,6 +142,18 @@ pub enum Intent {
         entry: String,
         path: Vec<usize>,
         format: CellFormat,
+    },
+    #[serde(rename = "equation.setScript")]
+    EquationSetScript {
+        entry: String,
+        path: Vec<usize>,
+        script: String,
+    },
+    #[serde(rename = "equation.setProperties")]
+    EquationSetProperties {
+        entry: String,
+        path: Vec<usize>,
+        props: EquationProps,
     },
     #[serde(rename = "text.format")]
     TextFormat {
@@ -334,6 +358,12 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
                 width,
                 height,
             } => table::cell_size(&mut d, target, *width, *height),
+            EditOp::EquationSetScript { target, script } => {
+                equation::set(&mut d, target, Some(script), None)
+            }
+            EditOp::EquationSetProperties { target, props } => {
+                equation::set(&mut d, target, None, Some(props))
+            }
             EditOp::TextFormat {
                 target,
                 range,
