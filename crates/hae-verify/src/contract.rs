@@ -252,6 +252,14 @@ pub enum VerifyOperation {
         #[serde(default)]
         preserve: bool,
     },
+    /// Label → value form fill. The gate derives the label cells, the
+    /// right/below target cell, emptiness and the skip set itself.
+    #[serde(rename = "form.fill")]
+    FormFill {
+        values: BTreeMap<String, String>,
+        scope: Option<VerifyScope>,
+        strict: bool,
+    },
     #[serde(rename = "paragraph.format")]
     ParagraphFormat {
         entry: String,
@@ -285,7 +293,7 @@ impl VerifyOperation {
             Self::HeaderSetText { entry, path, .. } | Self::ImageFit { entry, path, .. } => {
                 (entry, path)
             }
-            Self::TextReplaceAll { scope, .. } => scope
+            Self::TextReplaceAll { scope, .. } | Self::FormFill { scope, .. } => scope
                 .as_ref()
                 .map_or(("", &[][..]), |s| (s.entry.as_str(), s.path.as_slice())),
             Self::TableSetColumnWidths { entry, path, .. }

@@ -7,6 +7,7 @@
 mod char_format;
 mod equation;
 mod fit;
+mod form_fill;
 mod format;
 mod image;
 mod narrow;
@@ -26,6 +27,11 @@ use std::sync::Arc;
 pub use char_format::CharProps;
 pub use equation::EquationProps;
 pub use fit::FitMode;
+pub use form_fill::{
+    FilledCell, FormFillIntent, FormFillReport, SkippedFill, SKIP_AMBIGUOUS_LABEL,
+    SKIP_AMBIGUOUS_TARGET, SKIP_CONFLICTING_TARGET, SKIP_LABEL_NOT_FOUND, SKIP_NO_CELL_GEOMETRY,
+    SKIP_NO_TARGET_CELL, SKIP_TARGET_NOT_EMPTY,
+};
 pub use format::{Alignment, LineSpacing};
 pub use image::ImageBytes;
 pub use replace_all::{
@@ -126,6 +132,12 @@ pub enum EditOp {
         paragraphs: Vec<String>,
         preserve: bool,
     },
+    /// Label-based form fill over tables (0.3 TB-07).
+    FormFill {
+        values: BTreeMap<String, String>,
+        scope: Option<String>,
+        strict: bool,
+    },
     ImageReplace {
         target: String,
         image: ImageBytes,
@@ -153,7 +165,9 @@ impl EditOp {
             | EditOp::CellSetText { target, .. }
             | EditOp::CellSetParagraphs { target, .. }
             | EditOp::ImageReplace { target, .. } => target,
-            EditOp::TextReplaceAll { scope, .. } => scope.as_deref().unwrap_or(""),
+            EditOp::TextReplaceAll { scope, .. } | EditOp::FormFill { scope, .. } => {
+                scope.as_deref().unwrap_or("")
+            }
         }
     }
 }
@@ -271,6 +285,9 @@ pub enum Intent {
         #[serde(rename = "imageSha256")]
         image_sha256: String,
     },
+    /// One entry per `form.fill` step: every label → value applied to a cell.
+    #[serde(rename = "form.fill")]
+    FormFill { fills: Vec<FormFillIntent> },
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -302,6 +319,8 @@ pub struct Applied {
     pub cache_removals: BTreeMap<String, usize>,
     /// One report per `text.replaceAll` step, in step order.
     pub replace_all: Vec<ReplaceAllReport>,
+    /// One report per `form.fill` step, in step order.
+    pub form_fill: Vec<FormFillReport>,
 }
 
 /// Work-in-progress state while applying a batch.
@@ -316,6 +335,7 @@ pub(crate) struct Draft {
     /// (old display text, new display text) of edited paragraphs for PrvText.
     pub prv: Vec<(String, String)>,
     pub replace_all: Vec<ReplaceAllReport>,
+    pub form_fill: Vec<FormFillReport>,
 }
 
 impl Draft {
@@ -403,6 +423,7 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
         anchors: BTreeMap::new(),
         prv: Vec::new(),
         replace_all: Vec::new(),
+        form_fill: Vec::new(),
     };
     for (i, op) in ops.iter().enumerate() {
         let r = match op {
@@ -475,6 +496,11 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
                 paragraphs,
                 preserve,
             } => text::cell_set_text(&mut d, target, None, Some(paragraphs), *preserve),
+            EditOp::FormFill {
+                values,
+                scope,
+                strict,
+            } => form_fill::form_fill(&mut d, values, scope.as_deref(), *strict),
             EditOp::ParagraphFormat {
                 target,
                 alignment,
@@ -497,12 +523,14 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
             doc: doc.clone(),
             changed_ids: Vec::new(),
             resource_changes: Vec::new(),
-            // Only text.replaceAll can report (skipped matches) without a change.
+            // Only text.replaceAll and form.fill can report (skipped matches
+            // or labels) without a change.
             diagnostics: d.diags,
             intents: Vec::new(),
             stale: Staleness::default(),
             cache_removals: BTreeMap::new(),
             replace_all: d.replace_all,
+            form_fill: d.form_fill,
         });
     }
     let cache_removals = clear_caches(&mut d)?;
@@ -518,6 +546,7 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
         stale,
         cache_removals,
         replace_all: d.replace_all,
+        form_fill: d.form_fill,
     })
 }
 

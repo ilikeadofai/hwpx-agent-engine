@@ -138,7 +138,11 @@ fn view(doc: &XmlDoc, p: usize) -> View {
     }
     out
 }
-fn new_text(s: &str) -> Result<()> {
+/// Display text of one paragraph, derived here (never from the editor model).
+pub(crate) fn paragraph_text(doc: &XmlDoc, p: usize) -> String {
+    view(doc, p).text
+}
+pub(crate) fn new_text(s: &str) -> Result<()> {
     if s.chars()
         .any(|c| !is_xml_char(c) || ['\t', '\n', '\r'].contains(&c))
     {
@@ -148,6 +152,7 @@ fn new_text(s: &str) -> Result<()> {
     }
     Ok(())
 }
+
 fn plain_attrs(doc: &XmlDoc, t: usize) -> Result<()> {
     for a in &doc.el(t).attrs {
         if a.qname == "xmlns" || a.qname.starts_with("xmlns:") {

@@ -30,6 +30,7 @@
 | CONTROLS_PRESERVED | 0.2 §3 | 1 | (경고) 범위 내 개체·탭·줄바꿈 유지. detail.count는 유지 수, detail.offsets는 그 개체들의 변경 후 문단 grapheme 오프셋 배열(원래 순서) |
 | FORMAT_COLLAPSED | §6 | 1 | (경고) 여러 글자 모양이 하나로 합쳐짐 |
 | MATCHES_SKIPPED | 0.2 §7-2 | 1 | (경고) text.replaceAll이 건너뛴 일치가 있음. detail.count는 총 건너뛴 수, detail.reasons[]는 사유별 {reason, count, locations[{nodeId, range}] 최대 50, locationsTruncated}. 사유: crosses_control(개체·탭·줄바꿈·필드 표식을 가로지름), grapheme_boundary(자소 경계가 맞지 않음), unsupported_markup(CDATA·주석·PI·리터럴 제어문자·해석 불가 속성 등), paragraph_not_editable(잠긴 문단 또는 불투명 요소가 가리키는 문단). range는 명령 전 문단의 grapheme 반열린 구간이며 경계가 맞지 않으면 바깥쪽으로 올린 구간 |
+| FORM_FILL_SKIPPED | 추가 | 1 | (경고) form.fill이 strict:false에서 채우지 못한 라벨이 있음. detail.count와 detail.skipped[]({label, reason, detail?}) 참고 |
 | RENDERER_UNAVAILABLE | §9 | 3 | 렌더러 없음·격리 미검증. 단계 1·2는 항상 이 코드 |
 | PREVIEW_PAGE_LIMIT | §10 | 3 | (경고) 100쪽 초과로 partial |
 | INVALID_REQUEST | 추가 | 1 | 요청 형식 오류·정의되지 않은 속성 |
@@ -106,3 +107,5 @@ batch 롤백 뒤 현재 문서에서 재조회한다. 코드는 추가하지 않
 | `INVALID_REQUEST` | `non_positive_body_area` | 용지·여백·제본을 반영한 본문 폭 또는 높이가 0 이하 |
 | `INVALID_REQUEST` | (없음) | 빈 편집, 잘못된 enum/범위/자료형, scope와 sectionIndex 동시 지정 |
 | `VERIFY_FAILED` | 기존 검증 reason | 원본과 요청에서 독립 도출한 결과와 후보가 다름. 요청 밖 속성·구역·순서·ZIP 재인코딩 포함 |
+
+0.3 `form.fill`: strict(기본)에서 하나라도 실패하면 아무것도 바꾸지 않고 거절한다. 사유가 모두 label_not_found면 TARGET_NOT_FOUND, 모두 ambiguous_label이면 AMBIGUOUS_TARGET, 그 밖에는 UNSUPPORTED이며 세 경우 모두 `reason: "form_fill_rejected"`와 `detail.failures[]`(라벨별 `{label, reason, detail?}`)를 담는다. strict:false는 성공한 라벨만 적용하고 건너뛴 라벨을 결과 `skipped[]`와 FORM_FILL_SKIPPED(경고)로 보고한다. 라벨별 `reason` 문자열은 진단 코드가 아닌 지원 사유다: `label_not_found`(일치 셀 없음), `ambiguous_label`(일치 셀 2개 이상), `no_cell_geometry`(라벨 셀에 cellAddr 없음), `no_target_cell`(오른쪽·아래 셀 없음), `ambiguous_target`(오른쪽 또는 아래 후보가 2개 이상), `target_not_empty`(대상 셀에 이미 글자 있음), `conflicting_target`(두 라벨이 같은 셀을 가리킴), 그리고 대상 셀의 cell.setText 거절 사유(`nested_cell`·`nested_table`·`cell_paragraph_count`·`no_run`·`verify_unsupported_markup`·`unsupported_content_in_range`·`verify_no_top_level_paragraph`·잠금 사유). 빈 `values`·빈 라벨·여러 줄 라벨·빈 값·탭/줄바꿈이 든 값은 INVALID_ARGUMENT, `scope`가 표·구역이 아니면 UNSUPPORTED(`form_scope`), 없는 scope nodeId는 TARGET_NOT_FOUND다.

@@ -16,6 +16,7 @@
 - **문단 서식 변경 (`paragraph_format`)**: 문단의 정렬 방식(왼쪽·가운데·오른쪽·양쪽·배분·나눔 정렬)과 백분율 줄간격(`1%~1000%`, 정수 `1`~`1000`)을 바꿉니다. 문서 전체 스타일은 건드리지 않고 대상 문단에만 적용합니다.
 - **글자 서식 변경 (`text_format`)**: 문단 안의 자소 범위만 굵게·기울임·밑줄·취소선·글자 크기(`100`~`100000` HWPUNIT)·글자색(`#RRGGBB`)으로 바꿉니다. 값이 같은 기존 글자 모양을 재사용하거나 하나를 새로 만들어 붙이고, 범위 밖 글자의 모양은 그대로 둡니다.
 - **표 셀 텍스트 교체 (`cell_set_text`)**: 병합 기준 셀을 포함해 기존 셀의 텍스트를 바꿉니다. 문단 하나는 `text`, 여러 문단은 정확한 기존 문단 수의 `paragraphs` 배열을 줍니다.
+- **라벨로 양식 채우기 (`form_fill`)**: 표에서 라벨 글자("성명" 등)와 정확히 같은 셀을 찾아, 같은 행 오른쪽(없으면 바로 아래)의 **비어 있는** 셀에 값을 채웁니다. 실패한 라벨은 사유와 함께 보고하고, 기본 `strict`에서는 하나라도 실패하면 아무것도 바꾸지 않습니다.
 - **그림 교체 (`image_replace`)**: 기존 그림의 위치·크기·캡션을 그대로 유지한 채, 정적 PNG 또는 JPEG 이미지 파일로 교체합니다.
 - **구역 용지·여백·쪽 번호·표시 설정 (0.3, `section.*`)**: 기존 구역 하나의 용지 방향·크기·제본 방식·여백, 쪽 시작 방식과 시작 번호, 첫 쪽 머리말·꼬리말·쪽 번호 숨김과 테두리·채우기 표시, 격자를 조회하고(`section_get_page`) 지정한 항목만 바꿉니다(`section_set_page`, `section_set_page_numbering`, `section_set_visibility`). 조회 값은 XML에 명시된 것만 `explicit`으로, 없는 값은 `unspecified`로 구분해 알려 주며 상속·기본값을 추측하지 않습니다. 자세한 내용은 아래 0.3절 「구역 용지·여백·쪽 번호·표시 설정」을 보세요.
 - **되돌리기·다시 실행 및 미리보기**: 작업 전 가상 적용(`dryRun`), 변경 내역 비교(`document_diff`), 실행 취소(`history_undo`)·다시 실행(`history_redo`), 외부 렌더러 연동을 통한 PNG/SVG 미리보기(`document_preview`)를 지원합니다.
@@ -352,6 +353,23 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 - **원자성**: 하나라도 실패하면 문서는 그대로입니다. 성공하면 한 번의 `history_undo`로 원본 바이트까지 되돌립니다. 응답의 `matches`는 앞의 200곳만 미리보기로 담습니다(개수는 `replacementCount`가 정확합니다).
 - 글자 모양이 다른 run에 걸친 일치는 첫 글자의 모양으로 합쳐지며 `FORMAT_COLLAPSED` 경고가 붙습니다.
 
+### ③-3 라벨로 양식 채우기 (`form_fill`)
+공문서 서식은 "성명", "소속" 같은 **라벨 셀 옆에 빈 셀**이 있는 표 구조가 많습니다. `form_fill`은 라벨 글자로 대상 셀을 찾아 값을 채웁니다. 표 셀 하나씩 `cell_set_text`로 찾아다니지 않아도 됩니다.
+```json
+{
+  "documentId": "doc-1",
+  "expectedVersion": 3,
+  "values": { "성명": "홍길동", "소속": "○○고등학교" }
+}
+```
+- **찾는 규칙**: `values`의 각 라벨과 **글자가 정확히 같은 셀**(표 셀 텍스트 전체)을 찾습니다. 값은 그 셀의 **같은 행 오른쪽 셀**에 넣고, 오른쪽 셀이 없으면 **바로 아래 셀**에 넣습니다. 대상 셀은 비어 있어야 합니다(문단이 여러 개면 첫 문단에만 값이 들어가고 나머지 빈 문단은 그대로입니다). 병합 기준 셀도 `cell_set_text`와 같은 규칙으로 채웁니다.
+- **추측하지 않음**: 라벨이 없거나, 같은 라벨 셀이 둘 이상이거나, 오른쪽·아래 후보가 둘 이상이거나, 대상 셀에 이미 글자가 있거나, 대상 셀이 구조적으로 채울 수 없으면(중첩 표·`no_run`·해석 불가 마크업 등) 그 라벨은 실패로 보고합니다. 라벨 문자열은 정확히 비교하므로 공백 하나만 달라도 일치하지 않습니다. 대신 `scope`에 표나 구역 `nodeId`를 주면 찾는 범위를 좁혀 같은 라벨이 여러 표에 있는 서식을 구분할 수 있습니다.
+- **strict (기본 true)**: 실패한 라벨이 하나라도 있으면 **아무것도 바꾸지 않고** 거절하며 `detail.failures[]`에 라벨별 `{label, reason, detail?}`를 담습니다. 모든 실패가 없는 라벨이면 `TARGET_NOT_FOUND`, 모두 여러 셀 일치면 `AMBIGUOUS_TARGET`, 그 밖에는 `UNSUPPORTED`(`reason: "form_fill_rejected"`)입니다.
+- **strict: false**: 채울 수 있는 라벨만 적용하고 나머지를 결과 `skipped[]`와 `FORM_FILL_SKIPPED` 경고로 보고합니다. 라벨별 `reason`은 `label_not_found`, `ambiguous_label`, `no_cell_geometry`, `no_target_cell`, `ambiguous_target`, `target_not_empty`, `conflicting_target`, `nested_table` 같은 셀 사유입니다.
+- **한 번의 되돌리기**: 성공한 호출은 버전을 1 올리고 하나의 `history_undo`로 원본 바이트까지 되돌립니다. `command_batch`의 한 단계로 넣을 수도 있고, 그때는 `formFill` 배열에 단계별 보고가 담깁니다.
+- **미리보기**: `dryRun: true`로 결과를 확인해도 문서·버전·이력은 바뀌지 않습니다.
+- **주의**: `values`가 비었거나 라벨·값이 비었거나 탭·줄바꿈이 들어 있으면 `INVALID_ARGUMENT`, `scope`가 표·구역이 아니면 `UNSUPPORTED`(`form_scope`), 없는 `scope` nodeId는 `TARGET_NOT_FOUND`입니다.
+
 ### ④ 문단 정렬 및 줄간격 변경 (`paragraph_format`)
 제목 문단(`node-p1`)을 가운데 정렬(`center`)하고 줄간격을 160%로 맞춥니다. 줄간격(`lineSpacing.value`)은 `1`부터 `1000`까지의 정수 백분율(`1%~1000%`)을 지정할 수 있습니다. 직전 편집으로 버전이 `1`이 되었으므로 `expectedVersion: 1`을 넣습니다.
 ```json
@@ -479,6 +497,7 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 | `RANGE_CROSSES_CONTROL` | **제어 문자를 가로지르는 범위**: 바꾸려는 텍스트 범위 안에 탭(Tab), 줄바꿈, 필드, 수식, 표, 그림 같은 제어 요소가 끼어 있습니다. 제어 요소 앞뒤로 범위를 나누어 일반 텍스트 구간만 교체하세요. |
 | `UNSUPPORTED_CONTENT_IN_RANGE` | **범위 내 알 수 없는 요소**: 지정한 텍스트 범위 안에 엔진이 해석할 수 없는 특수 속성이나 하위 요소가 들어 있어 안전을 위해 편집을 거절했습니다. |
 | `MATCHES_SKIPPED` *(경고)* | **일부 일치를 건너뜀**: `text_replace_all`이 개체를 가로지르거나 자소 경계가 맞지 않는 등 안전하게 바꿀 수 없는 일치를 건드리지 않았습니다. `detail.reasons`의 사유별 개수와 위치(`nodeId`, `range`)를 확인해 필요하면 `text_replace`·`controls: "preserve"`로 따로 고치세요. |
+| `FORM_FILL_SKIPPED` *(경고)* | **일부 라벨을 건너뜀**: `form_fill`을 `strict: false`로 실행했을 때 채우지 못한 라벨이 있습니다. 결과 `skipped`의 라벨별 `reason`(`label_not_found`, `ambiguous_label`, `target_not_empty`, `no_target_cell`, `ambiguous_target`, `conflicting_target`, 셀 사유 등)을 확인하세요. |
 | `FORMAT_COLLAPSED` *(경고)* | **글자 모양 통합 경고**: 서로 다른 글자 모양(글꼴·크기·색상 등)이 적용된 여러 구간을 한 번에 교체하여, 새 글자가 첫 글자의 모양으로 통일되었음을 알려주는 경고입니다. |
 | `RENDERER_UNAVAILABLE` | **미리보기 렌더러 사용 불가**: `document_preview`를 호출했으나 외부 렌더러(`HAE_RHWP`)가 설정되지 않았거나(`renderer_not_configured`), 실행 파일이 없거나(`renderer_missing`), `bubblewrap`(`HAE_BWRAP`) 격리 자가 점검에 실패했거나(`sandbox_unverified`), 글꼴 폴더(`HAE_FONT_DIR`)를 읽을 수 없거나(`font_dir_unreadable`), 렌더링 제한 시간(60초)을 넘겼을 때(`timeout`) 발생합니다. 미리보기만 실패할 뿐 문서 내용은 전혀 바뀌지 않습니다. |
 | `PREVIEW_PAGE_LIMIT` *(경고)* | **미리보기 100쪽 제한 경고**: 문서 전체가 100쪽을 넘어 앞의 100쪽까지만 렌더링했습니다(결과 `status`는 `"partial"`이 됩니다). |
