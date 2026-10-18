@@ -869,8 +869,14 @@ def expected_state(original, candidate, request):
             if changed:
                 if pair is not None:
                     preview_edits.append(pair)
-                intent = {'op': kind, 'entry': entry, 'path': path,
-                          ('script' if kind.endswith('setScript') else 'props'): op.get('script', op.get('props'))}
+                intent = {'op': kind, 'entry': entry, 'path': path}
+                if kind.endswith('setScript'):
+                    intent['script'] = op['script']
+                else:
+                    # EquationProps serializes all six Option fields, including
+                    # nulls; derive that public intent without candidate input.
+                    intent['props'] = {k: op['props'].get(k) for k in
+                                       ('baseLine', 'textColor', 'font', 'baseUnit', 'lineMode', 'version')}
                 intents.append(intent)
                 changes.append({'op': kind, 'entry': entry, 'path': path})
                 parent_path = path[:-1]

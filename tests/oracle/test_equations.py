@@ -106,3 +106,13 @@ class EquationOracleTests(unittest.TestCase):
             before, after, req = case(b'no script')
             req['operations'][0]['script'] = script
             self.assertFalse(self.verify(before, after, req)['ok'])
+
+    def test_property_intent_includes_omitted_properties_as_null(self):
+        before, after, req = case(b'unchanged preview', props=True)
+        req['intents'] = [{'op': 'equation.setProperties', 'entry': SECTION,
+                           'path': [0, 0, 2], 'props': {'baseLine': 77, 'textColor': None,
+                           'font': None, 'baseUnit': None, 'lineMode': None, 'version': None}}]
+        result = self.verify(before, after, req)
+        self.assertTrue(result['ok'], result)
+        req['intents'][0]['props']['baseLine'] = 78
+        self.assertFalse(self.verify(before, after, req)['ok'])
