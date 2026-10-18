@@ -1,4 +1,4 @@
-# HWPX 문서 엔진 (0.2) 사용 안내서
+# HWPX 문서 엔진 (0.3) 사용 안내서
 
 이 안내서는 한컴오피스(한글)로 작성된 `.hwpx` 보고서나 양식 문서를 Claude, Codex 같은 AI 에이전트에게 맡겨 안전하게 다듬고자 하는 선생님과 학생을 위해 작성되었습니다.
 
@@ -8,7 +8,7 @@
 
 **HWPX 문서 엔진**은 기존 `.hwpx` 문서에서 **지정한 부분만 정확하게 고치고, 수정하지 않은 나머지 내용·서식·표·그림·수식을 원본 그대로 보존**하는 독립 도구입니다.
 
-### 할 수 있는 것 (0.2 지원 범위)
+### 할 수 있는 것 (0.3 지원 범위)
 - **한컴오피스 불필요**: Linux 환경에서 한컴오피스 설치나 라이선스 없이 바로 작동합니다.
 - **문서 구조 및 요소 조회**: 구역, 문단, 표, 표 셀, 그림, 수식의 구조와 텍스트를 읽고 검색합니다.
 - **문단 텍스트 범위 교체 (`text_replace`)**: 한 문단의 `[start, end)` grapheme 범위를 바꾸거나 지우며, 길이 0 범위에 새 글을 삽입합니다. `controls: "preserve"`로 개체를 보존하면서 범위 안 텍스트만 바꿀 수 있습니다.
@@ -25,10 +25,8 @@
 - **구형 `.hwp`(HWP5) 읽기 전용 조회 (`hwp5_inspect`, 0.3)**: HWPX와 별개 crate(`hae-hwp5`)로 구형 HWP5 바이너리를 직접 열어 버전·압축·암호화 여부, 구역·문단·글자 수와 문단별 텍스트 앞부분을 돌려줍니다. 열린 문서가 필요 없고 파일을 바꾸지 않습니다(아래 0.3절 「구형 .hwp(HWP5) 읽기 전용 조회」).
 - **되돌리기·다시 실행 및 미리보기**: 작업 전 가상 적용(`dryRun`), 변경 내역 비교(`document_diff`), 실행 취소(`history_undo`)·다시 실행(`history_redo`), 외부 렌더러 연동을 통한 PNG/SVG 미리보기(`document_preview`)를 지원합니다.
 
-### 하지 않는 것 및 한계 (0.2 제외 범위)
-- **전체 HWP/HWPX 기능 지원 아님**: 문단 추가·삭제·합치기·나누기, 표의 행·열 추가 및 삭제, 셀 병합 구조나 문단 수 변경, 수식 새로 만들기, 도형 편집은 0.2에서도 지원하지 않습니다. 구형 `.hwp`(HWP5 바이너리)는 0.3의 **읽기 전용 조회(`hwp5.inspect`)만** 지원하며 편집·쓰기·HWPX 변환은 지원하지 않습니다.
-
-- **전체 HWP/HWPX 기능 지원 아님**: 문단 추가·삭제·합치기·나누기, 셀 병합·분할, 병합 셀을 가르는 행·열 삽입과 병합 셀이 걸린 행·열 삭제, 표 자체의 생성·삭제, 수식 새로 만들기, 도형 편집, 구형 `.hwp`(HWP5 바이너리) 파일 읽기·쓰기는 0.2에서도 지원하지 않습니다.
+### 하지 않는 것 및 한계 (0.3 기준 제외 범위)
+- **전체 HWP/HWPX 기능 지원 아님**: 새 문서와 새 문단은 만들 수 없고, 문단 추가·삭제·합치기·나누기, 셀 병합·분할, 병합 셀을 가르는 행·열 삽입과 병합 셀이 걸린 행·열 삭제, 표 자체의 생성·삭제, 수식 새로 만들기, 도형 편집은 지원하지 않습니다. 새로 만들 수 있는 노드는 0.3의 표 행·열 명령이 기존 표 안에 만드는 빈 셀·문단뿐입니다. 구형 `.hwp`(HWP5 바이너리)는 읽기 전용 조회(`hwp5.inspect`)만 지원하며 편집·쓰기·HWPX 변환은 지원하지 않습니다.
 - **읽기 전용 문서**: 암호화된 문서는 열지 않으며, 전자서명이나 변경 추적(Track Changes)이 들어 있는 문서는 열어서 내용을 조회하거나 무편집 상태로 내보내는 것만 허용하고 편집은 거절합니다. 변경 추적 표시와 작성자는 `trackchange_list`로 확인합니다.
 - **외부 렌더러 별도 준비 필요**: 이 엔진에는 미리보기 렌더러가 내장되어 있지 않습니다. `document_preview`를 사용하려면 별도의 `rhwp` 실행 파일, `bubblewrap`(`bwrap`) 샌드박스 도구, 읽을 수 있는 글꼴 폴더를 환경 변수(`HAE_RHWP`, `HAE_BWRAP`, `HAE_FONT_DIR`)로 직접 지정해야 합니다.
 - **엔진 구현 완료 범위와 Windows 한컴오피스 실기 호환성(단계 4 예정)의 구분**: 현재 엔진의 파일 편집·보존 검증·격리 미리보기 기능은 구현되어 있으나, 수정된 문서를 실제 Windows 한컴오피스(한글)에서 열었을 때의 실기 호환성 및 조판 대조 검증(단계 4)은 별도 확인 대상입니다. `document_preview`가 만드는 SVG/PNG 이미지와 쪽 번호는 외부 렌더러(`rhwp`)가 어림잡아 계산한 **추정치**이므로 실제 Windows 한컴오피스의 줄바꿈·쪽 나눔·표현 범위와 100% 일치한다고 보장하지 않습니다.
@@ -378,6 +376,21 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 - **미리보기**: `dryRun: true`로 결과를 확인해도 문서·버전·이력은 바뀌지 않습니다.
 - **주의**: `values`가 비었거나 라벨·값이 비었거나 탭·줄바꿈이 들어 있으면 `INVALID_ARGUMENT`, `scope`가 표·구역이 아니면 `UNSUPPORTED`(`form_scope`), 없는 `scope` nodeId는 `TARGET_NOT_FOUND`입니다.
 
+### ③-4 그림 교체 (`image_replace`)
+기존 그림 하나의 이미지 파일만 다른 PNG 또는 JPEG로 바꿉니다. 그림의 위치·크기·캡션·감싸기 설정은 그대로입니다.
+```json
+{
+  "documentId": "doc-1",
+  "expectedVersion": 4,
+  "target": "node-pic1",
+  "imagePath": "/home/user/Documents/hwpx-inputs/new_logo.png"
+}
+```
+- **대상**: `target`은 `picture_list`나 `element_query`로 찾은 그림의 `nodeId`입니다. `imagePath`는 `--input-root` 안의 파일이어야 합니다.
+- **받는 형식**: 정적 PNG와 JPEG만 받습니다. 움직이는 PNG(`animated_image`), 깨졌거나 잘린 파일(`invalid_image`), 화소 수 한도(약 4,096만 화소)를 넘는 파일은 거절합니다.
+- **거절되는 그림**: 문서 안에 이미지가 내장되어 있지 않거나(`no_embedded_media`) 패키지 목록이 예상한 모양이 아니면 `UNSUPPORTED`입니다.
+- **동작**: 새 이미지는 문서에 새 미디어 항목으로 추가되고 기존 그림이 그것을 가리키도록 바뀝니다. 파일 내용은 계획할 때 한 번만 읽어 고정하므로, 이후 `history_redo`는 파일을 다시 읽지 않습니다. `dryRun`, `command_batch`, 되돌리기를 지원합니다.
+
 ### ④ 문단 정렬 및 줄간격 변경 (`paragraph_format`)
 제목 문단(`node-p1`)을 가운데 정렬(`center`)하고 줄간격을 160%로 맞춥니다. 줄간격(`lineSpacing.value`)은 `1`부터 `1000`까지의 정수 백분율(`1%~1000%`)을 지정할 수 있습니다. 직전 편집으로 버전이 `1`이 되었으므로 `expectedVersion: 1`을 넣습니다.
 ```json
@@ -450,6 +463,19 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 }
 ```
 - **응답**: 문단 서식이 이전 상태로 복원되고 버전은 `afterVersion: 3`이 됩니다(버전 번호는 줄어들지 않고 항상 앞으로 증가합니다). 다시 적용하려면 `history_redo`(`expectedVersion: 3`)를 호출합니다.
+
+### ⑤-2 명령 발견, 일괄 실행, 스냅샷·비교, 이력 정리, 닫기
+
+문서를 직접 바꾸지 않는 보조 명령들입니다. 명령 이름은 점 표기(`document.diff`), MCP 도구 이름은 밑줄 표기(`document_diff`)입니다.
+
+- **명령 목록 (`command.list` / `command_list`)**: 인자가 없습니다. 등록된 57개 명령 각각의 이름·MCP 도구 이름·분류·요약, `requiresDocument`·`requiresExpectedVersion`·`supportsDryRun`·`recordsHistory` 같은 정책, 입력·출력 JSON Schema, 설정상 사용 가능 여부(`available`)를 돌려줍니다. 각 항목의 `schemaVersion`은 레지스트리 계약 버전(`0.3.0`)이며 엔진 버전과 별개입니다. `available`은 렌더러 설정 같은 실행 환경에서의 가용성이고, 개별 문단·표에서 편집이 되는지는 `element_query`·`element_get`의 `edits[명령].available`이 알려 줍니다. CLI에서는 `hae run --command command.list --params '{}'`로 같은 목록을 얻습니다.
+- **명령 하나 설명 (`command.describe` / `command_describe`)**: `{"command":"text.replace"}`처럼 이름을 주면 그 명령의 입력·출력 Schema와 `dryRun`·이력 정책을 돌려줍니다. 인자를 만들기 전에 확인하는 용도입니다.
+- **일괄 실행 (`command.batch` / `command_batch`)**: `{"documentId":"doc-1","expectedVersion":3,"steps":[{"command":"text.replace","params":{...}},{"command":"paragraph.format","params":{...}}]}`처럼 편집 단계를 순서대로 줍니다. 전체가 한 번의 `revision`·되돌리기 단위이고, 한 단계라도 실패하면 앞 단계까지 포함해 아무것도 바뀌지 않으며 오류의 `detail.failedStep`이 실패한 단계를 가리킵니다. `dryRun: true`로 먼저 시험할 수 있습니다. 단계 안의 `params`에는 문서 ID나 `expectedVersion`을 넣지 않습니다.
+- **스냅샷 만들기 (`document.snapshot` / `document_snapshot`)**: `{"documentId":"doc-1","label":"교체 전"}`(`label`은 선택). 현재 상태를 세션 안에 보관하고 `snapshotId`와 `revision`을 돌려줍니다. 문서와 이력은 바뀌지 않으며, 세션 메모리 한도를 넘으면 `RESOURCE_LIMIT`로 거절합니다. 스냅샷은 세션이 끝나면 사라지고 `.hwpwork`에 저장되지 않습니다.
+- **스냅샷 해제 (`snapshot.release` / `snapshot_release`)**: `{"documentId":"doc-1","snapshotId":"snap-...","requestSequence":n}`. 메모리를 돌려주기 위해 지정한 스냅샷을 지웁니다. 이미 해제되었거나 없는 ID는 `SNAPSHOT_UNAVAILABLE`입니다. `expectedVersion`은 받지 않습니다.
+- **변경 비교 (`document.diff` / `document_diff`)**: `baseSnapshotId`와 `targetSnapshotId`는 모두 선택입니다. 기준을 생략하면 문서를 처음 열었을 때의 상태, 대상을 생략하면 현재 상태를 씁니다. 응답은 `identical`, 텍스트·미디어가 바뀐 `changedNodes`(`beforeText`·`afterText`), 새로 생긴 `createdNodes`, 사라진 `removedNodes`, 바뀐 패키지 항목 `changedEntries`, `mediaChanges`, 줄 배치가 낡은 구역 `staleLayoutSections`입니다. 문서는 바뀌지 않습니다.
+- **이력 비우기 (`history.clear` / `history_clear`)**: `{"documentId":"doc-1","requestSequence":n}`. Undo/Redo 이력만 비워 메모리를 돌려줍니다. 문서 내용과 `revision`은 그대로이지만 이후로는 그 이전 편집을 되돌릴 수 없습니다. 응답의 `controlChanged`는 지울 이력이 있었는지 알려 줍니다.
+- **문서 닫기 (`document.close` / `document_close`)**: 인자가 없습니다. 열린 문서를 닫고 `.hwpwork` 프로젝트 잠금을 풉니다. 닫기만으로는 HWPX 파일을 저장하거나 덮어쓰지 않으므로 필요한 내보내기·저장을 먼저 합니다.
 
 ### ⑥ 문서 미리보기 (`document_preview`)
 현재 문서 상태를 격리된 `rhwp` 렌더러로 그려 봅니다. 미리보기는 읽기 전용 작업이므로 문서 내용이나 버전(`revision`), 작업 이력을 전혀 바꾸지 않습니다.
@@ -625,7 +651,7 @@ PNG 변환에는 같은 빌드의 `hae-raster`가 필요합니다. 저장소 루
 
 ## 0.2 텍스트 삽입과 개체 보존
 
-엔진과 command.list/describe의 레지스트리 schemaVersion은 0.2.0이다. JSON-lines/MCP 요청 봉투와 .hwpwork 파일 형식의 정수 schemaVersion=1은 유지한다.
+엔진 버전과 command.list/describe의 레지스트리 schemaVersion은 모두 0.3.0이지만 서로 독립된 값이다(0.2.0에서는 둘 다 0.2.0이었다). JSON-lines/MCP 요청 봉투와 .hwpwork 파일 형식의 정수 schemaVersion=1은 유지한다. 자세한 규칙은 docs/decisions/versioning.md를 본다.
 
 text.replace는 [start,end) grapheme 범위를 받는다. start=end이면 비어 있지 않은 text를 삽입한다. 위치는 textSpans 내부·경계여야 하며, 빈 문단은 [{start:0,end:0}]과 modes:["insert"]를 제공한다. 일반 텍스트 문단은 modes:["replace","insert"]를 제공한다. 바로 뒤 글자의 run, 없으면 바로 앞 글자의 run을 쓴다. 빈 문단은 첫 run을 쓰고 필요한 hp:t 하나만 마지막 자식 뒤에 만든다. run이 없으면 UNSUPPORTED(reason:no_run)다. 빈 문자열 삽입은 INVALID_RANGE다.
 
@@ -1004,3 +1030,69 @@ external은 null로 남기되 ZIP payload가 있으면 해시는 제공합니다
 - 지원하지 않는 것: 쓰기·변환 저장, 암호 문서, 배포용 문서, HWP 3.x, DocInfo의 폰트·스타일 해석과 표·컨트롤 구조 해석(구역 수는 DocInfo가 아니라 컨테이너의 `BodyText/SectionN` 열거로 셉니다), 수식·그림·글자겹침의 내용 추출.
 
 검증 범위: 합성 CFB 컨테이너 시험 23개(`crates/hae-hwp5/tests/hwp5.rs`)와 명령 시험 5개(`crates/hae-exec/tests/hwp5.rs`)가 `scripts/check.sh`에 포함됩니다. 실물은 공개 표본 44개 중 43개를 읽었고 배포용 1개는 위 사유로 거절했으며(입력 44개 모두 실행 전후 SHA-256 동일), 독립 구현 `rhwp` `export-text`와 대조한 42개 중 비교 가능한 39개 가운데 27개가 공백 제거 후 문자 단위로 일치했습니다(나머지 12개는 자동 번호·수식·글자겹침·숨은 설명·캡션 자동 번호·조판 순서 등 조판 시 만들어지는 값 때문이고, 미리보기 1000자 상한을 넘는 3개는 문자 비교 불가). Linux 한컴 2020 Beta로 실물 표본 4개를 열어 모두 로드됐고(PASS) 그중 2개는 화면 텍스트까지 대조했지만, **Windows 한컴오피스에서의 열기·조판 대조는 하지 않았습니다.** 형식 근거와 확인/미확인 구분은 `docs/decisions/hwp5-format-notes.md`에 있습니다.
+
+---
+
+## 부록. 명령 57개 색인
+
+`hae run --command command.list --params '{}'`로 얻은 57개 명령 전체입니다. 「문서를 바꿈」이 「예」인 명령만 현재 상태를 편집합니다(이력 명령 `history.undo`·`history.redo`도 문서 상태를 복원하므로 「예」). 「아니오」인 명령 중 `document.exportText`, `document.export`, `project.save`는 문서가 아니라 새 파일을 만듭니다. 분류는 `command.list`의 `category`를 풀어 쓴 것이며, 같은 이름의 내부 정책과 인자는 `command.describe`로 확인합니다.
+
+| 명령 | MCP 도구 | 분류 | 문서를 바꿈 | 설명 위치 |
+|---|---|---|---|---|
+| `equation.list` | `equation_list` | 조회 | 아니오 | 수식 조회·편집 |
+| `equation.get` | `equation_get` | 조회 | 아니오 | 수식 조회·편집 |
+| `equation.setScript` | `equation_set_script` | 편집 | 예 | 수식 조회·편집 |
+| `equation.setProperties` | `equation_set_properties` | 편집 | 예 | 수식 조회·편집 |
+| `command.list` | `command_list` | 조회(명령) | 아니오 | ⑤-2 |
+| `command.describe` | `command_describe` | 조회(명령) | 아니오 | ⑤-2 |
+| `document.open` | `document_open` | 문서 열기·닫기 | 아니오 | ① |
+| `document.inspect` | `document_inspect` | 조회 | 아니오 | ② |
+| `document.stats` | `document_stats` | 조회 | 아니오 | ②-2 |
+| `section.list` | `section_list` | 조회 | 아니오 | ②-3 |
+| `note.list` | `note_list` | 조회 | 아니오 | ②-4 |
+| `document.close` | `document_close` | 문서 열기·닫기 | 아니오 | ⑤-2 |
+| `element.query` | `element_query` | 조회 | 아니오 | ② |
+| `element.get` | `element_get` | 조회 | 아니오 | ② |
+| `table.setColumnWidths` | `table_set_column_widths` | 편집 | 예 | ④-3 |
+| `table.setRowHeights` | `table_set_row_heights` | 편집 | 예 | ④-3 |
+| `cell.setFormat` | `cell_set_format` | 편집 | 예 | ④-3 |
+| `cell.setSize` | `cell_set_size` | 편집 | 예 | ④-3 |
+| `table.insertRow` | `table_insert_row` | 편집 | 예 | ④-4 |
+| `table.deleteRow` | `table_delete_row` | 편집 | 예 | ④-4 |
+| `table.insertColumn` | `table_insert_column` | 편집 | 예 | ④-4 |
+| `table.deleteColumn` | `table_delete_column` | 편집 | 예 | ④-4 |
+| `link.list` | `link_list` | 조회 | 아니오 | 링크와 변경 추적 |
+| `trackchange.list` | `trackchange_list` | 조회 | 아니오 | 링크와 변경 추적 |
+| `bookmark.list` | `bookmark_list` | 조회 | 아니오 | 책갈피·메모 |
+| `memo.list` | `memo_list` | 조회 | 아니오 | 책갈피·메모 |
+| `section.getPage` | `section_get_page` | 조회 | 아니오 | 구역 용지·여백 |
+| `section.setPage` | `section_set_page` | 편집 | 예 | 구역 용지·여백 |
+| `section.setPageNumbering` | `section_set_page_numbering` | 편집 | 예 | 구역 용지·여백 |
+| `section.setVisibility` | `section_set_visibility` | 편집 | 예 | 구역 용지·여백 |
+| `style.list` | `style_list` | 조회 | 아니오 | 자원·표·그림 조회 |
+| `table.get` | `table_get` | 조회 | 아니오 | 자원·표·그림 조회 |
+| `picture.list` | `picture_list` | 조회 | 아니오 | 자원·표·그림 조회 |
+| `text.format` | `text_format` | 편집 | 예 | ④-2 |
+| `text.replace` | `text_replace` | 편집 | 예 | ③ 및 0.2절 |
+| `field.list` | `field_list` | 조회 | 아니오 | 누름틀·필드 |
+| `hwp5.inspect` | `hwp5_inspect` | 조회 | 아니오 | 구형 .hwp(HWP5) |
+| `field.setText` | `field_set_text` | 편집 | 예 | 누름틀·필드 |
+| `text.replaceAll` | `text_replace_all` | 편집 | 예 | ③-2 |
+| `paragraph.format` | `paragraph_format` | 편집 | 예 | ④ |
+| `cell.setText` | `cell_set_text` | 편집 | 예 | ③ 및 0.2절 |
+| `form.fill` | `form_fill` | 편집 | 예 | ③-3 |
+| `image.replace` | `image_replace` | 편집 | 예 | ③-4 |
+| `paragraph.setStyle` | `paragraph_set_style` | 편집 | 예 | 0.3 좁은 편집 명령 |
+| `image.fit` | `image_fit` | 편집 | 예 | 0.3 좁은 편집 명령 |
+| `header.setText` | `header_set_text` | 편집 | 예 | 0.3 좁은 편집 명령 |
+| `command.batch` | `command_batch` | 편집 | 예 | ⑤-2 |
+| `history.undo` | `history_undo` | 이력 | 예 | ⑤ |
+| `history.redo` | `history_redo` | 이력 | 예 | ⑤ |
+| `history.clear` | `history_clear` | 이력 | 아니오 | ⑤-2 |
+| `document.snapshot` | `document_snapshot` | 스냅샷·비교 | 아니오 | ⑤-2 |
+| `snapshot.release` | `snapshot_release` | 스냅샷·비교 | 아니오 | ⑤-2 |
+| `document.diff` | `document_diff` | 스냅샷·비교 | 아니오 | ⑤-2 |
+| `document.preview` | `document_preview` | 미리보기 | 아니오 | ⑥ |
+| `project.save` | `project_save` | 저장·내보내기 | 아니오 | ⑦ |
+| `document.export` | `document_export` | 저장·내보내기 | 아니오 | ⑦ |
+| `document.exportText` | `document_export_text` | 조회 | 아니오 | ⑧ |
