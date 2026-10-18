@@ -6,8 +6,10 @@
 [독립 계약 검토](../../decisions/0.3-contract-review.md),
 [표 구조 하위 설계](../../decisions/table-structure-node-creation-design.md).
 검토 기준 `df70009` 뒤의 축별 치수 수정 `ed03b01`과 후속 capability·수식 PrvText 보완을 포함한다.
-여기서 0.3은 기능 계약의 이름이다. Cargo 패키지·레지스트리의 배포 버전 문자열은 현재 0.2.0이며,
-이 문서 작성만으로 0.3.0 배포를 주장하지 않는다.
+여기서 0.3은 기능 계약의 이름이다. 이 문서를 확정한 시점에는 Cargo 패키지·레지스트리의 버전 문자열이
+0.2.0이었다. 릴리스 정리에서 엔진 패키지 버전과 레지스트리 descriptor `schemaVersion`을 0.3.0으로
+올렸고(두 값은 서로 독립이며 봉투·프로젝트의 정수 `schemaVersion`은 1 유지),
+근거는 [버전 정책](../../decisions/versioning.md)에 있다. 이 문서 작성만으로 배포나 실기 호환을 주장하지 않는다.
 
 ## 1. 목적과 성공 기준
 

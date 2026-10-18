@@ -86,7 +86,7 @@
 - 편집 가능 여부 광고: `textSpans`, `modes`, `requires` 등 대상별 capability와 사유.
 - 필드 경계 거절과 기존 개체 옆 삽입.
 - MCP 서버 완성: 프로토콜 4개 버전(2025-03-26부터 2026-07-28) 협상, 도구 annotations, 배포 진단
-  `hae-mcp doctor`, 서버가 알려 주는 batch 도구 수.
+  `hae-mcp doctor`.
 - 독립 검증: 별도 Python oracle과 버전이 붙은 명령 계약, MCP 평가 스크립트(`scripts/evaluate_mcp.py`).
 - 한컴 열기 확인 기록(Linux): v0.2 출력 4건, MCP 출력, 폼 채우기 등.
 
