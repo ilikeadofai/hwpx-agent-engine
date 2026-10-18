@@ -784,3 +784,65 @@ pub(crate) fn replace_all(
     }
     Ok(changed)
 }
+
+/// Independently map formatting to scalar byte intervals. Controls are skipped,
+/// never restyled; field boundaries and unsupported lexical markup fail closed.
+pub(crate) fn format_spans(
+    doc: &XmlDoc,
+    p: usize,
+    range: Range<usize>,
+    preserve: bool,
+) -> Result<Vec<(usize, Range<usize>)>> {
+    let v = view(doc, p);
+    let bounds: Vec<usize> = std::iter::once(0)
+        .chain(v.text.graphemes(true).scan(0, |n, g| {
+            *n += g.chars().count();
+            Some(*n)
+        }))
+        .collect();
+    if range.start >= range.end || range.end >= bounds.len() {
+        return Err(fail("invalid formatting range"));
+    }
+    let a = bounds[range.start];
+    let b = bounds[range.end];
+    if v.barriers.iter().any(|&c| a < c && c < b) {
+        return Err(unsupported("format crosses lexical barrier"));
+    }
+    let mut out = Vec::new();
+    for s in &v.scalars[a..b] {
+        if s.control {
+            if !preserve {
+                return Err(unsupported("format crosses control"));
+            }
+            if let Some(el) = s.element {
+                if ["fieldBegin", "fieldEnd"].contains(&doc.el(el).local.as_str())
+                    || doc
+                        .descendants(el)
+                        .any(|i| hp(doc.el(i), "fieldBegin") || hp(doc.el(i), "fieldEnd"))
+                {
+                    return Err(unsupported("format crosses field boundary"));
+                }
+            }
+            continue;
+        }
+        if s.barrier || ['\t', '\n', '\r'].contains(&s.character) {
+            return Err(unsupported("format touches unsupported markup"));
+        }
+        let t =
+            s.t.ok_or_else(|| unsupported("format has no text carrier"))?;
+        plain_attrs(doc, t)?;
+        if doc.el(t).attr("charPrIDRef").is_some() {
+            return Err(unsupported("text-local shape reference"));
+        }
+        out.push((
+            t,
+            s.raw
+                .clone()
+                .ok_or_else(|| unsupported("format needs raw text"))?,
+        ));
+    }
+    if out.is_empty() {
+        return Err(unsupported("format has no text fragment"));
+    }
+    Ok(out)
+}

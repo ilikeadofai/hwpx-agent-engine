@@ -31,13 +31,14 @@
 //! preview entry may change. Thumbnails remain byte-identical and are stale
 //! after a material edit. PrvText is not regenerated from a full-document
 //! extraction, since its producer's serialization is not known.
+mod char_format;
 mod contract;
 mod format;
 mod image;
 mod text;
 
 pub use contract::{
-    Alignment, LineSpacing, LineSpacingKind, VerifyOperation, VerifyReport, VerifyScope,
+    Alignment, CharProps, LineSpacing, LineSpacingKind, VerifyOperation, VerifyReport, VerifyScope,
 };
 use hae_diag::{Budget, Code, EngineError, Limits, Result, Stage};
 use hae_package::{PackageInfo, PackageState, XmlMap, NS_HC, NS_HH, NS_HP, NS_HP10, NS_HS};
@@ -50,37 +51,48 @@ use std::{
 };
 
 type Splice = (Range<usize>, Vec<u8>);
-fn stable_path(doc: &XmlDoc, mut i: usize) -> Vec<(bool, usize)> {
-    let mut path = Vec::new();
-    while let Some(parent) = doc.el(i).parent {
-        let text = hp(doc.el(i), "t");
-        let ordinal = doc
-            .el(parent)
-            .children
-            .iter()
-            .filter(|&&c| hp(doc.el(c), "t") == text)
-            .position(|&c| c == i)
-            .unwrap();
-        path.push((text, ordinal));
+fn carrier(doc: &XmlDoc, i: usize) -> bool {
+    hp(doc.el(i), "run") || hp(doc.el(i), "t")
+}
+fn logical_children(doc: &XmlDoc, i: usize) -> Vec<usize> {
+    doc.el(i)
+        .children
+        .iter()
+        .flat_map(|&c| {
+            if carrier(doc, c) {
+                logical_children(doc, c)
+            } else {
+                vec![c]
+            }
+        })
+        .collect()
+}
+fn stable_path(doc: &XmlDoc, mut i: usize) -> Vec<usize> {
+    let mut result = Vec::new();
+    while let Some(mut parent) = doc.el(i).parent {
+        while carrier(doc, parent) {
+            parent = doc.el(parent).parent.unwrap();
+        }
+        result.push(
+            logical_children(doc, parent)
+                .iter()
+                .position(|&c| c == i)
+                .unwrap(),
+        );
         i = parent;
     }
-    path.reverse();
-    path
+    result.reverse();
+    result
 }
-fn stable_at(doc: &XmlDoc, path: &[(bool, usize)]) -> Result<usize> {
-    let mut i = doc.root();
-    for &(text, n) in path {
-        i = *doc
-            .el(i)
-            .children
-            .iter()
-            .filter(|&&c| hp(doc.el(c), "t") == text)
-            .nth(n)
-            .ok_or_else(|| fail("stable target path missing"))?;
-    }
-    Ok(i)
+fn stable_at(doc: &XmlDoc, path: &[usize]) -> Result<usize> {
+    path.iter().try_fold(doc.root(), |i, &n| {
+        logical_children(doc, i)
+            .get(n)
+            .copied()
+            .ok_or_else(|| fail("stable target path missing"))
+    })
 }
-type Anchors = BTreeMap<String, (usize, BTreeSet<Vec<(bool, usize)>>)>;
+type Anchors = BTreeMap<String, (usize, BTreeSet<Vec<usize>>)>;
 
 pub(crate) fn fail(message: impl Into<String>) -> EngineError {
     EngineError::new(Code::VerifyFailed, Stage::Save, message)
@@ -292,6 +304,30 @@ fn verify_inner(
         let target = stable_at(&doc, &stable_path(&xml[entry], original_target))?;
         check_opaque_refs(&xml, entry, &doc, target)?;
         match op {
+            VerifyOperation::TextFormat {
+                range,
+                props,
+                preserve,
+                ..
+            } => {
+                if !hp(doc.el(target), "p") {
+                    return Err(fail("text.format target is not paragraph"));
+                }
+                if char_format::check(
+                    &mut expected,
+                    &info,
+                    entry,
+                    &doc,
+                    target,
+                    range.clone(),
+                    props,
+                    *preserve,
+                    limits,
+                )? {
+                    anchor(&mut anchors, entry, &doc, target)?;
+                    material = true;
+                }
+            }
             VerifyOperation::TextReplace {
                 range,
                 replacement,

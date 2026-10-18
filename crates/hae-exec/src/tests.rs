@@ -587,9 +587,10 @@ fn retained_verification_logs_are_counted_in_the_session_budget() {
         .expect("fixture has a section");
 
     let mut exec = SessionExecutor::new(&t.0, &t.0, Limits::default()).unwrap();
-    assert!(exec
-        .call("document.open", json!({ "path": src }), None, false)
-        .ok);
+    assert!(
+        exec.call("document.open", json!({ "path": src }), None, false)
+            .ok
+    );
     let p_id = exec
         .call(
             "element.query",

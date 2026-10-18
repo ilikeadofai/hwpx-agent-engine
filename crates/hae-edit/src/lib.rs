@@ -4,6 +4,7 @@
 //! of byte splices followed by [`Document::rebuild`] (the commit gate). Cache
 //! invalidation and PrvText run once at the end of a batch (spec §8, §11).
 
+mod char_format;
 mod format;
 mod image;
 mod replace_all;
@@ -17,6 +18,7 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::Arc;
 
+pub use char_format::CharProps;
 pub use format::{Alignment, LineSpacing};
 pub use image::ImageBytes;
 pub use replace_all::{
@@ -27,6 +29,12 @@ pub use replace_all::{
 /// One edit command (spec §6). Ranges are grapheme-cluster indices.
 #[derive(Debug, Clone)]
 pub enum EditOp {
+    TextFormat {
+        target: String,
+        range: Range<usize>,
+        props: CharProps,
+        preserve: bool,
+    },
     TextReplace {
         target: String,
         range: Range<usize>,
@@ -64,7 +72,8 @@ pub enum EditOp {
 impl EditOp {
     pub fn target(&self) -> &str {
         match self {
-            EditOp::TextReplace { target, .. }
+            EditOp::TextFormat { target, .. }
+            | EditOp::TextReplace { target, .. }
             | EditOp::ParagraphFormat { target, .. }
             | EditOp::CellSetText { target, .. }
             | EditOp::CellSetParagraphs { target, .. }
@@ -79,6 +88,13 @@ impl EditOp {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "op", rename_all = "camelCase")]
 pub enum Intent {
+    #[serde(rename = "text.format")]
+    TextFormat {
+        entry: String,
+        path: Vec<usize>,
+        range: Range<usize>,
+        props: CharProps,
+    },
     #[serde(rename = "text.replace")]
     TextReplace {
         entry: String,
@@ -259,6 +275,12 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
     };
     for (i, op) in ops.iter().enumerate() {
         let r = match op {
+            EditOp::TextFormat {
+                target,
+                range,
+                props,
+                preserve,
+            } => char_format::text_format(&mut d, target, range.clone(), props, *preserve),
             EditOp::TextReplace {
                 target,
                 range,

@@ -136,6 +136,35 @@ pub struct TextReplaceParams {
     pub text: String,
 }
 
+/// Character properties are deliberately bounded; fontRef is not supported.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CharPropsParam {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bold: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub italic: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub underline: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strikeout: Option<bool>,
+    #[schemars(range(min = 100, max = 100000))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height_hwpunit: Option<u32>,
+    #[schemars(regex(pattern = r"^#[0-9A-Fa-f]{6}$"))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_color: Option<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TextFormatParams {
+    pub target: String,
+    pub range: TextRangeParam,
+    pub props: CharPropsParam,
+    #[serde(default)]
+    pub controls: Controls,
+}
+
 /// Exact-match search and replace over the document or one subtree.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -339,6 +368,7 @@ pub enum ParsedCommand {
     DocumentClose(EmptyParams),
     ElementQuery(ElementQueryParams),
     ElementGet(ElementGetParams),
+    TextFormat(TextFormatParams),
     TextReplace(TextReplaceParams),
     TextReplaceAll(TextReplaceAllParams),
     ParagraphFormat(ParagraphFormatParams),
@@ -427,6 +457,7 @@ mod schema_tests {
             ("element_query", [true, false, true, false]),
             ("element_get", [true, false, true, false]),
             ("text_replace", [false, true, false, false]),
+            ("text_format", [false, true, false, false]),
             ("text_replace_all", [false, true, false, false]),
             ("paragraph_format", [false, true, false, false]),
             ("cell_set_text", [false, true, false, false]),
@@ -650,6 +681,14 @@ define_commands! {
         stage1: true, reason: None,
         params: ElementGetParams, output: GetResultShape,
     },
+    TextFormat {
+        name: "text.format", cli: "text-format", mcp: "text_format",
+        summary: "Format a non-empty grapheme range: bold/italic/underline/strikeout, heightHwpunit 100..100000, textColor #RRGGBB; reuse or add at most one charPr; preserve skips controls and rejects field boundaries",
+        category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None,
+        params: TextFormatParams, output: MutationResultShape,
+    },
     TextReplace {
         name: "text.replace",
         cli: "text-replace",
@@ -800,4 +839,63 @@ define_commands! {
         stage1: true, reason: None,
         params: DocumentExportParams, output: GenericResultShape,
     },
+}
+
+#[cfg(test)]
+mod char_format_tests {
+    use crate::SessionExecutor;
+    use serde_json::json;
+
+    #[test]
+    fn text_format_dry_run_undo_redo_and_batch_use_the_session_gate() {
+        let root = std::env::temp_dir().join(hae_model::new_id("char-format-").unwrap());
+        std::fs::create_dir(&root).unwrap();
+        let input = root.join("input.hwpx");
+        let bytes = include_bytes!("../../../tests/fixtures/editing/char_format.hwpx");
+        std::fs::write(&input, bytes).unwrap();
+        let mut exec = SessionExecutor::new(&root, &root, hae_diag::Limits::default()).unwrap();
+        assert!(
+            exec.call("document.open", json!({"path":input}), None, false)
+                .ok
+        );
+        let found = exec.call("element.query", json!({"kind":"paragraph"}), None, false);
+        let id = found.result.unwrap()["matches"][0]["nodeId"].clone();
+        let params = json!({"target":id,"range":{"start":1,"end":4},"props":{"bold":true}});
+        let dry = exec.call("text.format", params.clone(), Some(0), true);
+        assert!(dry.ok, "{:?}", dry.diagnostics);
+        let out0 = root.join("dry.hwpx");
+        assert!(
+            exec.call("document.export", json!({"path":out0}), None, false)
+                .ok
+        );
+        assert_eq!(std::fs::read(out0).unwrap(), bytes);
+        let applied = exec.call("text.format", params.clone(), Some(0), false);
+        assert!(applied.ok, "{:?}", applied.diagnostics);
+        let out1 = root.join("applied.hwpx");
+        assert!(
+            exec.call("document.export", json!({"path":out1}), None, false)
+                .ok
+        );
+        assert!(exec.call("history.undo", json!({}), Some(1), false).ok);
+        let out2 = root.join("undo.hwpx");
+        assert!(
+            exec.call("document.export", json!({"path":out2}), None, false)
+                .ok
+        );
+        assert_eq!(std::fs::read(out2).unwrap(), bytes);
+        assert!(exec.call("history.redo", json!({}), Some(2), false).ok);
+        let out3 = root.join("redo.hwpx");
+        assert!(
+            exec.call("document.export", json!({"path":out3}), None, false)
+                .ok
+        );
+        assert_eq!(std::fs::read(out1).unwrap(), std::fs::read(out3).unwrap());
+        let batch = exec.call("command.batch", json!({"steps":[
+            {"command":"text.format","params":{"target":id,"range":{"start":0,"end":1},"props":{"italic":true}}},
+            {"command":"text.replace","params":{"target":id,"range":{"start":4,"end":6},"text":"XY"}}
+        ]}), Some(3), false);
+        assert!(batch.ok, "{:?}", batch.diagnostics);
+        assert_eq!(batch.result.unwrap()["afterVersion"], 4);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

@@ -36,6 +36,18 @@ pub enum LineSpacingKind {
     Percent,
 }
 
+/// Request properties, deliberately independent from hae-edit's type.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CharProps {
+    pub bold: Option<bool>,
+    pub italic: Option<bool>,
+    pub underline: Option<bool>,
+    pub strikeout: Option<bool>,
+    pub height_hwpunit: Option<u32>,
+    pub text_color: Option<String>,
+}
+
 /// Paths count ELEMENT children, root = []. Requests are applied in order to
 /// an independently derived state, never to editor-produced text. A range is
 /// measured in extended graphemes of that step's pre-edit paragraph.
@@ -43,6 +55,15 @@ pub enum LineSpacingKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "op", deny_unknown_fields)]
 pub enum VerifyOperation {
+    #[serde(rename = "text.format")]
+    TextFormat {
+        entry: String,
+        path: Vec<usize>,
+        range: Range<usize>,
+        props: CharProps,
+        #[serde(default)]
+        preserve: bool,
+    },
     #[serde(rename = "text.replace")]
     TextReplace {
         entry: String,
@@ -110,7 +131,8 @@ impl VerifyOperation {
             Self::TextReplaceAll { scope, .. } => scope
                 .as_ref()
                 .map_or(("", &[][..]), |s| (s.entry.as_str(), s.path.as_slice())),
-            Self::TextReplace { entry, path, .. }
+            Self::TextFormat { entry, path, .. }
+            | Self::TextReplace { entry, path, .. }
             | Self::CellSetText { entry, path, .. }
             | Self::CellSetParagraphs { entry, path, .. }
             | Self::ParagraphFormat { entry, path, .. }

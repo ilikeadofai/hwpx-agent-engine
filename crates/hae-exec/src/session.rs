@@ -6,7 +6,7 @@ use crate::registry::{
     CommandDescriptor, DocumentDiffParams, DocumentExportParams, DocumentOpenParams,
     DocumentPreviewParams, ImageReplaceParams, LineSpacingParam, ParagraphFormatParams,
     ParsedCommand, ProjectSaveParams, SnapshotCreateParams, SnapshotReleaseParams,
-    TextReplaceAllParams, TextReplaceParams,
+    TextFormatParams, TextReplaceAllParams, TextReplaceParams,
 };
 use hae_diag::{Code, Diagnostic, EngineError, Limits, Result, Stage};
 use hae_edit::{Alignment, Applied, EditOp, ImageBytes, LineSpacing};
@@ -237,9 +237,7 @@ fn add_state_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, state: &
 fn add_op_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, op: &VerifyOperation) {
     match op {
         VerifyOperation::TextReplace {
-            entry,
-            replacement,
-            ..
+            entry, replacement, ..
         } => {
             add_slice_bytes(seen, total, entry.as_bytes());
             add_slice_bytes(seen, total, replacement.as_bytes());
@@ -266,6 +264,12 @@ fn add_op_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, op: &Verify
             add_slice_bytes(seen, total, entry.as_bytes());
             for p in paragraphs {
                 add_slice_bytes(seen, total, p.as_bytes());
+            }
+        }
+        VerifyOperation::TextFormat { entry, props, .. } => {
+            add_slice_bytes(seen, total, entry.as_bytes());
+            if let Some(color) = &props.text_color {
+                add_slice_bytes(seen, total, color.as_bytes());
             }
         }
         VerifyOperation::ParagraphFormat { entry, .. } => {
@@ -815,6 +819,13 @@ impl SessionExecutor {
                     Vec::new(),
                 ))
             }
+            ParsedCommand::TextFormat(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "text.format".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
             ParsedCommand::TextReplace(p) => self.handle_edit_steps(
                 req,
                 &[BatchStepParam {
@@ -1117,6 +1128,48 @@ impl SessionExecutor {
             )));
         }
         match step.command.as_str() {
+            "text.format" => {
+                let p: TextFormatParams =
+                    serde_json::from_value(step.params.clone()).map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            format!("invalid text.format params: {e}"),
+                        ))
+                    })?;
+                let (entry, path) = doc
+                    .node(&p.target)
+                    .map(|n| (n.entry.clone(), doc.doc_of(n).path(n.el)))
+                    .unwrap_or_default();
+                let props = serde_json::to_value(&p.props).unwrap();
+                Ok((
+                    EditOp::TextFormat {
+                        target: p.target,
+                        range: p.range.start..p.range.end,
+                        props: serde_json::from_value(props.clone()).map_err(|e| {
+                            wrap_err(EngineError::new(
+                                Code::InvalidRequest,
+                                Stage::Request,
+                                e.to_string(),
+                            ))
+                        })?,
+                        preserve: p.controls.preserving(),
+                    },
+                    VerifyOperation::TextFormat {
+                        entry,
+                        path,
+                        range: p.range.start..p.range.end,
+                        props: serde_json::from_value(props).map_err(|e| {
+                            wrap_err(EngineError::new(
+                                Code::InvalidRequest,
+                                Stage::Request,
+                                e.to_string(),
+                            ))
+                        })?,
+                        preserve: p.controls.preserving(),
+                    },
+                ))
+            }
             "text.replace" => {
                 let p: TextReplaceParams =
                     serde_json::from_value(step.params.clone()).map_err(|e| {

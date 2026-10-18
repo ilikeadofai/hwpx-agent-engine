@@ -19,19 +19,35 @@ use std::sync::Arc;
 
 pub use para::{ParaText, Piece, PieceKind};
 
-fn stable_path(doc: &XmlDoc, mut i: usize) -> Vec<(bool, usize)> {
+// Text carriers are transparent to identity paths: formatting may split runs/t,
+// while identity-bearing children must retain ancestry and document order.
+fn carrier(doc: &XmlDoc, i: usize) -> bool {
+    is_hp(doc.el(i).ns.as_deref()) && matches!(doc.el(i).local.as_str(), "run" | "t")
+}
+fn structural_children(doc: &XmlDoc, i: usize) -> Vec<usize> {
+    let mut out = Vec::new();
+    for &c in &doc.el(i).children {
+        if carrier(doc, c) {
+            out.extend(structural_children(doc, c));
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+fn stable_path(doc: &XmlDoc, mut i: usize) -> Vec<usize> {
     let mut path = Vec::new();
-    while let Some(parent) = doc.el(i).parent {
-        let text = is_hp(doc.el(i).ns.as_deref()) && doc.el(i).local == "t";
-        let ordinal = doc
-            .el(parent)
-            .children
-            .iter()
-            .filter(|&&c| (is_hp(doc.el(c).ns.as_deref()) && doc.el(c).local == "t") == text)
-            .position(|&c| c == i)
-            .unwrap();
-        path.push((text, ordinal));
-        i = parent;
+    while let Some(mut p) = doc.el(i).parent {
+        while carrier(doc, p) {
+            p = doc.el(p).parent.expect("carrier has structural parent");
+        }
+        path.push(
+            structural_children(doc, p)
+                .iter()
+                .position(|&c| c == i)
+                .unwrap(),
+        );
+        i = p;
     }
     path.reverse();
     path
@@ -400,7 +416,7 @@ impl Document {
             self.limits,
             stale_layout,
         )?;
-        // Identity ancestry/order is unchanged modulo the sole permitted text-carrier creation.
+        // Identity ancestry/order is unchanged modulo text-carrier insertion and splitting.
         for (a, b) in self.nodes.iter().zip(&d.nodes) {
             if stable_path(&self.xml[&a.entry], a.el) != stable_path(&d.xml[&b.entry], b.el) {
                 return Err(inv(format!("node {} moved", a.id)));
