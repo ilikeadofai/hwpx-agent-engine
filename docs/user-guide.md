@@ -495,3 +495,43 @@ cell.setText는 실제 존재하는 병합 기준 셀도 지원한다. 한 문�
 ```
 
 결과에는 `replacementCount`, `paragraphCount`, `skippedCount`, `skipped[]`, `matches[]`(앞 200곳 미리보기)와 `changedIds`가 담깁니다. 일치는 명령 시작 시점의 문단 기준 grapheme `range`로 보고합니다. 바꾼 문단마다 줄 배치 캐시를 지우는 규칙은 `command.batch`와 같아, 구역마다 가장 앞서 바뀐 최상위 문단(셀은 표를 담은 최상위 문단)부터 구역 끝까지 지웁니다. PrvText는 문단 옛 문장이 미리보기에서 한 번만 나올 때만 바뀌고 아니면 `stale`로 알립니다. 잠긴 문단(불투명 요소가 가리키는 문단 등)은 건너뜁니다. 수식·필드의 내용은 어떤 경우에도 바꾸지 않습니다.
+
+## 0.3 좁은 편집 명령
+
+세 명령 모두 현재 `expectedVersion`이 필요하며 `dryRun`, `command.batch`, Undo/Redo를 지원합니다. batch 전체는 하나의 revision·Undo 단위이고, 어느 단계든 실패하면 전체를 취소합니다. 새 문단·그림·머리말·꼬리말·스타일을 만들지 않습니다.
+
+### 기존 문단 스타일 지정 (`paragraph.setStyle`)
+
+`target`(문단 nodeId) 또는 비어 있지 않은 `targets` 배열 중 하나와 `styleId`(0 이상 정수)를 줍니다. `Contents/header.xml`에 이미 정의된 스타일만 참조하며, 없는 스타일은 `TARGET_NOT_FOUND`입니다. `styleIDRef`만 바꾸고 `paraPrIDRef`·글자 모양·스타일 정의는 유지합니다. 문단에 기존 참조 속성이 없으면 `UNSUPPORTED(style_shape)`입니다.
+
+```json
+{"command":"paragraph.setStyle","expectedVersion":0,"params":{"targets":["문단1 nodeId","문단2 nodeId"],"styleId":1}}
+```
+
+### 그림 프레임 맞춤 (`image.fit`)
+
+`target`은 기존 그림 nodeId, `mode`는 다음 셋 중 하나입니다.
+
+- `contain`: 현재 표시 프레임 안에 원본 이미지 비율을 유지해 맞춥니다. 한쪽 표시 크기가 줄어듭니다. 위치·앵커는 유지합니다.
+- `cover`: 표시 프레임 크기를 유지하면서 원본 이미지의 가운데를 잘라 가득 채웁니다.
+- `stretch`: 표시 프레임 크기를 유지하고 원본 전체를 늘려 채웁니다.
+
+프레임은 명령 직전 `sz`이며 0인 축은 `curSz`, 다시 0이면 `orgSz`를 사용합니다. 반복 호출은 그 시점의 프레임에 적용됩니다. 크기와 자르기 경계는 가장 가까운 정수로 반올림하고 중앙 자르기의 홀수 나머지는 오른쪽·아래쪽에 둡니다. 반올림 결과가 0인 극단적인 비율은 `UNSUPPORTED(image_geometry)`로 거절합니다. 원본 `orgSz` 좌표계와 위치·회전을 유지하고, `imgRect` 네 꼭짓점을 그 좌표계에 맞춥니다. 표시 크기 `sz == curSz`를 보장하고 기존 `scaMatrix`의 각 행을 표시 크기 변화율로 곱합니다. `transMatrix`·`rotMatrix`와 세 행렬 자체는 보존합니다. 배율 소수는 6자리로 기록합니다.
+
+내장 정적 PNG/JPEG의 실제 픽셀 크기로 `imgDim = px × 75 HWPUNIT`를 계산합니다. `contain`·`stretch`는 `imgClip` 전체 범위를 사용하고, `cover`만 더 작은 중앙 자르기 범위를 사용합니다. `include`는 별도 mode 이름이 아니며 허용하지 않습니다. 미디어·manifest·`isEmbeded`는 바꾸지 않습니다. 필요한 기존 기하 속성이나 행렬이 빠졌거나 숫자가 잘못되면 `UNSUPPORTED(image_geometry)`이며 새 요소를 보충하지 않습니다.
+
+```json
+{"command":"image.fit","expectedVersion":1,"params":{"target":"그림 nodeId","mode":"cover"}}
+```
+
+### 기존 머리말·꼬리말 글 바꾸기 (`header.setText`)
+
+`scope`는 구역 nodeId이며 생략하면 첫 구역입니다. `kind`는 `header` 또는 `footer`, `paragraphIndex`는 0부터 시작하고 기본 0입니다. 해당 구역에서 같은 종류의 머리말·꼬리말을 문서 순서로 훑고 각 `subList`의 직접 문단만 셉니다. 내부 표·캡션 문단은 포함하지 않습니다. 기존 머리말·꼬리말이나 문단이 없으면 `TARGET_NOT_FOUND`이며 생성하지 않습니다.
+
+```json
+{"command":"header.setText","expectedVersion":2,"params":{"kind":"header","paragraphIndex":0,"text":"2026학년도 연구 보고서"}}
+```
+
+일반 텍스트와 기존 run·t만 편집합니다. 여백·번호·필드·탭·개체 제어가 든 문단은 `UNSUPPORTED`, 사유 `header_control`로 거절하며 제어 필드를 지우지 않습니다. 기존 텍스트 조각이 없으면 `no_text_fragment`로 거절합니다. 새 텍스트에는 탭·줄바꿈을 넣을 수 없습니다.
+
+줄 배치 캐시는 기존 정책대로 대상 문단(그림은 그림을 담은 문단)과 해당 최상위 문단부터 구역 끝까지 제거합니다. `PrvText`는 머리말·꼬리말의 옛 문장이 한 번만 나올 때 동기화하고 아니면 stale로 알립니다. 스타일·그림 편집은 미리보기 텍스트를 바꾸지 않습니다. 미편집 ZIP 항목의 원시 압축 바이트·로컬 헤더 보존과 Undo 원본 전체 바이트 복원 규칙은 같습니다. 저장 관문은 세 요청을 편집 구현과 독립적으로 재계산합니다. Linux 한컴 게이트의 프로세스 생존은 Windows 호환성이나 화면 조판 대조를 의미하지 않습니다.

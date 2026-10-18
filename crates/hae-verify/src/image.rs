@@ -144,7 +144,10 @@ fn jpeg_shape(bytes: &[u8], limits: &Limits) -> Result<(u32, u32)> {
     Err(bad())
 }
 
-fn validated_media_type(bytes: &[u8], limits: &Limits) -> Result<(&'static str, (u32, u32))> {
+pub(crate) fn validated_media_type(
+    bytes: &[u8],
+    limits: &Limits,
+) -> Result<(&'static str, (u32, u32))> {
     if bytes.len() as u64 > limits.max_hwpx_bytes {
         return Err(fail("image input byte limit exceeded"));
     }

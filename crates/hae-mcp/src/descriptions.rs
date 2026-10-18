@@ -60,8 +60,18 @@ fn image_replace() -> &'static str {
     "Replace the media of picture `target` (`nodeId` from `document_inspect`/`element_query`) with a static PNG or JPEG file at `imagePath` (inside `--input-root`), preserving the picture's position, size, and caption while leaving other pictures sharing the old media untouched. Requires `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query). Refuses read-only documents, cropped/effect pictures, or animated/non-PNG/JPEG images (`UNSUPPORTED`), disallowed paths (`PATH_NOT_ALLOWED`), or images over 40.96 megapixels (`RESOURCE_LIMIT`). Set `dryRun: true` to preview without changing the document."
 }
 
+fn paragraph_set_style() -> &'static str {
+    "Set existing header styleId (integer) on exactly one of target (paragraph nodeId) or non-empty targets (array). Changes only styleIDRef; missing style returns TARGET_NOT_FOUND. No new styles. Requires expectedVersion; supports dryRun, command_batch and exact Undo."
+}
+fn image_fit() -> &'static str {
+    "Fit picture target to its current frame: mode contain (aspect preserved inside), cover (center crop to fill), stretch (fill with distortion). Embedded PNG/JPEG pixels stay unchanged; source imgDim/imgClip use 75 HWPUNIT/pixel. Preserve renderingInfo matrices and manifest embedding. Requires expectedVersion; supports dryRun, command_batch and exact Undo."
+}
+fn header_set_text() -> &'static str {
+    "Replace text of an existing header/footer paragraph. scope is a section nodeId (default first section); kind header/footer; paragraphIndex defaults to 0, counting direct header/footer paragraphs in document order. Missing paragraph returns TARGET_NOT_FOUND; margin/numbering/field or other controls are refused with reason header_control. Never creates header/footer/text carriers. Requires expectedVersion; supports dryRun, command_batch and exact Undo."
+}
+
 fn command_batch() -> &'static str {
-    "Execute multiple edit `steps` (`text.format`, `text.replace`, `text.replaceAll`, `paragraph.format`, `cell.setText`, `image.replace`) atomically as a single revision increment and single undo unit. Requires one top-level `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query); each step's ranges and preconditions are evaluated against the state produced by preceding steps. If any step fails, the entire batch rolls back with no state change and reports the failing step index. Set `dryRun: true` to validate and preview the combined diff without changing the document."
+    "Execute multiple edit `steps` (`text.format`, `text.replace`, `text.replaceAll`, `paragraph.format`, `paragraph.setStyle`, `cell.setText`, `image.replace`, `image.fit`, `header.setText`) atomically as a single revision increment and single undo unit. Requires one top-level `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query); each step's ranges and preconditions are evaluated against the state produced by preceding steps. If any step fails, the entire batch rolls back with no state change and reports the failing step index. Set `dryRun: true` to validate and preview the combined diff without changing the document."
 }
 
 fn history_undo() -> &'static str {
@@ -115,6 +125,9 @@ pub const TABLE: &[(&str, Describe)] = &[
     ("paragraph.format", paragraph_format),
     ("cell.setText", cell_set_text),
     ("image.replace", image_replace),
+    ("paragraph.setStyle", paragraph_set_style),
+    ("image.fit", image_fit),
+    ("header.setText", header_set_text),
     ("command.batch", command_batch),
     ("history.undo", history_undo),
     ("history.redo", history_redo),
@@ -160,5 +173,5 @@ pub fn dry_run_property() -> &'static str {
 
 /// Returned as `instructions` from `initialize` and `server/discover`.
 pub fn server_instructions() -> &'static str {
-    "Preservation-first HWPX document engine. Workflow: (1) call `document_open` to get `documentId` and `revision`; (2) call `document_inspect` or `element_query` to find target `nodeId`s and text; check per-command `edits` and choose text ranges within paragraph `textSpans` (`editable` means any available command); (3) call edit tools (`text_format`, `text_replace`, `text_replace_all` for document-wide exact find-and-replace, `paragraph_format`, `cell_set_text`, `image_replace`, `command_batch`) with `documentId` and `expectedVersion` = current revision (use `dryRun: true` to preview without changing anything); (4) on `VERSION_CONFLICT`, re-query before retrying; (5) export to a new `.hwpx` via `document_export` or save a `.hwpwork` project via `project_save`. For stateless MCP 2026-07-28 requests (server/discover then tools/call), documentId is required in arguments on every document tool call; use the handle from document_open. For legacy initialize-based sessions (2025-11-25 and earlier), documentId is optional and defaults to the currently open document. Handles last until document_close or server exit; reopen after restart. Text ranges are half-open `[start, end)` extended grapheme cluster indices within a single paragraph. Request sequence numbering is handled automatically by the MCP adapter."
+    "Preservation-first HWPX document engine. Workflow: (1) call `document_open` to get `documentId` and `revision`; (2) call `document_inspect` or `element_query` to find target `nodeId`s and text; check per-command `edits` and choose text ranges within paragraph `textSpans` (`editable` means any available command); (3) call edit tools (`text_format`, `text_replace`, `text_replace_all` for document-wide exact find-and-replace, `paragraph_format`, `paragraph_set_style`, `cell_set_text`, `image_replace`, `image_fit`, `header_set_text`, `command_batch`) with `documentId` and `expectedVersion` = current revision (use `dryRun: true` to preview without changing anything); (4) on `VERSION_CONFLICT`, re-query before retrying; (5) export to a new `.hwpx` via `document_export` or save a `.hwpwork` project via `project_save`. For stateless MCP 2026-07-28 requests (server/discover then tools/call), documentId is required in arguments on every document tool call; use the handle from document_open. For legacy initialize-based sessions (2025-11-25 and earlier), documentId is optional and defaults to the currently open document. Handles last until document_close or server exit; reopen after restart. Text ranges are half-open `[start, end)` extended grapheme cluster indices within a single paragraph. Request sequence numbering is handled automatically by the MCP adapter."
 }

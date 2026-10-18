@@ -100,3 +100,11 @@ python3 -m unittest discover -s tests/oracle
 - `crates/hae-verify/src/image.rs` — 그림
 - `crates/hae-verify/src/contract.rs` — 요청(`VerifyOperation`) 정의
 - `crates/hae-verify/tests/` — 거절·수용 시험
+
+## 6. 0.3 좁은 편집 명령의 독립 검증
+
+- `paragraph.setStyle`: 원본에서 지정한 문단들의 구조 경로를 해석하고 기존 header 스타일 ID를 확인한 뒤 `styleIDRef` 값만 독립 계산합니다. 다른 문단·속성·스타일 정의 변경은 거절합니다.
+- `image.fit`: 원본/앞 단계의 독립 계산 상태에서 내장 PNG/JPEG 크기를 읽어 `75 HWPUNIT/px`, 프레임 맞춤·중앙 자르기·표시 크기·원본 사각형·배율 행렬을 재계산합니다. 요청에 없는 기하·다른 그림·미디어·manifest 변경, 행렬 또는 `isEmbeded` 손실을 거절합니다. `orgSz` 좌표계는 유지하며 `imgRect.pt2 == orgSz`, `sz == curSz`를 강제합니다. `cover`만 원본보다 작은 clip을 허용합니다.
+- `header.setText`: 편집기가 고른 문단을 받지 않고 구역·종류·인덱스로 직접 찾습니다. 제어 요소를 포함한 문단과 텍스트 조각이 없는 문단은 거절합니다. 기존 텍스트 교체 검증과 줄 배치 캐시·PrvText 규칙을 적용하고 다른 머리말·꼬리말·본문 변경을 거절합니다.
+
+구현은 `src/narrow.rs`·`src/fit.rs`, 독립 손작성 후보 및 명령별 5건 이상 변조 거절 시험은 `tests/narrow_edits.rs`입니다. 편집 계층의 타입·산출물을 검증기에 전달하지 않습니다. PNG/JPEG 픽셀 디코드 검증은 편집 입력 계층, 검증기의 이미지 검사는 기존처럼 제한된 컨테이너·크기 검사입니다.

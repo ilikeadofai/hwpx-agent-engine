@@ -36,6 +36,14 @@ pub enum LineSpacingKind {
     Percent,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FitMode {
+    Contain,
+    Cover,
+    Stretch,
+}
+
 /// Request properties, deliberately independent from hae-edit's type.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -55,6 +63,27 @@ pub struct CharProps {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "op", deny_unknown_fields)]
 pub enum VerifyOperation {
+    #[serde(rename = "paragraph.setStyle")]
+    ParagraphSetStyle {
+        targets: Vec<VerifyScope>,
+        #[serde(rename = "styleId")]
+        style_id: u32,
+    },
+    #[serde(rename = "image.fit")]
+    ImageFit {
+        entry: String,
+        path: Vec<usize>,
+        mode: FitMode,
+    },
+    #[serde(rename = "header.setText")]
+    HeaderSetText {
+        entry: String,
+        path: Vec<usize>,
+        kind: String,
+        #[serde(rename = "paragraphIndex")]
+        paragraph_index: usize,
+        text: String,
+    },
     #[serde(rename = "text.format")]
     TextFormat {
         entry: String,
@@ -128,6 +157,10 @@ pub struct VerifyScope {
 impl VerifyOperation {
     pub(crate) fn target(&self) -> (&str, &[usize]) {
         match self {
+            Self::ParagraphSetStyle { .. } => ("", &[]),
+            Self::HeaderSetText { entry, path, .. } | Self::ImageFit { entry, path, .. } => {
+                (entry, path)
+            }
             Self::TextReplaceAll { scope, .. } => scope
                 .as_ref()
                 .map_or(("", &[][..]), |s| (s.entry.as_str(), s.path.as_slice())),

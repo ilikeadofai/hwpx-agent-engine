@@ -4,9 +4,10 @@
 use crate::registry::{
     command_describe, command_list, BatchStepParam, CellSetTextParams, CommandBatchParams,
     CommandDescriptor, DocumentDiffParams, DocumentExportParams, DocumentOpenParams,
-    DocumentPreviewParams, ImageReplaceParams, LineSpacingParam, ParagraphFormatParams,
-    ParsedCommand, ProjectSaveParams, SnapshotCreateParams, SnapshotReleaseParams,
-    TextFormatParams, TextReplaceAllParams, TextReplaceParams,
+    DocumentPreviewParams, HeaderSetTextParams, ImageFitParams, ImageReplaceParams,
+    LineSpacingParam, ParagraphFormatParams, ParagraphSetStyleParams, ParsedCommand,
+    ProjectSaveParams, SnapshotCreateParams, SnapshotReleaseParams, TextFormatParams,
+    TextReplaceAllParams, TextReplaceParams,
 };
 use hae_diag::{Code, Diagnostic, EngineError, Limits, Result, Stage};
 use hae_edit::{Alignment, Applied, EditOp, ImageBytes, LineSpacing};
@@ -272,7 +273,21 @@ fn add_op_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, op: &Verify
                 add_slice_bytes(seen, total, color.as_bytes());
             }
         }
-        VerifyOperation::ParagraphFormat { entry, .. } => {
+        VerifyOperation::ParagraphSetStyle { targets, .. } => {
+            for t in targets {
+                add_slice_bytes(seen, total, t.entry.as_bytes());
+                *total = total.saturating_add((t.path.len() * std::mem::size_of::<usize>()) as u64);
+            }
+        }
+        VerifyOperation::HeaderSetText {
+            entry, kind, text, ..
+        } => {
+            add_slice_bytes(seen, total, entry.as_bytes());
+            add_slice_bytes(seen, total, kind.as_bytes());
+            add_slice_bytes(seen, total, text.as_bytes());
+        }
+        VerifyOperation::ImageFit { entry, .. }
+        | VerifyOperation::ParagraphFormat { entry, .. } => {
             add_slice_bytes(seen, total, entry.as_bytes());
         }
         VerifyOperation::ImageReplace { entry, bytes, .. } => {
@@ -874,6 +889,27 @@ impl SessionExecutor {
                     params: serde_json::to_value(p).unwrap(),
                 }],
             ),
+            ParsedCommand::ParagraphSetStyle(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "paragraph.setStyle".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
+            ParsedCommand::ImageFit(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "image.fit".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
+            ParsedCommand::HeaderSetText(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "header.setText".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
             ParsedCommand::CommandBatch(CommandBatchParams { steps }) => {
                 if steps.is_empty() {
                     return Err(EngineError::new(
@@ -1128,6 +1164,117 @@ impl SessionExecutor {
             )));
         }
         match step.command.as_str() {
+            "paragraph.setStyle" => {
+                let p: ParagraphSetStyleParams = serde_json::from_value(step.params.clone())
+                    .map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            e.to_string(),
+                        ))
+                    })?;
+                let targets = match (p.target, p.targets) {
+                    (Some(t), None) => vec![t],
+                    (None, Some(ts)) if !ts.is_empty() => ts,
+                    _ => {
+                        return Err(wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            "supply exactly one of target or non-empty targets",
+                        )))
+                    }
+                };
+                let vtargets = targets
+                    .iter()
+                    .map(|t| {
+                        let n = doc.require(t, Some(Kind::Paragraph))?;
+                        Ok(VerifyScope {
+                            entry: n.entry.clone(),
+                            path: doc.doc_of(n).path(n.el),
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()
+                    .map_err(&wrap_err)?;
+                Ok((
+                    EditOp::ParagraphSetStyle {
+                        targets,
+                        style_id: p.style_id,
+                    },
+                    VerifyOperation::ParagraphSetStyle {
+                        targets: vtargets,
+                        style_id: p.style_id,
+                    },
+                ))
+            }
+            "image.fit" => {
+                let p: ImageFitParams =
+                    serde_json::from_value(step.params.clone()).map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            e.to_string(),
+                        ))
+                    })?;
+                let n = doc
+                    .require(&p.target, Some(Kind::Picture))
+                    .map_err(&wrap_err)?;
+                let mode = serde_json::to_value(p.mode).unwrap();
+                Ok((
+                    EditOp::ImageFit {
+                        target: p.target,
+                        mode: serde_json::from_value(mode.clone()).unwrap(),
+                    },
+                    VerifyOperation::ImageFit {
+                        entry: n.entry.clone(),
+                        path: doc.doc_of(n).path(n.el),
+                        mode: serde_json::from_value(mode).unwrap(),
+                    },
+                ))
+            }
+            "header.setText" => {
+                let p: HeaderSetTextParams =
+                    serde_json::from_value(step.params.clone()).map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            e.to_string(),
+                        ))
+                    })?;
+                let n = match &p.scope {
+                    Some(t) => doc.require(t, Some(Kind::Section)).map_err(&wrap_err)?,
+                    None => doc
+                        .nodes
+                        .iter()
+                        .find(|n| n.kind == Kind::Section)
+                        .ok_or_else(|| {
+                            wrap_err(EngineError::new(
+                                Code::TargetNotFound,
+                                Stage::Validate,
+                                "no first section",
+                            ))
+                        })?,
+                };
+                let kind = serde_json::to_value(p.kind)
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .to_string();
+                Ok((
+                    EditOp::HeaderSetText {
+                        scope: p.scope,
+                        kind: kind.clone(),
+                        paragraph_index: p.paragraph_index,
+                        text: p.text.clone(),
+                    },
+                    VerifyOperation::HeaderSetText {
+                        entry: n.entry.clone(),
+                        path: doc.doc_of(n).path(n.el),
+                        kind,
+                        paragraph_index: p.paragraph_index,
+                        text: p.text,
+                    },
+                ))
+            }
             "text.format" => {
                 let p: TextFormatParams =
                     serde_json::from_value(step.params.clone()).map_err(|e| {

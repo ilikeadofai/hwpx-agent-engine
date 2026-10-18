@@ -1,12 +1,14 @@
-//! hae-edit: The four supported edits, lineseg cache policy and PrvText update.
+//! hae-edit: Bounded edits, lineseg cache policy and PrvText update.
 //!
 //! Edits are applied in order to a candidate [`Document`]; each step is a set
 //! of byte splices followed by [`Document::rebuild`] (the commit gate). Cache
 //! invalidation and PrvText run once at the end of a batch (spec §8, §11).
 
 mod char_format;
+mod fit;
 mod format;
 mod image;
+mod narrow;
 mod replace_all;
 mod text;
 
@@ -19,6 +21,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 pub use char_format::CharProps;
+pub use fit::FitMode;
 pub use format::{Alignment, LineSpacing};
 pub use image::ImageBytes;
 pub use replace_all::{
@@ -29,6 +32,20 @@ pub use replace_all::{
 /// One edit command (spec §6). Ranges are grapheme-cluster indices.
 #[derive(Debug, Clone)]
 pub enum EditOp {
+    ParagraphSetStyle {
+        targets: Vec<String>,
+        style_id: u32,
+    },
+    ImageFit {
+        target: String,
+        mode: FitMode,
+    },
+    HeaderSetText {
+        scope: Option<String>,
+        kind: String,
+        paragraph_index: usize,
+        text: String,
+    },
     TextFormat {
         target: String,
         range: Range<usize>,
@@ -72,6 +89,9 @@ pub enum EditOp {
 impl EditOp {
     pub fn target(&self) -> &str {
         match self {
+            EditOp::ParagraphSetStyle { targets, .. } => targets.first().map_or("", String::as_str),
+            EditOp::HeaderSetText { scope, .. } => scope.as_deref().unwrap_or(""),
+            EditOp::ImageFit { target, .. } => target,
             EditOp::TextFormat { target, .. }
             | EditOp::TextReplace { target, .. }
             | EditOp::ParagraphFormat { target, .. }
@@ -88,6 +108,26 @@ impl EditOp {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "op", rename_all = "camelCase")]
 pub enum Intent {
+    #[serde(rename = "paragraph.setStyle")]
+    ParagraphSetStyle {
+        entry: String,
+        path: Vec<usize>,
+        #[serde(rename = "styleId")]
+        style_id: u32,
+    },
+    #[serde(rename = "image.fit")]
+    ImageFit {
+        entry: String,
+        path: Vec<usize>,
+        mode: FitMode,
+    },
+    #[serde(rename = "header.setText")]
+    HeaderSetText {
+        entry: String,
+        kind: String,
+        #[serde(rename = "paragraphIndex")]
+        paragraph_index: usize,
+    },
     #[serde(rename = "text.format")]
     TextFormat {
         entry: String,
@@ -275,6 +315,16 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
     };
     for (i, op) in ops.iter().enumerate() {
         let r = match op {
+            EditOp::ParagraphSetStyle { targets, style_id } => {
+                narrow::set_style(&mut d, targets, *style_id)
+            }
+            EditOp::ImageFit { target, mode } => fit::fit(&mut d, target, *mode),
+            EditOp::HeaderSetText {
+                scope,
+                kind,
+                paragraph_index,
+                text,
+            } => narrow::header_text(&mut d, scope.as_deref(), kind, *paragraph_index, text),
             EditOp::TextFormat {
                 target,
                 range,

@@ -85,3 +85,7 @@ batch 롤백 뒤 현재 문서에서 재조회한다. 코드는 추가하지 않
 0.3 `text.format`은 새 코드를 만들지 않는다. 길이 0·역전·문단 밖 범위는 INVALID_RANGE, CDATA·주석·PI 교차와 해석 불가 속성은 UNSUPPORTED_CONTENT_IN_RANGE, 필드 경계는 field_boundary_in_range, 외부 namespace 요소를 품은 문단은 contains_opaque(UNSUPPORTED)로 0.2와 같은 코드를 쓴다.
 
 0.2 §7-2: text.replaceAll은 건너뛴 일치를 MATCHES_SKIPPED(경고)로, 여러 글자 모양이 합쳐진 일치를 하나의 FORMAT_COLLAPSED(경고, detail.matches)로 알린다. 빈 find·탭/줄바꿈이 든 text는 INVALID_REQUEST, maxMatches가 1..10000 밖이면 INVALID_ARGUMENT, 없는 scope는 TARGET_NOT_FOUND다.
+
+### 0.3 좁은 편집 명령 사유 (기존 코드 사용)
+
+새 진단 코드는 추가하지 않는다. `paragraph.setStyle`의 없는 스타일과 `header.setText`의 없는 구역/머리말/꼬리말/문단은 `TARGET_NOT_FOUND`다. `UNSUPPORTED`의 `style_shape`는 기존 참조 속성 누락·중복 스타일 ID, `image_geometry`는 누락·중복·비정상 기하/행렬 또는 정수 기하 범위 초과, `header_control`은 여백·번호·필드·탭·개체 제어를 담은 머리말/꼬리말 문단을 뜻한다. `no_text_fragment`는 기존 텍스트 조각이 없어 생성 없이 교체할 수 없는 경우다. 잘못된 mode/kind·target/targets 형식은 `INVALID_REQUEST`, 변조 후보는 `VERIFY_FAILED`다.

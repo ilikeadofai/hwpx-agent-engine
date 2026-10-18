@@ -846,3 +846,7 @@ pub(crate) fn format_spans(
     }
     Ok(out)
 }
+
+pub(crate) fn paragraph_len(doc: &XmlDoc, p: usize) -> usize {
+    view(doc, p).text.graphemes(true).count()
+}
