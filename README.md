@@ -1,53 +1,156 @@
-# hwpx-agent-engine
+# hwpx-agent-engine (0.3.0)
 
-AI 에이전트와 사람이 같은 명령으로 HWPX 문서를 조회·편집·검증하는 독립 문서 엔진.
+AI 에이전트와 사람이 같은 명령으로 기존 `.hwpx` 문서를 안전하게 조회·편집·검증하는 독립 문서 엔진입니다.
 
-## 현재 상태
+## 1. 핵심 차별점
 
-2026-10-17 기준, **0.1의 Linux 범위는 완료**했다. 단계 0 선행 시험(S1~S3)을 통과했고, 단계 1 코어·단계 2 JSON-lines·stdio MCP·단계 3 격리 렌더링의 완료 판정은 예이며, 단계 4 Linux 범위는 실제 stdio MCP 94/94와 세트 A·B 실제 픽셀 시각 판독 PASS로 완료했다. **Windows·한컴 검증은 최종 단계로 보류**했으며, 한컴 출력과의 `nativeComparison`·한컴 SDK 분석은 이번 완료 범위 밖이다. 설계 §13에 따라 Windows 결과 회수 전까지 0.1 전체의 최종 완료는 선언하지 않는다. 단계 1~4의 Linux 결과는 **`main`에 병합했다**(`7cfc1fa`). [Linux 범위 완료 판정](docs/decisions/stage234-linux-results.md#linux-범위-완료-판정-2026-10-17)을 따른다.
+새 문서를 처음부터 생성하는 대신, **기존 문서를 깨뜨리지 않고 지정한 부분만 고치는 것**에 집중합니다([경쟁 분석 §8](docs/research/competitive-gap-analysis.md#8-경쟁-프로젝트-대비-우위열위)).
 
-**0.2 구현(2026-10-18).** 기존 구조를 바꾸는 편집의 폭을 넓혔다 — 위치 삽입(길이 0 범위), 개체를 보존하는 범위 교체(`controls:"preserve"`), 다문단·병합 셀 편집(`paragraphs`), 그리고 문서 전체 정확 일치 교체 `text.replaceAll`. 새 문단·행·개체를 만드는 일은 0.3으로 넘겼다. 기존 게이트는 Rust 297개·MCP 146/146이었고 Linux 한컴 관찰은 4종이다. 사용자 문서 속성 시험은 시도 98건 중 편집·Undo 정확 복원 92건, 필드 경계 거절 6건이다. 단계 4 거절 25건 재시도는 **성공 18 + 설계상 거절 6 + 수식 제외 1**이며, 성공 중 다문단 셀 9건은 paragraphs 적응 요청이다. 24건 전부 성공으로 주장하지 않는다. Sonnet 독립 검증은 조건부 수용(안전 성질 결함 없음)이며 Windows 확인은 최종본에서 한다. [0.2 설계](docs/superpowers/specs/2026-10-18-hwpx-engine-0.2-design.md), [구현 기록](docs/decisions/v0.2-implementation-notes.md).
+- **원본 바이트 보존**:
+  수정하지 않은 ZIP 항목은 재압축하지 않고 원시 압축 데이터와 로컬 헤더를 그대로 유지합니다.
+  무편집 내보내기와 전체 Undo 후 내보내기는 원본 파일과 바이트 단위로 동일합니다(SHA-256 일치).
+- **독립 저장 검증 (`hae-verify`)**:
+  편집 계층(`hae-edit`·`hae-model`·`hae-exec`)에 의존하지 않는 별도 검증기가 원본 패키지와 선언적 요청만으로 기대 변경을 다시 계산합니다.
+  허용되지 않은 XML·자원·미디어·캐시 변경이 있으면 저장 전에 거절합니다.
+- **원자적 편집과 Undo/Redo**:
+  `command.batch` 중 한 단계라도 실패하면 전체를 원복합니다.
+  `dryRun` 사전 검증, `expectedVersion` 버전 충돌 방지, `.hwpwork` 프로젝트 파일 잠금(`flock`), 최대 100단위 스냅샷 Undo/Redo를 지원합니다.
+- **한컴오피스 없이 동작**:
+  한컴오피스·SDK·COM 설치 없이 전 경로가 독립 실행됩니다.
 
-**한컴 상호운용 추가 검증(2026-10-17).** 한컴오피스 2020 Linux Beta를 디스플레이 없이 실행하고 화면을 읽는 경로(`QT_QPA_PLATFORM=vnc` + 최소 RFB 클라이언트)를 만들어, 엔진 출력을 실제 한컴으로 열어 확인했다. 그 결과 실제 결함 2건을 찾아 고쳤다 — 매니페스트 미디어 항목의 `isEmbeded="1"` 누락(한컴이 내장 대신 외부 연결로 해석)과 `imgClip`/`imgDim`의 단위 오류(픽셀당 75 HWPUNIT). 86개 파일 전수에서 실제 한컴 문서·사용자 작성 문서·엔진 출력은 모두 정상적으로 열린다. 로컬 게이트는 `scripts/hancom_gate.sh`이며, 자세한 근거와 한계는 [한컴 열기 검증 기록](docs/decisions/engine-output-open-verification-2026-10-17.md)에 있다. **이 검증은 Linux 빌드(2020 Beta)에 한정되며 Windows 한컴오피스 2024의 결과가 아니다.**
+## 2. 할 수 있는 것 (0.3 명령 57개)
 
-- **단계 1 코어(10개 crate)**:
-  - `hae-diag`: 진단·오류 코드(31종), 패키지 거절 사유(18종), `Limits` 상수, 자원 예산 타입
-  - `hae-zip`: 방어적 ZIP 파싱·스트리밍 해제 한도·무편집 항목 원시 압축 데이터/로컬 헤더 바이트 보존 쓰기
-  - `hae-xml`: 원문 토큰 범위·BOM/선언/줄바꿈 보존, XML 1.0 NCName·namespace 해석, 문자 참조·CDATA 대응표, 범위 교체
-  - `hae-package`: `mimetype`, `content.hpf` manifest/spine, `META-INF`, 미디어 참조 무결성
-  - `hae-model`: 정규 상태, 안정 `documentId`·`nodeId` 대응표, 편집 허용/잠금 판정, `inspect`/`query`/`get` 조회 뷰
-  - `hae-edit`: 부분 편집(`text.replace`, `text.replaceAll`, `paragraph.format`, `cell.setText`, `image.replace`), `LinesegPolicy`, `PrvText` 갱신
-  - `hae-verify`: 편집 계층에 의존하지 않는 독립 저장 관문 검사기(30종 변조 사례 전수 거절)
-  - `hae-project`: Linux 디렉터리 핸들(`openat`/`O_NOFOLLOW`) 기반 루트 I/O, 세션 `.lock`(`flock`), 원자적 저장(`RENAME_NOREPLACE`·`fsync`), `.hwpwork` 프로젝트 및 무편집 바이트 통과 내보내기
-  - `hae-exec`: 단일 출처 명령 레지스트리(22개 명령·JSON Schema), `writerId`·`requestSequence` 순서/재전송/충돌 처리, `command.batch`, `dryRun`, 100단위 항목 공유 Undo/Redo 이력·스냅샷·세션 메모리 예산
-  - `hae-cli`: `hae script`(단일 세션 스크립트 실행) 및 `hae run`(단발 실행, 일회성 Undo/Redo는 `SESSION_REQUIRED` 거절)
-- **추가 인터페이스·프리뷰 crate**: `hae-jsonl`(요청 1 MiB·응답 4 MiB), `hae-mcp`(레지스트리 기반 도구·실제 프로세스 동등성), `hae-render-rhwp`(bubblewrap 격리, 페이지 선택, SVG 검사, PNG 변환, 쪽 대응 검증).
-- **대형 프리뷰 전달**: 실제 JSON 및 MCP 이스케이프 예산을 초과하는 쪽은 출력 루트의 PNG/SVG 파일로 제공한다. 원본·기존 파일을 덮어쓰지 않고 해시와 경로를 반환한다.
-- **검증 상태**: 최종 Linux 관문은 fmt·Clippy와 Rust 244개, 독립 Python oracle 88개, 사용량 도우미 시험 30개를 통과했다. 실제 stdio MCP 대표 시나리오도 94개 검증을 통과했다. [최종 결과와 재현 명령](docs/decisions/stage234-linux-results.md)에 범위를 기록했다. 이 수치는 임의 문서의 한컴 조판 호환성이나 전체 프로세스 RSS 보장을 의미하지 않는다.
-- **사용 안내**: [설치·MCP 연결·편집·프리뷰 안내서](docs/user-guide.md). 별도 `rhwp`·`hae-raster` 실행 파일, `bwrap`, 제한된 폰트 폴더가 필요하다.
+단일 레지스트리에 등록된 57개 명령을 모든 인터페이스가 공유합니다([0.3 설계서 §2·§3](docs/superpowers/specs/2026-10-18-hwpx-engine-0.3-design.md)).
 
+- **조회 (11개)**:
+  `document.inspect`(구조 개요·편집 가능 여부), `document.stats`(요소·글자 수 통계), `element.query`, `element.get`, `section.list`, `style.list`(`header.xml` 스타일·글자/문단 모양·테두리 조회), `note.list`(각주·미주), `link.list`(하이퍼링크), `trackchange.list`(변경 추적 표식·작성자), `bookmark.list`(책갈피), `memo.list`(메모)
+- **텍스트 편집 (2개)**:
+  `text.replace`(자소 범위 교체, 길이 0 위치 삽입, `controls:"preserve"` 개체 보존 교체), `text.replaceAll`(문서·범위 전체 정확 일치 일괄 교체)
+- **서식 (3개)**:
+  `text.format`(자소 범위 굵게·기울임·밑줄·취소선·크기·글자색, `charPr` 재사용·단일 추가), `paragraph.format`(정렬·백분율 줄간격), `paragraph.setStyle`(기존 `styleIDRef` 변경)
+- **표 (10개)**:
+  `table.get`(격자·병합·셀 조회), `cell.setText`(단일·다문단 `paragraphs`·병합 기준 셀), `cell.setFormat`(기존 `borderFill`·배경색·여백), `cell.setSize`(비병합 셀 열·행 크기), `table.setColumnWidths`, `table.setRowHeights`, `table.insertRow`, `table.deleteRow`, `table.insertColumn`, `table.deleteColumn`
+- **수식 (4개)**:
+  `equation.list`, `equation.get`, `equation.setScript`(일반 텍스트 수식 스크립트 교체), `equation.setProperties`(`baseLine`·`textColor`·`font`·`baseUnit`·`lineMode`·`version`)
+- **필드·양식 (3개)**:
+  `field.list`, `field.setText`(`CLICK_HERE`·`HYPERLINK` 표시 텍스트 채우기), `form.fill`(라벨 셀 오른쪽·아래 빈 셀 일괄 채우기)
+- **쪽 설정·머리말 (5개)**:
+  `section.getPage`, `section.setPage`(기존 용지 방향·크기·여백), `section.setPageNumbering`(쪽 시작 방식·번호), `section.setVisibility`(첫 쪽 머리말·꼬리말·쪽번호·테두리·채우기 표시), `header.setText`(기존 머리말·꼬리말 직접 문단 텍스트 교체)
+- **그림 (3개)**:
+  `picture.list`, `image.replace`(기존 프레임 유지 정적 PNG/JPEG 교체), `image.fit`(`contain`·`cover`·`stretch` 비율·자르기 맞춤)
+- **내보내기·저장 (3개)**:
+  `document.export`(새 `.hwpx` 저장), `document.exportText`(새 Markdown `.md`·HTML `.html` 파일로 읽기 전용 변환), `project.save`(nodeId·상태를 유지하는 `.hwpwork` 저장)
+- **미리보기 (1개)**:
+  `document.preview`(격리된 외부 `rhwp`로 SVG·PNG 렌더링)
+- **HWP5 읽기 (1개)**:
+  `hwp5.inspect`(구형 `.hwp` 5.0 바이너리의 파일 헤더·구역·문단 텍스트를 열린 문서 없이 읽기 전용 조회)
+- **세션·이력·배치·스키마 제어 (11개)**:
+  `document.open`, `document.close`, `command.batch`, `history.undo`, `history.redo`, `history.clear`, `document.snapshot`, `snapshot.release`, `document.diff`, `command.list`, `command.describe`
 
-## 개발 환경과 검사
+## 3. 할 수 없는 것과 알려진 한계
 
-`rust-toolchain.toml`이 Rust 1.93.1을 지정한다. 저장소 루트에서 다음 명령을 실행한다.
+- **새 문서·문단·개체 생성 불가**:
+  기존 표 안의 빈 행·열 삽입(`table.insertRow`·`insertColumn`)을 제외하면 새 문서, 본문 문단, 표, 그림, 수식, 구역, 머리말·꼬리말을 새로 만들지 못합니다.
+  문단·셀을 합치거나 나누는 작업과 도형·차트·OLE 편집도 지원하지 않습니다.
+- **읽기 전용 문서와 HWP5 편집 불가**:
+  암호화 문서는 열기를 거절합니다. 전자서명·변경 추적 문서는 조회와 무편집 내보내기만 허용합니다.
+  구형 `.hwp`(HWP5)는 `hwp5.inspect` 조회만 지원하며 편집·HWPX 변환 저장은 하지 않습니다.
+- **Windows 한컴오피스 2024 실기 미검증**:
+  한컴 열기·화면 확인은 **Linux 한컴오피스 2020 Beta(11.20.0.989)**에서만 수행했습니다.
+  Windows 한컴 2024에서의 열기·저장·재조판은 아직 검증하지 않았으며 `nativeComparison`은 항상 `not_checked`입니다.
+- **`rhwp` 미리보기와 한컴 조판의 불일치 가능성**:
+  `document.preview`가 만드는 SVG/PNG와 쪽 번호는 외부 렌더러 `rhwp`의 추정치(`renderer-estimated`)입니다.
+  실제 한컴오피스의 줄바꿈·쪽 나눔·쪽수와 일치한다고 보장하지 않습니다.
+- **미리보기 외부 실행 파일 및 글꼴 폴더 제약**:
+  엔진에 렌더러가 내장되어 있지 않습니다.
+  미리보기에는 별도의 `rhwp` 실행 파일, `bubblewrap`(`bwrap`), `hae-raster`, 그리고 **작은 글꼴 폴더(`HAE_FONT_DIR`)**가 필요합니다.
+  글꼴 스캔 상한은 **파일 4,096개·총 64 MiB·파일당 32 MiB**이므로 `/usr/share/fonts` 전체를 지정하면 `RENDERER_UNAVAILABLE`(`memory_limit`)로 거절됩니다.
 
-```sh
-bash scripts/check.sh
-python3 -m unittest discover -s tests/oracle
+## 4. 빠른 시작
+
+저장소 루트(`rust-toolchain.toml`, Rust 1.93.1)에서 전체 실행 파일(`hae`, `hae-jsonl`, `hae-mcp`, `hae-raster`)을 빌드하거나 사용자 폴더에 설치한 뒤 `hae-mcp doctor`로 점검합니다([사용 안내서 §2·§3](docs/user-guide.md)).
+
+```bash
+cargo build --release
 ```
 
-`scripts/check.sh`는 서식 검사, 경고를 오류로 취급하는 Clippy, PNG 작업자 빌드, 사용량 도우미 시험, workspace 전체 시험을 순서대로 실행한다.
+별도 폴더 설치 및 `doctor` 점검 예시:
 
-## 설계와 근거
+```bash
+cargo build --release --locked -p hae-mcp -p hae-render-rhwp
+install -Dm755 target/release/hae-mcp "$HOME/.local/bin/hae-mcp"
+install -Dm755 target/release/hae-raster "$HOME/.local/bin/hae-raster"
+hae-mcp --version
+HAE_RHWP=/opt/rhwp/bin/rhwp hae-mcp doctor \
+  --input-root /home/user/Documents/hwpx-inputs \
+  --output-root /home/user/Documents/hwpx-outputs
+```
 
-- 설계서: `docs/superpowers/specs/2026-10-16-hwpx-engine-0.1-design.md`
-- 구현 계획: `docs/superpowers/plans/2026-10-16-hwpx-engine-0.1-plan.md`
-- 단계 0 결과: `docs/decisions/stage0-results.md`
-- 단계 1 완료 검증 결과: `docs/decisions/stage1-results.md`
-- 단계 2·3·4 Linux 최종 결과: `docs/decisions/stage234-linux-results.md`
-- 의존성 및 보안 점검: `docs/decisions/dependencies.md`
-- 클린룸·재사용 기록: `docs/decisions/clean-room.md`
-- 모델 역할 분담: `docs/decisions/model-roles.md`
-- 재개 검토 및 수정 기록: `docs/decisions/resumption-review/`
+미리보기 없이 조회·편집·내보내기만 쓸 때는 `HAE_RHWP`·`HAE_FONT_DIR` 없이도 동작합니다.
+입출력 폴더는 미리 만들어 둔 실제 경로로 바꾸어 지정합니다.
 
-운영 모델 배정: GPT 6.1 Sol이 오케스트레이터이며, Opus 5.5는 계획 전용이다. [모델 역할과 한도 운영](docs/decisions/model-roles.md)을 따른다.
+**Claude Code 연결 예시**:
+
+```bash
+claude mcp add --scope project --transport stdio hwpx-engine \
+  -e HAE_RHWP=/opt/rhwp/bin/rhwp -e HAE_FONT_DIR=/home/user/hwpx-fonts \
+  -- /home/user/.local/bin/hae-mcp \
+  --input-root /home/user/Documents/hwpx-inputs \
+  --output-root /home/user/Documents/hwpx-outputs
+```
+
+**Codex CLI 연결 예시**:
+
+```bash
+codex mcp add hwpx-engine \
+  --env HAE_RHWP=/opt/rhwp/bin/rhwp --env HAE_FONT_DIR=/home/user/hwpx-fonts \
+  -- /home/user/.local/bin/hae-mcp \
+  --input-root /home/user/Documents/hwpx-inputs \
+  --output-root /home/user/Documents/hwpx-outputs
+```
+
+## 5. 인터페이스
+
+세 실행 파일 모두 동일한 `--input-root`·`--output-root` 경계와 명령 레지스트리를 사용합니다.
+
+- **CLI (`hae`)**:
+  `hae run`(단발 명령 실행, 일회성 Undo/Redo는 `SESSION_REQUIRED` 거절)과 `hae script`(단일 세션에서 JSON 단계 배열 실행)를 제공합니다.
+- **JSON-lines (`hae-jsonl`)**:
+  표준 입출력 한 줄 JSON 요청·응답 서버입니다.
+  단일 요청 1 MiB·응답 4 MiB 상한과 `writerId`·`requestSequence` 순서·재전송 검사를 적용합니다.
+- **MCP (`hae-mcp`)**:
+  stdio JSON-RPC 2.0 서버입니다. 57개 명령을 개별 도구(`text_replace` 등)와 `outputSchema`·4종 annotations로 노출합니다.
+  세션형 리비전(`2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05`)과 요청별 `_meta`·`server/discover`를 사용하는 `2026-07-28` 리비전을 지원합니다.
+
+## 6. 검증 상태
+
+2026-10-18 기준 최신 게이트 수치는 [0.3 계약 검토 후속 검증](docs/decisions/0.3-contract-followup.md)(Rust 리비전 `8c2fcd4`, Python 오라클 `2ae4d7d`)에 기록되어 있습니다.
+
+| 게이트 | 결과 |
+|---|---|
+| `bash scripts/check.sh` (렌더러 없음) | 종료 0 — fmt·Clippy 통과, Rust **766 passed / 0 failed / 13 ignored(SKIP)**, `scripts/tests` **33/33** |
+| `bash scripts/check.sh` (렌더러 있음) | 종료 0 — Rust 총 **779 passed / 0 failed**(실제 렌더러 **13/13** 포함), `scripts/tests` **33/33** |
+| 독립 Python 오라클 (`tests/oracle`) | 종료 0 — **111/111 passed / 0 failed** |
+| 실제 stdio MCP 평가 (`scripts/evaluate_mcp.py`) | 종료 0 — **146/146 passed / 0 failed** (`nativeComparison=not_checked`) |
+
+- Python 오라클의 독립 구현 범위는 `text.replace`·`text.replaceAll`·`cell.setText`·`paragraph.format`·`image.replace`와 0.3의 `equation.setScript`·`equation.setProperties` 7개 명령입니다. 나머지 편집은 `hae-verify` 독립 검증 게이트로 검사합니다.
+- 실제 문서 읽기·편집·Undo 원본 바이트 일치와 Linux 한컴 2020 Beta 게이트·화면 관찰은 [0.3 최종 통합 검증](docs/decisions/0.3-final-verification.md)에 기록했습니다.
+- 이 수치는 모든 문서·인자 조합의 성공이나 Windows 한컴 조판 호환성을 보장하지 않습니다.
+
+## 7. 문서 링크
+
+- 사용 안내서: [docs/user-guide.md](docs/user-guide.md)
+- 변경 이력: [CHANGELOG.md](CHANGELOG.md)
+- 설계서: [0.3 설계서](docs/superpowers/specs/2026-10-18-hwpx-engine-0.3-design.md) · [0.2 설계서](docs/superpowers/specs/2026-10-18-hwpx-engine-0.2-design.md) · [0.1 설계서](docs/superpowers/specs/2026-10-16-hwpx-engine-0.1-design.md)
+- 검증 기록: [0.3 계약 검토 후속 검증](docs/decisions/0.3-contract-followup.md) · [0.3 최종 통합 검증](docs/decisions/0.3-final-verification.md)
+- 경쟁 분석: [경쟁 분석·기능 격차 보고서](docs/research/competitive-gap-analysis.md)
+- 클린룸·의존성: [클린룸·재사용 기록](docs/decisions/clean-room.md) · [의존성 및 보안 점검](docs/decisions/dependencies.md)
+
+## 8. 라이선스와 클린룸 원칙
+
+- **클린룸 원칙**:
+  코어 엔진(`hae-zip`·`hae-xml`·`hae-package`·`hae-model`·`hae-edit`·`hae-verify`·`hae-project`·`hae-exec`·`hae-hwp5`)은 비공개 한컴 SDK·바이너리를 참조하지 않고, 공개 사양(KS X 6101, 한컴 공개 `hwpx-owpml-model` Apache-2.0 등)과 자작 시험 문서 관찰만으로 구현했습니다([0.1 설계서 §12](docs/superpowers/specs/2026-10-16-hwpx-engine-0.1-design.md#12-클린룸-자료-경계), [클린룸 기록](docs/decisions/clean-room.md)).
+- **외부 의존성 및 라이선스 경계**:
+  직접 의존 크레이트 15개(`quick-xml`, `flate2`, `resvg` 등)는 범용 오픈소스 라이브러리이며 정확 버전(`=`)으로 고정했습니다.
+  GPL 계열 코드는 복사하지 않습니다. 외부 렌더러 `rhwp`는 코어에 링크하지 않고 격리된 별도 프로세스로만 실행합니다.
+  로컬 글꼴 파일은 렌더링 시 읽기 전용으로 마운트할 뿐 저장소에 포함하거나 재배포하지 않으며, 각 크레이트는 현재 `publish = false`로 설정되어 있습니다.
