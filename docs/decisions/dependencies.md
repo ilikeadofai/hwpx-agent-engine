@@ -54,3 +54,11 @@
 - Windows에는 Unix dirfd에 대응하는 표준 `std::fs` 경로 상대 핸들이 없다. 최종 파일 열기에는 `FILE_FLAG_OPEN_REPARSE_POINT`를 쓰고 부모 구성요소/identity도 작업 직전 재확인하지만, 확인과 경로 사용 사이에 조상이 교체되는 TOCTOU 창은 제거되지 않는다. hard link도 확인 시점의 링크 수만 거절하므로 검사 뒤 추가되는 경쟁 링크까지 막는다고 보장하지 않는다.
 - Windows의 file index/volume serial 및 link count는 해당 파일시스템이 제공하는 handle 정보다. 검사 시점에는 기존 hard link를 거절하고 새 게시 과정의 link 수 변화를 확인하지만, 검사 뒤 추가되는 경쟁 hard link까지 차단한다고 보장하지 않는다. 새 파일 게시 자체는 같은 디렉터리의 hard link 생성 후 임시 링크 제거를 사용하므로 hard link를 지원하지 않는 파일시스템에서는 게시를 실패시킨다. Windows 파일의 접근 제어는 POSIX `0600` 모드 설정이 아니라 부모의 ACL 상속에 맡긴다. ADS는 명시적인 `:`를 거절하지만, 이 방식이 Windows 전체 경로 재해석 동작을 dirfd와 동등하게 봉쇄한다고 주장하지 않는다. 기존 파일 교체는 같은 디렉터리 내 `std::fs::rename`을 사용하며 파일시스템의 동작을 넘어서는 원자성·충돌 방지를 보장하지 않는다. 부모 디렉터리 `sync_all`이 지원되지 않거나 실패하면 게시 후 `SAVE_DURABILITY_UNCERTAIN`으로 처리한다.
 - `hae-mcp` 진단은 Unix에서만 execute permission bit를 확인한다. Windows에서는 파일 존재 여부만 확인하고 실행 가능 형식/연결 여부는 확인하지 않았다고 표시한다.
+
+## 6. 렌더러 격리의 플랫폼 경계 (0.3)
+
+- `hae-render-rhwp`의 제품 격리 경로는 Linux bubblewrap의 unprivileged user/mount/PID/network namespace 구성, read-only 입력·시스템 바인드, 별도 `/tmp`·출력 디렉터리, 환경 초기화, 그리고 `/usr/bin/prlimit`의 프로세스별 `RLIMIT_AS`에 의존한다. Linux 구현은 이 변경에서 유지한다.
+- Windows용 동등 격리 backend는 구현·검증되어 있지 않다. 따라서 Windows의 `RhwpAdapter::preview`와 `page_info`는 기존 `RENDERER_UNAVAILABLE` 코드와 `sandbox_unverified` 사유로 거절하며, 진단에 Windows에서 격리를 검증할 수 없는 이유를 싣는다. 거절은 렌더러/래스터 워커 입력을 stage하기 전에 발생한다. `hae-raster`도 Windows에서 직접 실행되면 래스터화를 거절한다. 새 진단 코드는 추가하지 않는다.
+- Windows에서 보장하지 않는 항목: bubblewrap namespace·mount 격리, 네트워크 차단, 읽기 전용 입력/시스템 트리, 격리된 임시·출력 공간, `prlimit` 기반 주소 공간 상한, Unix process-group을 통한 자식 트리 종료, POSIX `0700` 임시 디렉터리 권한. Windows 기본 ACL이나 다른 OS 기능이 위 보장을 대신한다고 주장하지 않는다. 제품 미리보기는 실행되지 않으므로 그 경로에서 임시 작업 디렉터리도 만들지 않는다.
+- 기능 제한: Windows에서는 SVG 프리뷰, PNG 프리뷰/`hae-raster`, 렌더러 기반 쪽 정보(`page_info`)를 사용할 수 없다. Windows 크로스 `cargo check`는 컴파일 가능성을 확인할 뿐 실제 렌더링, 격리, 한컴 호환성을 검증하지 않는다. Linux에서 `cargo test -p hae-render-rhwp`를 실행하면 `windows_preview_refuses_to_start_without_verified_renderer_isolation`은 `#[cfg(windows)]` 때문에 실행되지 않는다.
+- Windows 프리뷰를 다시 허용하려면 별도 격리 설계와 Windows에서의 실측·시험이 먼저 필요하다. 현재 결과는 Windows 격리 동등성이나 보안 수준을 주장하지 않는다.

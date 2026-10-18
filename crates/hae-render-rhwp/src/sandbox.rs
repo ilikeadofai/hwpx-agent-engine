@@ -13,16 +13,42 @@
 
 use std::ffi::OsString;
 use std::fs;
+#[cfg(unix)]
 use std::io::Read;
+#[cfg(unix)]
 use std::os::unix::fs::DirBuilderExt;
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(unix)]
 use std::sync::mpsc;
 use std::sync::Arc;
+#[cfg(unix)]
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(unix)]
+use std::time::Instant;
+
+#[cfg(not(unix))]
+pub(crate) fn unsupported_platform_message() -> String {
+    format!(
+        "renderer isolation is unavailable on {}: this adapter requires Linux bubblewrap with unprivileged user/mount/PID/network namespaces and prlimit RLIMIT_AS; no equivalent isolation is implemented or verified, so the renderer was not started",
+        std::env::consts::OS
+    )
+}
+
+fn create_private_dir(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        fs::DirBuilder::new().mode(0o700).create(path)
+    }
+    #[cfg(not(unix))]
+    {
+        fs::create_dir(path)
+    }
+}
 
 /// Cooperative cancellation flag shared with the caller.
 #[derive(Debug, Clone, Default)]
@@ -122,7 +148,8 @@ impl std::fmt::Display for RunError {
     }
 }
 
-/// A directory removed on drop. Created with mode 0700.
+/// A directory removed on drop. Unix uses mode 0700; other platforms use their
+/// default directory permissions and do not gain a sandbox guarantee from this type.
 #[derive(Debug)]
 pub struct TempDir {
     path: PathBuf,
@@ -134,7 +161,7 @@ impl TempDir {
         getrandom::fill(&mut b).map_err(|e| std::io::Error::other(e.to_string()))?;
         let suffix: String = b.iter().map(|x| format!("{x:02x}")).collect();
         let path = parent.join(format!("{prefix}{suffix}"));
-        fs::DirBuilder::new().mode(0o700).create(&path)?;
+        create_private_dir(&path)?;
         Ok(TempDir { path })
     }
     pub fn path(&self) -> &Path {
@@ -286,6 +313,7 @@ impl Sandbox {
     /// Prove isolation before first use. `Ok(())` only if every probe behaves
     /// as required; otherwise the reason names the failed probe. The caller
     /// maps any failure to `RENDERER_UNAVAILABLE(sandbox_unverified)`.
+    #[cfg(unix)]
     pub fn self_test(&self, work_root: &Path) -> Result<(), String> {
         if !self.bwrap.is_file() {
             return Err(format!("bwrap not found at {}", self.bwrap.display()));
@@ -295,10 +323,7 @@ impl Sandbox {
         let in_dir = td.path().join("in");
         let out_dir = td.path().join("out");
         for d in [&in_dir, &out_dir] {
-            fs::DirBuilder::new()
-                .mode(0o700)
-                .create(d)
-                .map_err(|e| format!("mkdir: {e}"))?;
+            create_private_dir(d).map_err(|e| format!("mkdir: {e}"))?;
         }
         fs::write(in_dir.join("marker"), b"ro").map_err(|e| format!("write marker: {e}"))?;
         let limits = RunLimits {
@@ -385,8 +410,14 @@ impl Sandbox {
         }
         Ok(())
     }
+
+    #[cfg(not(unix))]
+    pub fn self_test(&self, _work_root: &Path) -> Result<(), String> {
+        Err(unsupported_platform_message())
+    }
 }
 
+#[cfg(unix)]
 fn spawn_reader<R: Read + Send + 'static>(
     mut r: R,
     cap: usize,
@@ -446,6 +477,7 @@ pub fn dir_usage(dir: &Path, cap_bytes: u64, cap_entries: usize) -> Result<(u64,
 }
 
 /// Spawn `cmd` (already configured with piped stdout/stderr) and supervise it.
+#[cfg(unix)]
 pub fn run_limited(
     mut cmd: Command,
     out_dir: &Path,
@@ -537,7 +569,20 @@ pub fn run_limited(
     })
 }
 
-#[cfg(test)]
+#[cfg(not(unix))]
+pub fn run_limited(
+    _cmd: Command,
+    _out_dir: &Path,
+    _limits: &RunLimits,
+    _cancel: Option<&CancelToken>,
+) -> Result<ProcOutput, RunError> {
+    Err(RunError::Spawn(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "renderer process supervision is unavailable on this platform",
+    )))
+}
+
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
 

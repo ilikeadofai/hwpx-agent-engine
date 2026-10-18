@@ -1,3 +1,5 @@
+#![cfg(target_os = "linux")]
+
 //! Mandatory PNG rasterisation in the supervised `hae-raster` worker: identity
 //! with the in-process reference, sandbox/RLIMIT_AS evidence from a fake
 //! worker, containment of worker failures, deadline, cancellation, missing

@@ -1,3 +1,5 @@
+#![cfg(target_os = "linux")]
+
 //! Task 3-3: page-information join against the 28-section corpus document.
 
 mod common;

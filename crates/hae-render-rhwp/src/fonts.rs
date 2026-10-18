@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::{Read, Write};
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
@@ -21,6 +22,14 @@ pub const MAX_FONT_FILE_BYTES: u64 = 32 * 1024 * 1024;
 type Listed = (String, PathBuf, u64, Option<SystemTime>);
 
 const FONT_EXTS: [&str; 4] = ["ttf", "otf", "ttc", "otc"];
+
+fn create_snapshot_file(path: &Path) -> std::io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o644);
+    options.open(path)
+}
 
 /// One font file in the configured directory.
 #[derive(Debug, Clone, Serialize)]
@@ -262,12 +271,7 @@ impl FontSet {
                 return Err(std::io::Error::other("font payload length changed"));
             }
             let name = format!("{i:04}.font");
-            fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o644)
-                .open(dir.join(&name))?
-                .write_all(data)?;
+            create_snapshot_file(&dir.join(&name))?.write_all(data)?;
             entries.push(SnapshotEntry {
                 file: name,
                 path: file.path.clone(),
@@ -530,9 +534,12 @@ mod tests {
         fs::write(snap.path().join("0000.font"), b"tampered").unwrap();
         assert!(FontSet::from_snapshot(snap.path(), &entries, &set.hash, 1024).is_err());
         fs::remove_file(snap.path().join("0000.font")).unwrap();
-        std::os::unix::fs::symlink(live.path().join("b.otf"), snap.path().join("0000.font"))
-            .unwrap();
-        assert!(FontSet::from_snapshot(snap.path(), &entries, &set.hash, 1024).is_err());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(live.path().join("b.otf"), snap.path().join("0000.font"))
+                .unwrap();
+            assert!(FontSet::from_snapshot(snap.path(), &entries, &set.hash, 1024).is_err());
+        }
     }
 
     #[test]

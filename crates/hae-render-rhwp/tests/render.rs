@@ -1,3 +1,5 @@
+#![cfg(target_os = "linux")]
+
 //! Task 3-2: sandboxed rhwp rendering, failure handling, metadata.
 
 mod common;

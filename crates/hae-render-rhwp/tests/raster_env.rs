@@ -1,3 +1,5 @@
+#![cfg(target_os = "linux")]
+
 //! Worker location policy: `HAE_RASTER` and the sibling default. Kept in its
 //! own test binary because it edits process environment variables.
 

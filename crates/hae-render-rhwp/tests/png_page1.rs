@@ -1,3 +1,5 @@
+#![cfg(target_os = "linux")]
+
 //! Task 3-4: page-1 PNG of a corpus document, rasterised from checked SVG.
 
 mod common;

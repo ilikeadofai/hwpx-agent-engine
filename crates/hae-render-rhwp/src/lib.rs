@@ -38,6 +38,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::{Read, Write};
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -124,6 +125,32 @@ pub(crate) fn unavailable(reason: &str, msg: impl Into<String>) -> EngineError {
 
 fn run_error(e: RunError) -> EngineError {
     unavailable(e.reason(), e.to_string())
+}
+
+fn create_private_dir(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        fs::DirBuilder::new().mode(0o700).create(path)
+    }
+    #[cfg(not(unix))]
+    {
+        fs::create_dir(path)
+    }
+}
+
+fn set_renderer_executable(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "renderer staging requires Unix executable permissions",
+        ))
+    }
 }
 
 /// What one preview run is asked to render.
@@ -239,6 +266,7 @@ impl MemoryBudget {
 
 #[derive(Default)]
 struct State {
+    #[cfg(unix)]
     sandbox_verified: bool,
     fonts: Option<Arc<FontSet>>,
 }
@@ -304,6 +332,7 @@ impl RhwpAdapter {
 
     /// Verify the sandbox once (isolation self-test). Any failure — missing
     /// bwrap, failed probe, unusable fonts mount — means `sandbox_unverified`.
+    #[cfg(unix)]
     fn sandbox(&self) -> Result<Sandbox> {
         let sb = Sandbox::new(&self.cfg.bwrap_path, &self.cfg.font_dir);
         let mut st = self.state.lock().unwrap();
@@ -328,6 +357,14 @@ impl RhwpAdapter {
         Ok(sb)
     }
 
+    #[cfg(not(unix))]
+    fn sandbox(&self) -> Result<Sandbox> {
+        Err(unavailable(
+            "sandbox_unverified",
+            sandbox::unsupported_platform_message(),
+        ))
+    }
+
     fn stage(&self, hwpx: &[u8]) -> Result<Staged> {
         let mut rhwp = fs::File::open(&self.cfg.rhwp_path).map_err(|e| {
             unavailable(
@@ -343,10 +380,7 @@ impl RhwpAdapter {
         let in_dir = td.path().join("in");
         let out_dir = td.path().join("out");
         for d in [&in_dir, &out_dir] {
-            fs::DirBuilder::new()
-                .mode(0o700)
-                .create(d)
-                .map_err(|e| io("mkdir", e))?;
+            create_private_dir(d).map_err(|e| io("mkdir", e))?;
         }
         let bin = in_dir.join("rhwp");
         let mut staged_bin = fs::File::create(&bin).map_err(|e| io("create renderer", e))?;
@@ -363,7 +397,7 @@ impl RhwpAdapter {
             hash.update(&chunk[..n]);
         }
         let rhwp_sha256 = format!("{:x}", hash.finalize());
-        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).map_err(|e| io("chmod", e))?;
+        set_renderer_executable(&bin).map_err(|e| io("chmod", e))?;
         fs::write(in_dir.join(INPUT_NAME), hwpx).map_err(|e| io("write snapshot", e))?;
         Ok(Staged {
             rhwp_sha256,
@@ -437,6 +471,7 @@ impl RhwpAdapter {
         memory_budget: u64,
     ) -> Result<PreviewOutput> {
         let started = Instant::now();
+        #[cfg(unix)]
         if self.cfg.rhwp_path.as_os_str().is_empty() {
             return Err(unavailable(
                 "renderer_not_configured",
@@ -1223,6 +1258,7 @@ mod tests {
         TempDir::new_in(&std::env::temp_dir(), "hae-readout-").unwrap()
     }
 
+    #[cfg(unix)]
     #[test]
     fn read_out_file_rejects_escapes_and_symlinks() {
         let td = out_dir();

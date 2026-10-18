@@ -433,8 +433,10 @@ fn webp_extended_canvas_cannot_hide_a_larger_bitstream() {
     );
 }
 
+#[cfg(target_os = "linux")]
 mod common;
 
+#[cfg(target_os = "linux")]
 #[test]
 fn actual_rhwp_corpus_svg_remains_accepted() {
     let env = common::real_env();

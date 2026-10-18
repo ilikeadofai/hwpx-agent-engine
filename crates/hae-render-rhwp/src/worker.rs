@@ -18,6 +18,8 @@
 //! `/out`, checks regular files, exact sizes, PNG signature/IHDR/IEND, pixel
 //! caps and the SHA-256 it computes itself.
 
+#![cfg_attr(not(unix), allow(dead_code))]
+
 use crate::fonts::{FontSet, SnapshotEntry};
 use crate::png::{rasterize_svg_with_budget, CheckedSvg, PngOptions};
 use crate::sandbox::{CancelToken, RunError, RunLimits, Sandbox, TempDir};
@@ -30,9 +32,47 @@ use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{Read, Write};
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+
+fn create_dir_with_mode(path: &Path, mode: u32) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        fs::DirBuilder::new().mode(mode).create(path)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = mode;
+        fs::create_dir(path)
+    }
+}
+
+fn create_file_with_mode(path: &Path, mode: u32) -> std::io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(mode);
+    #[cfg(not(unix))]
+    let _ = mode;
+    options.open(path)
+}
+
+fn set_file_mode(path: &Path, mode: u32) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        fs::set_permissions(path, fs::Permissions::from_mode(mode))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, mode);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "renderer worker staging requires Unix executable permissions",
+        ))
+    }
+}
 
 /// Executable name looked up next to the running application by default.
 pub const WORKER_NAME: &str = "hae-raster";
@@ -273,11 +313,7 @@ fn rasterize_job(a: &Args) -> std::result::Result<WorkerResult, Fail> {
     }
     let (width, height) =
         png_dimensions(&png).ok_or_else(|| fail("encode", "encoder produced no IHDR"))?;
-    fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o644)
-        .open(&a.png)
+    create_file_with_mode(&a.png, 0o644)
         .and_then(|mut f| f.write_all(&png))
         .map_err(|e| fail("output", format!("cannot write PNG: {e}")))?;
     let mut families = BTreeSet::new();
@@ -334,6 +370,16 @@ fn png_dimensions(png: &[u8]) -> Option<(u32, u32)> {
 
 /// Entry point of the `hae-raster` executable. Returns its exit status:
 /// 0 rendered, 2 usage error, 3 reported failure (`result.json` explains).
+#[cfg(not(unix))]
+pub fn run_cli(_args: impl IntoIterator<Item = OsString>) -> u8 {
+    eprintln!(
+        "hae-raster: renderer isolation is unavailable on {}; refusing to rasterize",
+        std::env::consts::OS
+    );
+    2
+}
+
+#[cfg(unix)]
 pub fn run_cli(args: impl IntoIterator<Item = OsString>) -> u8 {
     let a = match parse_args(args) {
         Ok(a) => a,
@@ -364,14 +410,7 @@ pub fn run_cli(args: impl IntoIterator<Item = OsString>) -> u8 {
     let ok = result.status == "ok";
     let written = serde_json::to_vec(&result)
         .map_err(std::io::Error::other)
-        .and_then(|json| {
-            fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o644)
-                .open(&a.result)?
-                .write_all(&json)
-        });
+        .and_then(|json| create_file_with_mode(&a.result, 0o644)?.write_all(&json));
     match (written, ok) {
         (Ok(()), true) => 0,
         (Ok(()), false) => 3,
@@ -481,12 +520,7 @@ impl RasterStage {
             ));
         }
         let td = TempDir::new_in(work_dir, "hae-raster-").map_err(|e| io_err("work dir", e))?;
-        let mkdir = |p: &Path| {
-            fs::DirBuilder::new()
-                .mode(0o700)
-                .create(p)
-                .map_err(|e| io_err("mkdir", e))
-        };
+        let mkdir = |p: &Path| create_dir_with_mode(p, 0o700).map_err(|e| io_err("mkdir", e));
         let in_dir = td.path().join("in");
         let out_root = td.path().join("out");
         // The sandbox always mounts a font directory at /fonts. Give it an
@@ -496,12 +530,7 @@ impl RasterStage {
             mkdir(d)?;
         }
         let bin = in_dir.join(WORKER_NAME);
-        let mut dst = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o755)
-            .open(&bin)
-            .map_err(|e| io_err("create worker", e))?;
+        let mut dst = create_file_with_mode(&bin, 0o755).map_err(|e| io_err("create worker", e))?;
         let mut hash = Sha256::new();
         let mut chunk = [0u8; 64 * 1024];
         let mut copied = 0u64;
@@ -522,8 +551,7 @@ impl RasterStage {
             hash.update(&chunk[..n]);
         }
         drop(dst);
-        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755))
-            .map_err(|e| io_err("chmod", e))?;
+        set_file_mode(&bin, 0o755).map_err(|e| io_err("chmod", e))?;
         let entries = fonts
             .write_snapshot(&in_dir.join(FONTS_DIR))
             .map_err(|e| io_err("font snapshot", e))?;
@@ -556,10 +584,7 @@ impl RasterStage {
         }
         self.pages += 1;
         let out_dir = self.out_root.join(format!("p{:04}", self.pages));
-        fs::DirBuilder::new()
-            .mode(0o700)
-            .create(&out_dir)
-            .map_err(|e| io_err("mkdir", e))?;
+        create_dir_with_mode(&out_dir, 0o700).map_err(|e| io_err("mkdir", e))?;
         let svg_path = self.in_dir.join(SVG_NAME);
         match fs::remove_file(&svg_path) {
             Ok(()) => {}

@@ -1,3 +1,5 @@
+#![cfg(target_os = "linux")]
+
 mod common;
 use common::*;
 use hae_render_rhwp::{RenderRequest, RenderStatus};
