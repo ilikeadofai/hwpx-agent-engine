@@ -358,9 +358,61 @@ pub struct GetResultShape {
     pub children: Vec<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EquationListParams {
+    pub scope: Option<String>,
+    pub limit: Option<usize>,
+    pub cursor: Option<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EquationSetScriptParams {
+    pub target: String,
+    pub script: String,
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EquationPropsParam {
+    pub base_line: Option<u32>,
+    #[schemars(regex(pattern = r"^#[0-9A-Fa-f]{6}$"))]
+    pub text_color: Option<String>,
+    pub font: Option<String>,
+    #[schemars(range(min = 1))]
+    pub base_unit: Option<u32>,
+    #[schemars(regex(pattern = r"^(CHAR|LINE)$"))]
+    pub line_mode: Option<String>,
+    pub version: Option<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EquationSetPropertiesParams {
+    pub target: String,
+    pub props: EquationPropsParam,
+}
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EquationListResultShape {
+    pub document_id: String,
+    pub revision: u64,
+    pub items: Vec<hae_model::equation::EquationInfo>,
+    pub next_cursor: Option<String>,
+}
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EquationGetResultShape {
+    pub document_id: String,
+    pub revision: u64,
+    pub equation: hae_model::equation::EquationInfo,
+}
+
 /// Parsed, strongly typed command enum. No arbitrary string-to-function dispatch.
 #[derive(Debug, Clone)]
 pub enum ParsedCommand {
+    EquationList(EquationListParams),
+    EquationGet(ElementGetParams),
+    EquationSetScript(EquationSetScriptParams),
+    EquationSetProperties(EquationSetPropertiesParams),
     CommandList(EmptyParams),
     CommandDescribe(CommandDescribeParams),
     DocumentOpen(DocumentOpenParams),
@@ -456,6 +508,10 @@ mod schema_tests {
             ("document_close", [false, true, false, false]),
             ("element_query", [true, false, true, false]),
             ("element_get", [true, false, true, false]),
+            ("equation_list", [true, false, true, false]),
+            ("equation_get", [true, false, true, false]),
+            ("equation_set_script", [false, true, false, false]),
+            ("equation_set_properties", [false, true, false, false]),
             ("text_replace", [false, true, false, false]),
             ("text_format", [false, true, false, false]),
             ("text_replace_all", [false, true, false, false]),
@@ -611,6 +667,38 @@ macro_rules! define_commands {
 }
 
 define_commands! {
+    EquationList {
+        name: "equation.list", cli: "equation-list", mcp: "equation_list",
+        summary: "List existing equations with paragraph nodeId, original script/raw XML and geometry/properties; optional scope, limit 1..500 and revision-bound cursor",
+        category: Query,
+        mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
+        stage1: true, reason: None,
+        params: EquationListParams, output: EquationListResultShape,
+    },
+    EquationGet {
+        name: "equation.get", cli: "equation-get", mcp: "equation_get",
+        summary: "Read one equation nodeId, original script/raw XML, size, properties and containing paragraph text preview",
+        category: Query,
+        mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
+        stage1: true, reason: None,
+        params: ElementGetParams, output: EquationGetResultShape,
+    },
+    EquationSetScript {
+        name: "equation.setScript", cli: "equation-set-script", mcp: "equation_set_script",
+        summary: "Replace only an existing equation script using XML text escaping; preserve equation attributes/geometry/comment; refuse empty, opaque or unverified escape notation",
+        category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None,
+        params: EquationSetScriptParams, output: MutationResultShape,
+    },
+    EquationSetProperties {
+        name: "equation.setProperties", cli: "equation-set-properties", mcp: "equation_set_properties",
+        summary: "Change only requested equation props: baseLine, textColor #RRGGBB, font, positive baseUnit, lineMode, version; preserve script and size; supports dryRun/batch/undo",
+        category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None,
+        params: EquationSetPropertiesParams, output: MutationResultShape,
+    },
     CommandList {
         name: "command.list",
         cli: "command-list",

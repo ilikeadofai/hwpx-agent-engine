@@ -6,6 +6,7 @@
 //! commit gate: an edit may change payloads but never the sequence of
 //! identity-bearing elements of an entry (0.1 adds or removes no body nodes).
 
+pub mod equation;
 pub mod para;
 pub mod query;
 

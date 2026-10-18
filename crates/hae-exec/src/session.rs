@@ -4,9 +4,10 @@
 use crate::registry::{
     command_describe, command_list, BatchStepParam, CellSetTextParams, CommandBatchParams,
     CommandDescriptor, DocumentDiffParams, DocumentExportParams, DocumentOpenParams,
-    DocumentPreviewParams, ImageReplaceParams, LineSpacingParam, ParagraphFormatParams,
-    ParsedCommand, ProjectSaveParams, SnapshotCreateParams, SnapshotReleaseParams,
-    TextFormatParams, TextReplaceAllParams, TextReplaceParams,
+    DocumentPreviewParams, EquationSetPropertiesParams, EquationSetScriptParams,
+    ImageReplaceParams, LineSpacingParam, ParagraphFormatParams, ParsedCommand, ProjectSaveParams,
+    SnapshotCreateParams, SnapshotReleaseParams, TextFormatParams, TextReplaceAllParams,
+    TextReplaceParams,
 };
 use hae_diag::{Code, Diagnostic, EngineError, Limits, Result, Stage};
 use hae_edit::{Alignment, Applied, EditOp, ImageBytes, LineSpacing};
@@ -236,6 +237,24 @@ fn add_state_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, state: &
 
 fn add_op_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, op: &VerifyOperation) {
     match op {
+        VerifyOperation::EquationSetScript { entry, script, .. } => {
+            add_slice_bytes(seen, total, entry.as_bytes());
+            add_slice_bytes(seen, total, script.as_bytes());
+        }
+        VerifyOperation::EquationSetProperties { entry, props, .. } => {
+            add_slice_bytes(seen, total, entry.as_bytes());
+            for v in [
+                &props.text_color,
+                &props.font,
+                &props.line_mode,
+                &props.version,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                add_slice_bytes(seen, total, v.as_bytes());
+            }
+        }
         VerifyOperation::TextReplace {
             entry, replacement, ..
         } => {
@@ -819,6 +838,110 @@ impl SessionExecutor {
                     Vec::new(),
                 ))
             }
+            ParsedCommand::EquationList(p) => {
+                let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+                if req.expected_version.is_some_and(|v| v != s.revision) {
+                    return Err(EngineError::new(
+                        Code::VersionConflict,
+                        Stage::Query,
+                        "expectedVersion mismatch",
+                    ));
+                }
+                let doc = &s.current.doc;
+                let nodes = doc.equation_nodes(p.scope.as_deref())?;
+                let limit = p.limit.unwrap_or(100);
+                if !(1..=500).contains(&limit) {
+                    return Err(EngineError::new(
+                        Code::InvalidRequest,
+                        Stage::Query,
+                        "equation limit must be 1..500",
+                    ));
+                }
+                let binding = sha256_hex(
+                    format!("{}:{}", doc.document_id, p.scope.as_deref().unwrap_or("")).as_bytes(),
+                );
+                let offset = if let Some(c) = p.cursor {
+                    let parts: Vec<_> = c.split(':').collect();
+                    if parts.len() != 3 || parts[1] != binding {
+                        return Err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Query,
+                            "invalid equation cursor or changed scope/document",
+                        ));
+                    }
+                    let rev = parts[0].parse::<u64>().map_err(|_| {
+                        EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Query,
+                            "invalid cursor revision",
+                        )
+                    })?;
+                    if rev != s.revision {
+                        return Err(EngineError::new(
+                            Code::VersionConflict,
+                            Stage::Query,
+                            "equation cursor revision is stale",
+                        ));
+                    }
+                    parts[2].parse::<usize>().map_err(|_| {
+                        EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Query,
+                            "invalid cursor offset",
+                        )
+                    })?
+                } else {
+                    0
+                };
+                if offset > nodes.len() {
+                    return Err(EngineError::new(
+                        Code::InvalidRequest,
+                        Stage::Query,
+                        "cursor outside equation list",
+                    ));
+                }
+                let items = nodes
+                    .iter()
+                    .skip(offset)
+                    .take(limit)
+                    .map(|n| doc.equation_info(&n.id, false))
+                    .collect::<Result<Vec<_>>>()?;
+                let next = offset + items.len();
+                let cursor =
+                    (next < nodes.len()).then(|| format!("{}:{binding}:{next}", s.revision));
+                Ok((
+                    json!({"documentId":doc.document_id,"revision":s.revision,"items":items,"nextCursor":cursor}),
+                    Vec::new(),
+                ))
+            }
+            ParsedCommand::EquationGet(p) => {
+                let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+                if req.expected_version.is_some_and(|v| v != s.revision) {
+                    return Err(EngineError::new(
+                        Code::VersionConflict,
+                        Stage::Query,
+                        "expectedVersion mismatch",
+                    ));
+                }
+                Ok((
+                    json!({"documentId":s.current.doc.document_id,"revision":s.revision,"equation":s.current.doc.equation_info(&p.target,true)?}),
+                    Vec::new(),
+                ))
+            }
+            ParsedCommand::EquationSetScript(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "equation.setScript".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
+            ParsedCommand::EquationSetProperties(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "equation.setProperties".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
             ParsedCommand::TextFormat(p) => self.handle_edit_steps(
                 req,
                 &[BatchStepParam {
@@ -1128,6 +1251,67 @@ impl SessionExecutor {
             )));
         }
         match step.command.as_str() {
+            "equation.setScript" => {
+                let p: EquationSetScriptParams = serde_json::from_value(step.params.clone())
+                    .map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            e.to_string(),
+                        ))
+                    })?;
+                let n = doc
+                    .require(&p.target, Some(Kind::Equation))
+                    .map_err(&wrap_err)?;
+                Ok((
+                    EditOp::EquationSetScript {
+                        target: p.target,
+                        script: p.script.clone(),
+                    },
+                    VerifyOperation::EquationSetScript {
+                        entry: n.entry.clone(),
+                        path: doc.doc_of(n).path(n.el),
+                        script: p.script,
+                    },
+                ))
+            }
+            "equation.setProperties" => {
+                let p: EquationSetPropertiesParams = serde_json::from_value(step.params.clone())
+                    .map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            e.to_string(),
+                        ))
+                    })?;
+                let n = doc
+                    .require(&p.target, Some(Kind::Equation))
+                    .map_err(&wrap_err)?;
+                let props = serde_json::to_value(p.props).unwrap();
+                Ok((
+                    EditOp::EquationSetProperties {
+                        target: p.target,
+                        props: serde_json::from_value(props.clone()).map_err(|e| {
+                            wrap_err(EngineError::new(
+                                Code::InvalidRequest,
+                                Stage::Request,
+                                e.to_string(),
+                            ))
+                        })?,
+                    },
+                    VerifyOperation::EquationSetProperties {
+                        entry: n.entry.clone(),
+                        path: doc.doc_of(n).path(n.el),
+                        props: serde_json::from_value(props).map_err(|e| {
+                            wrap_err(EngineError::new(
+                                Code::InvalidRequest,
+                                Stage::Request,
+                                e.to_string(),
+                            ))
+                        })?,
+                    },
+                ))
+            }
             "text.format" => {
                 let p: TextFormatParams =
                     serde_json::from_value(step.params.clone()).map_err(|e| {

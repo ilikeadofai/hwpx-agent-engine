@@ -33,12 +33,14 @@
 //! extraction, since its producer's serialization is not known.
 mod char_format;
 mod contract;
+mod equation;
 mod format;
 mod image;
 mod text;
 
 pub use contract::{
-    Alignment, CharProps, LineSpacing, LineSpacingKind, VerifyOperation, VerifyReport, VerifyScope,
+    Alignment, CharProps, EquationProps, LineSpacing, LineSpacingKind, VerifyOperation,
+    VerifyReport, VerifyScope,
 };
 use hae_diag::{Budget, Code, EngineError, Limits, Result, Stage};
 use hae_package::{PackageInfo, PackageState, XmlMap, NS_HC, NS_HH, NS_HP, NS_HP10, NS_HS};
@@ -304,6 +306,26 @@ fn verify_inner(
         let target = stable_at(&doc, &stable_path(&xml[entry], original_target))?;
         check_opaque_refs(&xml, entry, &doc, target)?;
         match op {
+            VerifyOperation::EquationSetScript { script, .. } => {
+                if equation::check(&mut expected, entry, &doc, target, Some(script), None)? {
+                    let para = doc
+                        .ancestors(target)
+                        .find(|&i| hp(doc.el(i), "p"))
+                        .ok_or_else(|| unsupported("equation lacks paragraph"))?;
+                    anchor(&mut anchors, entry, &doc, para)?;
+                    material = true;
+                }
+            }
+            VerifyOperation::EquationSetProperties { props, .. } => {
+                if equation::check(&mut expected, entry, &doc, target, None, Some(props))? {
+                    let para = doc
+                        .ancestors(target)
+                        .find(|&i| hp(doc.el(i), "p"))
+                        .ok_or_else(|| unsupported("equation lacks paragraph"))?;
+                    anchor(&mut anchors, entry, &doc, para)?;
+                    material = true;
+                }
+            }
             VerifyOperation::TextFormat {
                 range,
                 props,

@@ -38,6 +38,8 @@ fn initialize_ping_and_tools_list_cover_every_registry_command() {
                 .name
                 .replace('.', "_")
                 .replace("setText", "set_text")
+                .replace("setScript", "set_script")
+                .replace("setProperties", "set_properties")
                 .replace("replaceAll", "replace_all")
         );
         assert_eq!(name, command.mcp_tool_name);
@@ -284,4 +286,49 @@ fn optional_document_id_never_redirects_an_edit_to_the_open_document() {
     assert_eq!(applied["result"]["beforeVersion"], 0);
     assert_eq!(applied["result"]["afterVersion"], 1);
     assert_eq!(mcp.finish().0, 0);
+}
+
+#[test]
+fn equation_tools_stdio_list_get_edit_dry_run_batch_and_exact_undo() {
+    let t = TempDir::new("equations");
+    let input = t.path().join("equations.hwpx");
+    let original = include_bytes!("../../../tests/fixtures/editing/equations.hwpx");
+    std::fs::write(&input, original).unwrap();
+    let mut mcp = McpClient::start(t.path());
+    let (opened, err) = mcp.call_tool("document_open", json!({"path":input}));
+    assert!(!err, "{opened}");
+    let (list, err) = mcp.call_tool("equation_list", json!({"limit":1}));
+    assert!(!err, "{list}");
+    let id = list["result"]["items"][0]["nodeId"].clone();
+    let (get, err) = mcp.call_tool("equation_get", json!({"target":id}));
+    assert!(!err, "{get}");
+    assert!(get["result"]["equation"]["paragraphTextPreview"].is_string());
+    let (dry, err) = mcp.call_tool(
+        "equation_set_script",
+        json!({"target":id,"script":"x < y & z","expectedVersion":0,"dryRun":true}),
+    );
+    assert!(!err, "{dry}");
+    assert_eq!(dry["result"]["afterVersion"], 0);
+    let (script, err) = mcp.call_tool(
+        "equation_set_script",
+        json!({"target":id,"script":"x < y & z","expectedVersion":0}),
+    );
+    assert!(!err, "{script}");
+    let (props, err) = mcp.call_tool(
+        "equation_set_properties",
+        json!({"target":id,"props":{"baseLine":70},"expectedVersion":1}),
+    );
+    assert!(!err, "{props}");
+    let (batch, err) = mcp.call_tool("command_batch", json!({"expectedVersion":2,"steps":[{"command":"equation.setScript","params":{"target":id,"script":"x+1"}},{"command":"equation.setProperties","params":{"target":id,"props":{"textColor":"#123456"}}}]}));
+    assert!(!err, "{batch}");
+    for version in 3..=5 {
+        let (undo, err) = mcp.call_tool("history_undo", json!({"expectedVersion":version}));
+        assert!(!err, "{undo}");
+    }
+    let path = t.path().join("restored.hwpx");
+    let (export, err) = mcp.call_tool("document_export", json!({"path":path}));
+    assert!(!err, "{export}");
+    assert_eq!(std::fs::read(path).unwrap(), original);
+    let (code, stderr) = mcp.finish();
+    assert_eq!(code, 0, "{stderr}");
 }
