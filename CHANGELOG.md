@@ -1,0 +1,143 @@
+# 변경 이력
+
+이 파일은 [Keep a Changelog 1.1.0](https://keepachangelog.com/ko/1.1.0/) 형식을 따른다.
+버전 구분(엔진 버전, 명령 레지스트리 schemaVersion, 봉투·프로젝트 정수 schemaVersion)은
+[docs/decisions/versioning.md](docs/decisions/versioning.md)를 본다.
+근거는 git 기록, `docs/superpowers/specs/`의 설계서, `docs/decisions/`의 결정·검증 기록이다.
+세 릴리스 모두 같은 브랜치에서 하루 이틀 간격으로 이어진 개발이어서, 경계는 설계서의 명령 수
+(0.1은 21개, 0.2는 22개, 0.3은 57개)와 커밋 시점으로 잡았다.
+
+## [Unreleased]
+
+## [0.3.0] - 2026-10-18
+
+기능 계약은 [0.3 설계서](docs/superpowers/specs/2026-10-18-hwpx-engine-0.3-design.md)다.
+명령은 22개에서 57개로 늘었다. 이 목록은 등록과 시험의 범위이며, 모든 문서·인자에서
+성공한다는 뜻이 아니다(§9 현재 한계).
+
+### 추가
+
+- 조회 명령: `document.stats`, `section.list`, `section.getPage`, `note.list`, `style.list`,
+  `table.get`, `picture.list`, `equation.list`, `equation.get`, `field.list`, `link.list`,
+  `trackchange.list`, `bookmark.list`, `memo.list`. 페이지 조회는 revision에 묶인 cursor를 쓴다.
+- `document.exportText`: 현재 문서를 Markdown 또는 HTML 새 파일로 내보낸다(원본·이력 불변).
+- `hwp5.inspect`와 새 crate `hae-hwp5`: HWP 5.0 파일 헤더와 문단 텍스트를 읽기 전용으로 조회한다.
+- 서식·구조 편집: `text.format`(글자 서식), `paragraph.setStyle`, `header.setText`, `image.fit`,
+  `section.setPage`, `section.setPageNumbering`, `section.setVisibility`.
+- 표 편집: `table.setColumnWidths`, `table.setRowHeights`, `cell.setSize`, `cell.setFormat`,
+  `table.insertRow`, `table.deleteRow`, `table.insertColumn`, `table.deleteColumn`(기존 표 안의
+  셀·문단만 새로 만든다. nodeId 사상 TableRemap과 Undo/Redo ID 복원 포함).
+- 수식·필드: `equation.setScript`, `equation.setProperties`(PrvText 유일 일치 치환, 아니면 보존+stale),
+  `field.setText`(CLICK_HERE·HYPERLINK 결과 채우기), `form.fill`(라벨 기반 양식 채우기).
+- 명령 descriptor의 MCP `annotations` 힌트와 레지스트리 상수 `REGISTRY_SCHEMA_VERSION`.
+- `docs/decisions/versioning.md`(버전 축과 migration 정책), 한컴 공식 문서 기능 카탈로그,
+  경쟁 분석(`docs/research/competitive-gap-analysis.md`).
+- Windows 이식성: `hae-project`의 루트 I/O를 `io/{unix,windows}`로 분리하고
+  `x86_64-pc-windows-gnu` 대상의 `cargo check`를 통과시켰다.
+- `scripts/check.sh`가 렌더러 유무를 출력하고, 렌더러가 필요한 실제 시험 13건
+  (executor preview 4, adapter 9)을 없으면 명시적으로 SKIP, 있으면 실행한다.
+- GitHub Actions CI(`.github/workflows/ci.yml`).
+
+### 변경
+
+- 엔진 패키지 버전과 `command.list`/`command.describe`의 descriptor `schemaVersion`이 모두 `0.3.0`이다.
+  descriptor 버전은 이제 별도 상수이며 엔진 버전과 독립적으로 관리한다. JSON-lines/MCP 봉투와
+  `.hwpwork`의 정수 `schemaVersion`은 1을 유지한다.
+- 표 치수 광고와 검증은 수정하는 축 단위로 판정한다. 수정하지 않는 축의 합 불일치나 상대 크기는
+  편집을 막지 않는다.
+- Windows에서는 렌더러 격리를 보장할 수 없으므로 미리보기를 `RENDERER_UNAVAILABLE(sandbox_unverified)`로
+  거절한다(fail closed).
+- 이미 실제 렌더러를 쓰는 시험을 모두 `#[ignore]`로 분리해 렌더러 없는 검사와 섞이지 않게 했다.
+
+### 수정
+
+- 표 치수 광고가 요청 축 모순을 true로 내보내던 문제와 반대 축 불일치로 정상 편집이 거절되던 문제.
+- 조회 pagination이 끝에서 되돌아 감기던 문제와 게이트 로그를 최신 것만 보관하도록 한 문제.
+- Windows에서 프로젝트 I/O가 이식되지 않던 문제.
+- 수식 속성 oracle의 nullable 공개 필드 불일치.
+
+### 알려진 한계
+
+- Windows 한컴오피스 2024에서 0.3 산출물의 열기·저장·재열기는 실기 검증하지 않았다. 한컴 판정은
+  Linux 한컴 2020 Beta 한 빌드에서만 얻었고, Windows 실기는 Stage 0 S4(원본·캐시 변형 12개) 1차 기록뿐이다.
+  Windows에서는 빌드와 편집·내보내기·검증만 되고 미리보기(SVG/PNG)와 렌더러 기반 `page_info`는 쓸 수 없다.
+- rhwp가 계산한 쪽수와 한컴의 쪽수가 다를 수 있다. 문단 줄 배치 캐시를 지운 문서를 rhwp가 자체 규칙으로
+  나누기 때문이다. `nativeComparison`은 별도 Windows 근거가 생기기 전까지 `not_checked`다.
+- 보도자료 편집본에서 한컴이 "- 3 -"만 있는 3쪽 빈 쪽을 만든다. 편집 때문인지 한컴의 재조판 때문인지 확정하지
+  못했다.
+- 새 문서와 새 문단을 만들 수 없다. 새로 만드는 노드는 기존 표 안의 셀·문단으로 한정한다.
+- 표 구조 편집은 중첩 표·cellzoneList·병합과 겹치는 삭제·지원 밖 템플릿을 거절한다. 노드 outline에는
+  새 명령 34개 전부의 capability가 실려 있지 않다.
+- HWP5는 읽기만 되며 편집·저장은 하지 않는다. Python oracle은 설계서 §8의 범위만 판정한다.
+- 이번 시험은 공개·합성 문서와 일부 로컬 문서 범위이며 사용자 문서 전반의 성공을 보증하지 않는다.
+
+## [0.2.0] - 2026-10-18
+
+설계는 [0.2 설계서](docs/superpowers/specs/2026-10-18-hwpx-engine-0.2-design.md)다. 명령은 21개에서
+22개가 되었다. 워크스페이스 버전 문자열은 `ec87953`에서 0.2.0이 되었고 MCP 완성 작업까지 같은 문자열로 이어졌다.
+
+### 추가
+
+- `text.replace`: grapheme 위치 삽입(길이 0 범위), 빈 문단 삽입,
+  `controls: "preserve"`로 개체·탭·줄바꿈을 남기는 범위 교체.
+- `cell.setText`: 병합 셀 편집, 다문단 셀의 `paragraphs` 배열(문단 수는 유지).
+- `text.replaceAll`: 정확한 일치를 겹치지 않게 골라 원자적으로 교체한다. 건너뜀은 `MATCHES_SKIPPED`
+  경고로 사유와 위치를 알린다.
+- 편집 가능 여부 광고: `textSpans`, `modes`, `requires` 등 대상별 capability와 사유.
+- 필드 경계 거절과 기존 개체 옆 삽입.
+- MCP 서버 완성: 프로토콜 4개 버전(2025-03-26부터 2026-07-28) 협상, 도구 annotations, 배포 진단
+  `hae-mcp doctor`, 서버가 알려 주는 batch 도구 수.
+- 독립 검증: 별도 Python oracle과 버전이 붙은 명령 계약, MCP 평가 스크립트(`scripts/evaluate_mcp.py`).
+- 한컴 열기 확인 기록(Linux): v0.2 출력 4건, MCP 출력, 폼 채우기 등.
+
+### 변경
+
+- 레지스트리 descriptor `schemaVersion`이 `0.2.0`이 되었다. 봉투와 프로젝트 정수 버전은 1이다.
+- `docs/user-guide.md`를 0.2 편집 동작에 맞췄다.
+- 미리보기 폰트 사전 점검을 `doctor`와 공유한다.
+
+### 수정
+
+- 광고한 편집 범위가 verifier가 지원하는 범위보다 넓던 문제(`2874c19`).
+- 세션 메모리 예산이 보관 중인 검증 로그를 세지 않던 문제.
+- MCP 최신 프로토콜의 캐시 메타데이터와 schema 계약, 문서 선택·탐색 후속 문제(M3·M4 검증 후속).
+- 이전 fixture에 header.xml과 해석되는 shape 참조가 없던 문제.
+
+### 알려진 한계
+
+- Windows 한컴 2024에서 0.2 산출물의 열기·저장·재열기는 실기 검증하지 않았다. 한컴 열기 판정은 Linux에서만 했다.
+- rhwp 쪽수와 한컴 쪽수가 다를 수 있다. 캐시를 지운 계획서는 rhwp가 19쪽을 20쪽으로 배치했다.
+- 보도자료의 3쪽 빈 쪽 원인은 미확정이다(한컴 PDF에서 "- 3 -"만 있는 쪽).
+- 새 문서·새 문단 생성과 문단 수 변경은 할 수 없다.
+- 공개 합성 범위 밖의 일부 사용자 문서에서 dangling 스타일 참조처럼 원본 결함 때문에 편집이 막힌다.
+
+## [0.1.0] - 2026-10-17
+
+설계는 [0.1 설계서](docs/superpowers/specs/2026-10-16-hwpx-engine-0.1-design.md)다. 명령 21개.
+
+### 추가
+
+- 기존 HWPX 문서의 구조를 보존하는 편집 코어. crate: `hae-diag`, `hae-zip`, `hae-xml`,
+  `hae-package`, `hae-model`, `hae-edit`, `hae-verify`, `hae-project`, `hae-exec`.
+- 원문 바이트 보존, 무편집 내보내기 바이트 동일, 안정 ID, `.hwpwork` 프로젝트 저장·재열기.
+- 명령: `text.replace`, `paragraph.format`, `cell.setText`, `image.replace`, 조회
+  (`document.inspect`, `element.query/get`), `command.batch`, `history.undo/redo/clear`, `document.snapshot`,
+  `snapshot.release`, `document.diff`, `document.export`, `project.save`, `document.open/close`,
+  `command.list/describe`, `document.preview`.
+- 원자적 commit, `dryRun`, 정확한 Undo/Redo, 독립 검증기 `hae-verify`.
+- 인터페이스: CLI(`hae script`, `hae run`), JSON-lines 서버(`hae-jsonl`), MCP stdio 서버(`hae-mcp`).
+- 격리된 rhwp 미리보기 어댑터(`hae-render-rhwp`): bubblewrap 샌드박스, SVG 안전 검사, PNG 변환 worker.
+- 스파이크 S1~S4 결과와 한컴 상호 운용 확인 기록(Linux).
+
+### 변경
+
+- 이미지 추가 때 미디어를 embedded로 표시하고 그림 기하를 HWPUNIT으로 쓴다.
+- 미리보기 격리와 쿼터 인지 오케스트레이션을 강화했다.
+- MCP 문서 선택과 흐름 검토 결정을 반영했다.
+
+### 알려진 한계
+
+- Windows 한컴 2024 실기 검증은 보류했다. Stage 0 S4의 Windows 1차 기록(12 입력의 열기·재저장·재열기)만 있다.
+- rhwp 쪽수와 한컴 쪽수가 다를 수 있다. 줄 배치 캐시를 지운 문서에서 rhwp가 쪽을 더 만든 사례가 있다.
+- 보도자료 편집본의 한컴 3쪽 빈 쪽("- 3 -"만 있는 쪽)은 원인 미확정이다.
+- 새 문서와 새 문단을 만들 수 없고 기존 구조 안에서만 바꾼다. 미리보기는 Linux(bubblewrap)에서만 된다.
