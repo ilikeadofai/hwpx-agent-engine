@@ -17,7 +17,8 @@ def generate():
     def p(text):
         return e.P(e.R(e.T(text)) + '<hp:linesegarray/>', ' styleIDRef="0"')
     def hf(kind, body):
-        return f'<hp:{kind} id="10" applyPageType="BOTH"><hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="TOP" linkListIDRef="0" linkListNextIDRef="0" textWidth="40000" textHeight="2000" hasTextRef="0" hasNumRef="0">{body}</hp:subList></hp:{kind}>'
+        # 실제 HWPX 처럼 머리말/꼬리말은 run 안 hp:ctrl 아래에 둔다(코퍼스 관찰).
+        return f'<hp:ctrl><hp:{kind} id="10" applyPageType="BOTH"><hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="TOP" linkListIDRef="0" linkListNextIDRef="0" textWidth="40000" textHeight="2000" hasTextRef="0" hasNumRef="0">{body}</hp:subList></hp:{kind}></hp:ctrl>'
     body = (p('Body A') + p('Body B') + e.P(e.R(
         hf('header', p('Header A') + p('Header B') + p('Number<hp:autoNum num="1"/>') + p('Margin<hp:tab width="4000"/>'))
         + hf('footer', p('Footer A'))), ' styleIDRef="0"')
