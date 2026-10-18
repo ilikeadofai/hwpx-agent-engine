@@ -7,7 +7,8 @@ use crate::registry::{
     DocumentExportParams, DocumentOpenParams, DocumentPreviewParams, EquationSetPropertiesParams,
     EquationSetScriptParams, HeaderSetTextParams, ImageFitParams, ImageReplaceParams,
     LineSpacingParam, LinkListParams, ParagraphFormatParams, ParagraphSetStyleParams,
-    ParsedCommand, ProjectSaveParams, SnapshotCreateParams, SnapshotReleaseParams,
+    ParsedCommand, ProjectSaveParams, SectionSetPageNumberingParams, SectionSetPageParams,
+    SectionSetVisibilityParams, SnapshotCreateParams, SnapshotReleaseParams,
     TableSetColumnWidthsParams, TableSetRowHeightsParams, TextFormatParams, TextReplaceAllParams,
     TextReplaceParams, TrackChangeListParams,
 };
@@ -325,6 +326,33 @@ fn add_op_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, op: &Verify
             add_slice_bytes(seen, total, entry.as_bytes());
             add_slice_bytes(seen, total, kind.as_bytes());
             add_slice_bytes(seen, total, text.as_bytes());
+        }
+        VerifyOperation::SectionSetPage {
+            entry, settings, ..
+        } => {
+            add_slice_bytes(seen, total, entry.as_bytes());
+            for s in [&settings.landscape, &settings.gutter_type]
+                .into_iter()
+                .flatten()
+            {
+                add_slice_bytes(seen, total, s.as_bytes());
+            }
+        }
+        VerifyOperation::SectionSetPageNumbering {
+            entry, settings, ..
+        } => {
+            add_slice_bytes(seen, total, entry.as_bytes());
+            if let Some(s) = &settings.page_starts_on {
+                add_slice_bytes(seen, total, s.as_bytes());
+            }
+        }
+        VerifyOperation::SectionSetVisibility {
+            entry, settings, ..
+        } => {
+            add_slice_bytes(seen, total, entry.as_bytes());
+            for s in [&settings.border, &settings.fill].into_iter().flatten() {
+                add_slice_bytes(seen, total, s.as_bytes());
+            }
         }
         VerifyOperation::ImageFit { entry, .. }
         | VerifyOperation::ParagraphFormat { entry, .. } => {
@@ -1067,6 +1095,39 @@ impl SessionExecutor {
             ),
             ParsedCommand::LinkList(p) => self.handle_link_list(req, &p),
             ParsedCommand::TrackChangeList(p) => self.handle_track_change_list(req, &p),
+            ParsedCommand::SectionGetPage(p) => {
+                let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+                Ok((
+                    crate::section::get_page(
+                        &s.current.doc,
+                        p.scope.as_deref(),
+                        p.section_index,
+                        s.revision,
+                    )?,
+                    Vec::new(),
+                ))
+            }
+            ParsedCommand::SectionSetPage(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "section.setPage".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
+            ParsedCommand::SectionSetPageNumbering(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "section.setPageNumbering".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
+            ParsedCommand::SectionSetVisibility(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "section.setVisibility".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
             ParsedCommand::TextFormat(p) => self.handle_edit_steps(
                 req,
                 &[BatchStepParam {
@@ -1808,6 +1869,94 @@ impl SessionExecutor {
                     },
                 ))
             }
+            "section.setPage" => {
+                let p: SectionSetPageParams =
+                    serde_json::from_value(step.params.clone()).map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            e.to_string(),
+                        ))
+                    })?;
+                let node = hae_edit::resolve_section(doc, p.scope.as_deref(), p.section_index)
+                    .map_err(&wrap_err)?;
+                let entry = node.entry.clone();
+                let path = doc.doc_of(&node).path(node.el);
+                let mut settings = serde_json::to_value(p).unwrap();
+                let obj = settings.as_object_mut().unwrap();
+                obj.remove("scope");
+                obj.remove("sectionIndex");
+                Ok((
+                    EditOp::SectionSetPage {
+                        target: node.id,
+                        settings: serde_json::from_value(settings.clone()).unwrap(),
+                    },
+                    VerifyOperation::SectionSetPage {
+                        entry,
+                        path,
+                        settings: serde_json::from_value(settings).unwrap(),
+                    },
+                ))
+            }
+            "section.setPageNumbering" => {
+                let p: SectionSetPageNumberingParams = serde_json::from_value(step.params.clone())
+                    .map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            e.to_string(),
+                        ))
+                    })?;
+                let node = hae_edit::resolve_section(doc, p.scope.as_deref(), p.section_index)
+                    .map_err(&wrap_err)?;
+                let entry = node.entry.clone();
+                let path = doc.doc_of(&node).path(node.el);
+                let mut settings = serde_json::to_value(p).unwrap();
+                let obj = settings.as_object_mut().unwrap();
+                obj.remove("scope");
+                obj.remove("sectionIndex");
+                Ok((
+                    EditOp::SectionSetPageNumbering {
+                        target: node.id,
+                        settings: serde_json::from_value(settings.clone()).unwrap(),
+                    },
+                    VerifyOperation::SectionSetPageNumbering {
+                        entry,
+                        path,
+                        settings: serde_json::from_value(settings).unwrap(),
+                    },
+                ))
+            }
+            "section.setVisibility" => {
+                let p: SectionSetVisibilityParams = serde_json::from_value(step.params.clone())
+                    .map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            e.to_string(),
+                        ))
+                    })?;
+                let node = hae_edit::resolve_section(doc, p.scope.as_deref(), p.section_index)
+                    .map_err(&wrap_err)?;
+                let entry = node.entry.clone();
+                let path = doc.doc_of(&node).path(node.el);
+                let mut settings = serde_json::to_value(p).unwrap();
+                let obj = settings.as_object_mut().unwrap();
+                obj.remove("scope");
+                obj.remove("sectionIndex");
+                Ok((
+                    EditOp::SectionSetVisibility {
+                        target: node.id,
+                        settings: serde_json::from_value(settings.clone()).unwrap(),
+                    },
+                    VerifyOperation::SectionSetVisibility {
+                        entry,
+                        path,
+                        settings: serde_json::from_value(settings).unwrap(),
+                    },
+                ))
+            }
+
             "text.format" => {
                 let p: TextFormatParams =
                     serde_json::from_value(step.params.clone()).map_err(|e| {

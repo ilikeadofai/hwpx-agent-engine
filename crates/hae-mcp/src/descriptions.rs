@@ -44,6 +44,22 @@ fn trackchange_list() -> &'static str {
     "List the revision marks of the open document (`documentId`): for each `hp:insertBegin`/`insertEnd`/`deleteBegin`/`deleteEnd` mark the containing paragraph `nodeId`, `section`, mark `id`, `TcId`, `paraEnd`, and the codepoint `textOffset` inside its `hp:t`, resolved against the header records as `changeType` (Insert/Delete/CharShape/ParaShape), `date`, `authorId`, and `authorName`. The reply also carries every header `changes`/`authors` record (from `hh:trackChanges`/`hh:trackChangeAuthors`), `readonlyReasons`, and `hasTrackChanges`. Documents carrying track changes stay read-only (edits are refused with `UNSUPPORTED`/`document_readonly`); this tool only reports them and never lifts that lock. Optional `scope` limits marks to one nodeId and its descendants. Pass `cursor` from `nextCursor` and optional `limit` (default 100, max 500) to page; `markCount` counts filtered marks and cursors invalidate when `revision` changes. Read-only; never modifies the document."
 }
 
+fn section_get_page() -> &'static str {
+    "Read the page setup of one existing section, chosen by `scope` (nodeId of the top-level paragraph that contains `hp:secPr`) or `sectionIndex` (0-based, default 0); supplying both is refused. Returns `landscape`, `width`, `height`, `gutterType`, `margins`, `textDirection`, `spaceColumns`, `startNum` (`pageStartsOn`, `page`, `pic`, `tbl`, `equation`), `visibility`, and `grid`, each as `{\"value\":…,\"source\":\"explicit\"|\"unspecified\"}`. Values come from XML attributes only: absent attributes are `null` with `unspecified`, and HWPUNIT measurements are never substituted from inherited or application defaults. Flags keep their stored numeric form. Column count/width (`colPr`) and page-number display controls are read-only here. Read-only; never modifies the document."
+}
+
+fn section_set_page() -> &'static str {
+    "Change only the page properties you name in existing section target (`scope` nodeId of the `secPr` paragraph, or `sectionIndex` 0-based default 0): `landscape` (`NARROWLY`/`WIDELY`), `width`/`height` (HWPUNIT, >= 1), `gutterType` (`LEFT_ONLY`/`LEFT_RIGHT`/`TOP_BOTTOM`), and `margins` (`left`, `right`, `top`, `bottom`, `header`, `footer`, `gutter`). Unnamed attributes, children, and other sections keep their original bytes. `landscape` does not swap the stored `width`/`height`; the swap applies only to the body-area check. The call is refused with `INVALID_REQUEST` (`non_positive_body_area`) when the resulting body width or height (width minus left/right and the horizontal gutter; height minus top/bottom/header/footer and the vertical gutter) is not positive, and with `UNSUPPORTED` (`structure_change_unsupported`) when a required original measurement is missing or the section/`secPr`/`pagePr`/`margin` shape is not supported — missing elements are never created, though named missing attributes are added. Requires `expectedVersion` (`VERSION_CONFLICT` if stale -> re-query). Because the paper area changes line breaking, every `linesegarray` cache in that section (table cells included) is removed while other sections are preserved. Supported in `command_batch` as one undo unit; `dryRun: true` validates without changing the document, revision, or history."
+}
+
+fn section_set_page_numbering() -> &'static str {
+    "Change only the page numbering you name in existing section target (`scope` nodeId of the `secPr` paragraph, or `sectionIndex` 0-based default 0): `pageStartsOn` (`BOTH`/`EVEN`/`ODD`) and `page` (start number, >= 0). The `pic`, `tbl`, and `equation` counters, all other attributes, and other sections are preserved byte-for-byte; no page-number display control is created. A request naming neither field is refused, as is a value outside the listed enums. Requires `expectedVersion` (`VERSION_CONFLICT` if stale -> re-query). Like the other section edits, the changed section's `linesegarray` caches are removed because layout may change; body text and `PrvText` are untouched. Supported in `command_batch`; `dryRun: true` previews without committing."
+}
+
+fn section_set_visibility() -> &'static str {
+    "Change only the first-page visibility flags you name in existing section target (`scope` nodeId of the `secPr` paragraph, or `sectionIndex` 0-based default 0): `hideFirstHeader`, `hideFirstFooter`, `hideFirstPageNum`, `hideFirstEmptyLine`, `showLineNumber` (booleans) and `border`/`fill` (`SHOW_ALL`/`HIDE_ALL`/`SHOW_FIRST`/`HIDE_FIRST`). Attributes outside this list (for example `hideFirstMasterPage`) and other sections keep their original bytes. A request naming no flag is refused, as is an unlisted enum value. Requires `expectedVersion` (`VERSION_CONFLICT` if stale -> re-query). Removes the changed section's `linesegarray` caches only; body text and `PrvText` are untouched. Supported in `command_batch`; `dryRun: true` previews without committing."
+}
+
 fn text_replace() -> &'static str {
     "Replace a paragraph grapheme range [start,end), or insert non-empty text at [p,p). No tabs/newlines in text. Check edits[\"text.replace\"].modes (replace/insert) and apply requires arguments (e.g. controls=preserve); default controls=reject requires a subrange/position in textSpans. Empty paragraphs advertise {start:0,end:0}; insertion uses the following character run, then preceding run, then the empty paragraph first run. controls=preserve changes only text fragments and keeps objects/tabs/line breaks/fields in original XML order; leading objects stay before the first text fragment. Existing empty hp:t may be reused; no text fragment means UNSUPPORTED_CONTENT_IN_RANGE. CONTROLS_PRESERVED reports count and new grapheme offsets. Unsupported markup/attributes still fail. Requires expectedVersion; VERSION_CONFLICT means re-query. FORMAT_COLLAPSED warns about character shapes. dryRun=true verifies without committing."
 }
@@ -170,6 +186,10 @@ pub const TABLE: &[(&str, Describe)] = &[
     ("element.get", element_get),
     ("link.list", link_list),
     ("trackchange.list", trackchange_list),
+    ("section.getPage", section_get_page),
+    ("section.setPage", section_set_page),
+    ("section.setPageNumbering", section_set_page_numbering),
+    ("section.setVisibility", section_set_visibility),
     ("text.format", text_format),
     ("equation.list", equation_list),
     ("equation.get", equation_get),

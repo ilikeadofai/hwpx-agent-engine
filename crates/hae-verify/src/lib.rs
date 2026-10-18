@@ -38,12 +38,14 @@ mod fit;
 mod format;
 mod image;
 mod narrow;
+mod section;
 mod table;
 mod text;
 
 pub use contract::{
     Alignment, CellFormat, CellMargin, CharProps, EquationProps, FitMode, LineSpacing,
-    LineSpacingKind, VerifyOperation, VerifyReport, VerifyScope,
+    LineSpacingKind, Margins, PageNumbering, PageSettings, VerifyOperation, VerifyReport,
+    VerifyScope, Visibility,
 };
 use hae_diag::{Budget, Code, EngineError, Limits, Result, Stage};
 use hae_package::{PackageInfo, PackageState, XmlMap, NS_HC, NS_HH, NS_HP, NS_HP10, NS_HS};
@@ -409,6 +411,21 @@ fn verify_inner(
                         .find(|&p| hp(doc.el(p), "p"))
                         .ok_or_else(|| fail("picture lacks containing paragraph"))?;
                     anchor(&mut anchors, entry, &doc, para)?;
+                    material = true;
+                }
+            }
+            VerifyOperation::SectionSetPage { .. }
+            | VerifyOperation::SectionSetPageNumbering { .. }
+            | VerifyOperation::SectionSetVisibility { .. } => {
+                if section::check(&mut expected, entry, &doc, target, op)? {
+                    let nested: BTreeSet<_> = doc
+                        .iter()
+                        .filter(|(_, e)| hp(e, "p") && e.parent != Some(doc.root()))
+                        .map(|(i, _)| stable_path(&doc, i))
+                        .collect();
+                    let slot = anchors.entry(entry.into()).or_insert((0, BTreeSet::new()));
+                    slot.0 = 0;
+                    slot.1.extend(nested);
                     material = true;
                 }
             }

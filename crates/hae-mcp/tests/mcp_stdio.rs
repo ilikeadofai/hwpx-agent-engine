@@ -7,6 +7,26 @@ use common::{first_code, McpClient, TempDir};
 use hae_exec::command_list;
 use serde_json::{json, Value};
 
+/// The MCP tool name is the dotted registry name in snake_case: `.` becomes `_`
+/// and every camelCase hump gets its own `_`
+/// (`text.replaceAll` -> `text_replace_all`, `section.setPageNumbering` ->
+/// `section_set_page_numbering`). Deriving it here keeps the naming rule
+/// checkable instead of trusting each registry row.
+fn expected_tool_name(command: &str) -> String {
+    let mut out = String::new();
+    for c in command.chars() {
+        if c == '.' {
+            out.push('_');
+        } else if c.is_ascii_uppercase() {
+            out.push('_');
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 #[test]
 fn initialize_ping_and_tools_list_cover_every_registry_command() {
     let t = TempDir::new("list");
@@ -32,17 +52,7 @@ fn initialize_ping_and_tools_list_cover_every_registry_command() {
     assert_eq!(tools.len(), commands.len());
     for (tool, command) in tools.iter().zip(&commands) {
         let name = tool["name"].as_str().unwrap();
-        // `a.bC` -> `a_b_c`: dots become underscores, each capital a `_` + lowercase.
-        let expected: String = command
-            .name
-            .chars()
-            .flat_map(|c| match c {
-                '.' => vec!['_'],
-                c if c.is_ascii_uppercase() => vec!['_', c.to_ascii_lowercase()],
-                c => vec![c],
-            })
-            .collect();
-        assert_eq!(name, expected);
+        assert_eq!(name, expected_tool_name(command.name));
         assert_eq!(name, command.mcp_tool_name);
         assert!(
             tool["description"].as_str().unwrap().len() > 20,

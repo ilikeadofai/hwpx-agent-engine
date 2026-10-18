@@ -146,3 +146,11 @@ diff <(cd /tmp/edit_a && find . -type f | sort | xargs sha256sum) \
 ### narrow_edits.hwpx (0.3)
 
 `python3 -I tests/fixtures/editing/gen_narrow_edits.py --check-determinism`으로 생성한다. 개인정보 없는 합성 문서로 기존 스타일 2개, 일반 문단, 머리말 4문단(번호·탭 제어 거절 사례 포함), 꼬리말, 2×1 PNG를 담은 정사각 프레임 그림을 포함한다. 머리말·꼬리말은 실제 HWPX(공개 코퍼스 관찰)처럼 `<hp:ctrl>` 아래에 둔다. 그림은 세 렌더링 행렬을 갖춘 기존 생성기 패턴을 쓴다. ZIP 메타데이터·순서는 고정되고 같은 Python/zlib에서 두 번 생성한 바이트가 동일한지 확인한다. 원본 corpus는 수정하지 않는다. 한컴 Linux 게이트 결과는 `docs/decisions/narrow-edits-hancom-gate-2026-10-18.md`에 있다.
+
+### section.hwpx (0.3)
+
+`gen_section.py`는 허용된 corpus/ref_empty.hwpx의 패키지·네이티브 구역 설정 골격에
+합성 본문만 넣어 구역 2개를 만듭니다. 0번 WIDELY, 1번 NARROWLY이고 각 구역에는
+secPr 소유 문단과 뒤따르는 문단, 줄 캐시 2개가 있습니다. 원본 corpus는 수정하지 않습니다.
+`python3 -I tests/fixtures/editing/gen_section.py --check-determinism`으로 재생성합니다.
+SHA-256: `166184cd082c32e845d5ff38fba3d133bd4c0f3da640a9a87a01bd8e561ef6c2`.

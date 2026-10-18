@@ -85,6 +85,44 @@ pub struct EquationProps {
     pub version: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageSettings {
+    pub landscape: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub gutter_type: Option<String>,
+    pub margins: Option<Margins>,
+}
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Margins {
+    pub left: Option<u32>,
+    pub right: Option<u32>,
+    pub top: Option<u32>,
+    pub bottom: Option<u32>,
+    pub header: Option<u32>,
+    pub footer: Option<u32>,
+    pub gutter: Option<u32>,
+}
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageNumbering {
+    pub page_starts_on: Option<String>,
+    pub page: Option<u32>,
+}
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Visibility {
+    pub hide_first_header: Option<bool>,
+    pub hide_first_footer: Option<bool>,
+    pub hide_first_page_num: Option<bool>,
+    pub hide_first_empty_line: Option<bool>,
+    pub show_line_number: Option<bool>,
+    pub border: Option<String>,
+    pub fill: Option<String>,
+}
+
 /// Paths count ELEMENT children, root = []. Requests are applied in order to
 /// an independently derived state, never to editor-produced text. A range is
 /// measured in extended graphemes of that step's pre-edit paragraph.
@@ -151,6 +189,24 @@ pub enum VerifyOperation {
         #[serde(rename = "paragraphIndex")]
         paragraph_index: usize,
         text: String,
+    },
+    #[serde(rename = "section.setPage")]
+    SectionSetPage {
+        entry: String,
+        path: Vec<usize>,
+        settings: PageSettings,
+    },
+    #[serde(rename = "section.setPageNumbering")]
+    SectionSetPageNumbering {
+        entry: String,
+        path: Vec<usize>,
+        settings: PageNumbering,
+    },
+    #[serde(rename = "section.setVisibility")]
+    SectionSetVisibility {
+        entry: String,
+        path: Vec<usize>,
+        settings: Visibility,
     },
     #[serde(rename = "text.format")]
     TextFormat {
@@ -238,6 +294,9 @@ impl VerifyOperation {
             | Self::CellSetSize { entry, path, .. }
             | Self::EquationSetScript { entry, path, .. }
             | Self::EquationSetProperties { entry, path, .. }
+            | Self::SectionSetPage { entry, path, .. }
+            | Self::SectionSetPageNumbering { entry, path, .. }
+            | Self::SectionSetVisibility { entry, path, .. }
             | Self::TextFormat { entry, path, .. }
             | Self::TextReplace { entry, path, .. }
             | Self::CellSetText { entry, path, .. }

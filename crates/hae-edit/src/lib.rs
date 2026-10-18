@@ -11,6 +11,7 @@ mod format;
 mod image;
 mod narrow;
 mod replace_all;
+mod section;
 mod table;
 mod text;
 
@@ -31,6 +32,7 @@ pub use replace_all::{
     GraphemeRange, MatchPreview, ReplaceAllReport, SkippedGroup, SkippedLocation,
     DEFAULT_MAX_MATCHES, HARD_MAX_MATCHES,
 };
+pub use section::{resolve_section, Margins, PageNumbering, PageSettings, Visibility};
 pub use table::{CellFormat, CellMargin};
 
 /// One edit command (spec §6). Ranges are grapheme-cluster indices.
@@ -77,6 +79,19 @@ pub enum EditOp {
         paragraph_index: usize,
         text: String,
     },
+    SectionSetPage {
+        target: String,
+        settings: PageSettings,
+    },
+    SectionSetPageNumbering {
+        target: String,
+        settings: PageNumbering,
+    },
+    SectionSetVisibility {
+        target: String,
+        settings: Visibility,
+    },
+
     TextFormat {
         target: String,
         range: Range<usize>,
@@ -129,6 +144,9 @@ impl EditOp {
             | EditOp::EquationSetScript { target, .. }
             | EditOp::EquationSetProperties { target, .. }
             | EditOp::ImageFit { target, .. }
+            | EditOp::SectionSetPage { target, .. }
+            | EditOp::SectionSetPageNumbering { target, .. }
+            | EditOp::SectionSetVisibility { target, .. }
             | EditOp::TextFormat { target, .. }
             | EditOp::TextReplace { target, .. }
             | EditOp::ParagraphFormat { target, .. }
@@ -194,6 +212,12 @@ pub enum Intent {
         kind: String,
         #[serde(rename = "paragraphIndex")]
         paragraph_index: usize,
+    },
+    Section {
+        command: String,
+        entry: String,
+        path: Vec<usize>,
+        request: serde_json::Value,
     },
     #[serde(rename = "text.format")]
     TextFormat {
@@ -414,6 +438,15 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
                 paragraph_index,
                 text,
             } => narrow::header_text(&mut d, scope.as_deref(), kind, *paragraph_index, text),
+            EditOp::SectionSetPage { target, settings } => {
+                section::set_page(&mut d, target, settings)
+            }
+            EditOp::SectionSetPageNumbering { target, settings } => {
+                section::set_numbering(&mut d, target, settings)
+            }
+            EditOp::SectionSetVisibility { target, settings } => {
+                section::set_visibility(&mut d, target, settings)
+            }
             EditOp::TextFormat {
                 target,
                 range,

@@ -17,6 +17,7 @@
 - **글자 서식 변경 (`text_format`)**: 문단 안의 자소 범위만 굵게·기울임·밑줄·취소선·글자 크기(`100`~`100000` HWPUNIT)·글자색(`#RRGGBB`)으로 바꿉니다. 값이 같은 기존 글자 모양을 재사용하거나 하나를 새로 만들어 붙이고, 범위 밖 글자의 모양은 그대로 둡니다.
 - **표 셀 텍스트 교체 (`cell_set_text`)**: 병합 기준 셀을 포함해 기존 셀의 텍스트를 바꿉니다. 문단 하나는 `text`, 여러 문단은 정확한 기존 문단 수의 `paragraphs` 배열을 줍니다.
 - **그림 교체 (`image_replace`)**: 기존 그림의 위치·크기·캡션을 그대로 유지한 채, 정적 PNG 또는 JPEG 이미지 파일로 교체합니다.
+- **구역 용지·여백·쪽 번호·표시 설정 (0.3, `section.*`)**: 기존 구역 하나의 용지 방향·크기·제본 방식·여백, 쪽 시작 방식과 시작 번호, 첫 쪽 머리말·꼬리말·쪽 번호 숨김과 테두리·채우기 표시, 격자를 조회하고(`section_get_page`) 지정한 항목만 바꿉니다(`section_set_page`, `section_set_page_numbering`, `section_set_visibility`). 조회 값은 XML에 명시된 것만 `explicit`으로, 없는 값은 `unspecified`로 구분해 알려 주며 상속·기본값을 추측하지 않습니다. 자세한 내용은 아래 0.3절 「구역 용지·여백·쪽 번호·표시 설정」을 보세요.
 - **되돌리기·다시 실행 및 미리보기**: 작업 전 가상 적용(`dryRun`), 변경 내역 비교(`document_diff`), 실행 취소(`history_undo`)·다시 실행(`history_redo`), 외부 렌더러 연동을 통한 PNG/SVG 미리보기(`document_preview`)를 지원합니다.
 
 ### 하지 않는 것 및 한계 (0.2 제외 범위)
@@ -669,3 +670,61 @@ cell.setText는 실제 존재하는 병합 기준 셀도 지원한다. 한 문�
 - **`hasTrackChanges`**는 본문 표시나 머리말 기록이 있거나 엔진이 변경 추적으로 잠근 문서면 true입니다.
 - **잠금 유지**: 변경 추적이 있는 문서는 지금처럼 읽기 전용으로 열립니다(`readonlyReasons: ["track_changes"]`). 조회와 무편집 내보내기만 가능하고 편집 명령은 `UNSUPPORTED`(`document_readonly`)로 거절됩니다. `trackchange_list`는 이 잠금을 풀지 않습니다.
 - **검증 범위**: 로컬 입력(픽스처·spikes)에는 변경 추적 문서가 없어 이 명령의 시험은 KS X 6101 표기(`Id`/`TcId`/`paraend`)와 `hh:trackChanges`/`hh:trackChangeAuthors` 스키마를 따른 **합성 문서로만** 수행했습니다. 실제 한컴 변경 추적 문서로는 아직 확인하지 않았습니다.
+
+## 0.3 구역 용지·여백·쪽 번호·표시 설정
+
+기존 구역 하나를 `sectionIndex`(spine 순서, 0부터 시작, 기본 0) 또는 `scope`로 선택합니다.
+`scope`는 **그 구역의 `hp:secPr`을 담은 최상위 문단의 nodeId**입니다.
+`section.getPage` 응답의 `scope`를 그대로 사용할 수 있습니다. 두 선택자를 함께 주면 거절합니다.
+구역·문단·속성 자식 요소를 생성하거나 삭제하지 않습니다. 없는 구역을 지정하면
+`UNSUPPORTED(reason:structure_change_unsupported)`입니다.
+
+`section.getPage`는 용지(`landscape`, `width`, `height`, `gutterType`), `margins`,
+`textDirection`, `spaceColumns`, `startNum`, `visibility`, `grid`를 조회합니다.
+각 항목은 `{"value":59528,"source":"explicit"}` 형태입니다. 없는 속성은
+`{"value":null,"source":"unspecified"}`이며, 상속·응용 프로그램 기본값을 추론하지 않습니다.
+수치 속성이 수치로 해석되지 않으면 원문 문자열을 명시 값으로 반환합니다.
+플래그는 XML의 수치(0/1)를 반환합니다. `spaceColumns`는 단 사이 간격의 **조회**이며,
+단 수·단 너비(`colPr`)의 편집은 이번 명령 범위에 포함하지 않습니다.
+
+```json
+{"command":"section.getPage","params":{"sectionIndex":0}}
+{"command":"section.setPage","expectedVersion":0,"params":{"sectionIndex":0,"width":59528,"height":84186,"margins":{"left":7000,"right":7000}}}
+{"command":"section.setPageNumbering","expectedVersion":1,"params":{"sectionIndex":0,"pageStartsOn":"ODD","page":3}}
+{"command":"section.setVisibility","expectedVersion":2,"params":{"sectionIndex":0,"hideFirstHeader":true,"hideFirstPageNum":true}}
+```
+
+용지·여백 수치는 HWPUNIT이며 `width`·`height`는 1 이상, 여백은 0 이상입니다.
+`landscape`는 원문 enum `NARROWLY`/`WIDELY`, `gutterType`은
+`LEFT_ONLY`/`LEFT_RIGHT`/`TOP_BOTTOM`을 받습니다. 방향을 바꾸더라도 저장된 width·height를
+자동 교환하지 않습니다. 본문 영역 검사에서만 `NARROWLY`의 물리 축을 교환합니다.
+본문 폭은 물리 너비에서 좌·우·가로 제본 여백을 뺀 값, 본문 높이는 물리 높이에서
+위·아래·머리말·꼬리말·세로 제본 여백을 뺀 값입니다. 하나라도 0 이하가 되면
+`INVALID_REQUEST(reason:non_positive_body_area)`로 거절합니다.
+검사에 필요한 원본 값이 빠졌거나 지원 범위의 수치/enum이 아니면 추정하지 않고 거절합니다.
+누락된 **속성**은 요청에서 명시적으로 주면 추가할 수 있지만, `pagePr`·`margin` 등
+누락된 **요소**를 만들지는 않습니다. `scope`/`sectionIndex`만 있고 편집 항목이 없으면 거절합니다.
+
+`section.setPageNumbering`은 `pageStartsOn`(`BOTH`/`EVEN`/`ODD`)과 `page`(0 이상) 중
+지정한 것만 바꿉니다. `pic`·`tbl`·`equation`은 그대로 유지합니다. `page:0`의 네이티브
+연속 번호 의미를 별도로 재해석하지 않으며, 쪽 번호 표시 컨트롤을 새로 만들지 않습니다.
+
+`section.setVisibility`는 `hideFirstHeader`, `hideFirstFooter`, `hideFirstPageNum`,
+`hideFirstEmptyLine`, `showLineNumber`의 boolean과 `border`·`fill`의
+`SHOW_ALL`/`HIDE_ALL`/`SHOW_FIRST`/`HIDE_FIRST` 중 지정한 것만 바꿉니다.
+`hideFirstMasterPage` 등 요청 범위 밖 속성은 보존합니다.
+
+세 편집 명령 모두 `expectedVersion`·`dryRun`·원자적 batch·Undo/Redo를 지원합니다.
+실제 변경 때 해당 구역의 모든 문단(셀 안 문단 포함)의 `linesegarray`를 지우며,
+다른 구역은 보존합니다. 본문 텍스트가 바뀌지 않으므로 UTF-8 `PrvText`는 바꾸지 않고,
+기존 규칙대로 썸네일과 조판을 stale로 표시합니다. 동일 값 요청은 바이트·revision·이력을
+그대로 유지하는 noop입니다. 저장 전 별도 검증기가 원본과 요청으로 기대 바이트를
+다시 계산하여 요청 없는 속성 변경, 자식 순서 변경, 다른 구역 변경, 미편집 ZIP 항목의
+재인코딩을 거절합니다. 한컴 Linux Beta 게이트의 프로세스 생존만으로 화면·인쇄·Windows
+호환성을 확정하지 않습니다.
+
+MCP 도구 설명:
+- `section_get_page`: 기존 구역의 명시된 용지·여백·쪽 번호·표시·격자 값과 항목별 출처를 조회합니다.
+- `section_set_page`: 요청한 용지·여백 속성만 바꾸고 본문 영역이 0 이하이면 거절합니다.
+- `section_set_page_numbering`: 쪽 시작 방식·시작 번호만 바꾸며 그림·표·수식 번호는 보존합니다.
+- `section_set_visibility`: 요청한 첫 쪽 표시 플래그와 테두리·채우기 값만 바꿉니다.

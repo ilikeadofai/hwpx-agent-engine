@@ -116,3 +116,21 @@ python3 -m unittest discover -s tests/oracle
 - `header.setText`: 편집기가 고른 문단을 받지 않고 구역·종류·인덱스로 직접 찾습니다. 제어 요소를 포함한 문단과 텍스트 조각이 없는 문단은 거절합니다. 기존 텍스트 교체 검증과 줄 배치 캐시·PrvText 규칙을 적용하고 다른 머리말·꼬리말·본문 변경을 거절합니다.
 
 구현은 `src/narrow.rs`·`src/fit.rs`, 독립 손작성 후보 및 명령별 5건 이상 변조 거절 시험은 `tests/narrow_edits.rs`입니다. 편집 계층의 타입·산출물을 검증기에 전달하지 않습니다. PNG/JPEG 픽셀 디코드 검증은 편집 입력 계층, 검증기의 이미지 검사는 기존처럼 제한된 컨테이너·크기 검사입니다. 산출물 6종의 Linux 한컴 게이트·화면 관찰은 [좁은 편집 명령 한컴 게이트](narrow-edits-hancom-gate-2026-10-18.md)에 있습니다.
+
+## 0.3 구역 속성(`section.*`) 독립 검증
+
+`hae-verify/src/section.rs`는 요청의 `PageSettings`·`PageNumbering`·`Visibility`를
+편집기와 별도로 정의·검증합니다. 구역당 secPr 하나와 최상위 소유 문단을 확인하고,
+원본 토큰의 요청된 속성 값 위치만 바꾼 기대 payload를 도출합니다. 요청한 누락 속성의
+추가는 허용하지만 새 요소 생성은 거절합니다. 자식 요소와 다른 속성의 순서는 그대로입니다.
+용지 본문 영역 계산도 별도로 수행하고 해당 구역의 전체 문단 캐시 제거를 도출합니다.
+`pic`/`tbl`/`equation`, 다른 구역, 본문 텍스트, UTF-8 PrvText, 미편집 ZIP 항목의 원시 압축
+바이트·로컬 헤더는 바뀔 수 없습니다. 시험 후보는 편집기를 호출하지 않고 손으로 조립합니다.
+
+머리말/꼬리말 여백도 본문 공간을 차지한다는 근거는
+[한컴 용지 여백 도움말](https://help.hancom.com/hoffice/webhelp/9.0/ko_kr/hwp/format/setting_paper/setting_paper%28margins%29.htm)입니다.
+방향 속성과 저장된 width/height가 별개라는 근거는
+[한컴 개발자 답변](https://forum.developer.hancom.com/t/pagepr-width-height/1693)입니다.
+`WIDELY` 원본 용지와 `NARROWLY` 축 교환의 대응은 corpus 및 구현 계약으로 고정했으며,
+모든 네이티브 버전의 표시 결과를 보증하는 것으로 확대하지 않습니다. 가로 용지와 제본 방식별
+시각 비교, Windows 한컴, 공식 XSD 전체 적합성은 별도 검증 대상입니다.

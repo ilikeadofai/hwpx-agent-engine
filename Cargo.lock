@@ -368,6 +368,7 @@ dependencies = [
  "hae-project",
  "hae-render-rhwp",
  "hae-verify",
+ "hae-xml",
  "hae-zip",
  "schemars",
  "serde",
