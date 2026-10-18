@@ -71,4 +71,8 @@ document.inspect / element.query / element.get으로 구조와 현재 내용을 
 - 공개 `gani-gian.hwpx`에서 본문·셀 편집, Undo/Redo, 내보내기·재열기·프리뷰 17단계를 환경변수 없이 실행했다. 무편집·Undo는 원본 바이트와 같았고 편집·Redo도 서로 같았다. 재열기 후 수정된 본문·셀을 조회했다.
 - 실제 MCP 평가 시나리오는 146개 검증을 통과했고, 독립 보존 oracle은 111개를 통과했다. 편집 fixture 재생성 결정성도 통과했다(43,990바이트).
 
-실행 원문과 해시는 저장소의 `spikes/work/finish-20261019/` 아래에 보관한다. 사용자 보고서는 이 검사에 사용하지 않았다. 최종 설치본의 다른 작업 폴더 실행과 전체 회귀 검사는 같은 폴더의 후속 로그로 확인한다.
+실행 원문과 해시는 저장소의 `spikes/work/finish-20261019/` 아래에 보관한다. 사용자 보고서는 이 검사에 사용하지 않았다.
+
+최종 설치본을 `/tmp`에서 모든 `HAE_*` 변수 없이 실행해 같은 생성·편집·프로젝트 재열기 16단계를 통과했다. 앱 옆 폰트 3개가 자동 선택됐고 PNG도 생성됐다. 설치 manifest의 실행 파일·폰트 8개 해시를 실제 파일과 대조했다(`installed-e2e/summary.json`, `installed.json`).
+
+추가 전체 관문 `CARGO_BUILD_JOBS=3 bash scripts/check.sh`도 종료 코드 0으로 완료했다. fmt·Clippy(`-D warnings`)·PNG 작업자 빌드 및 Python 시험 33개가 통과했다. Rust workspace는 **882 passed, 0 failed, 13 ignored**였으며, 그 13개 실제 렌더러 시험을 후속 명령으로 명시 실행해 **13 passed, 0 failed**를 확인했다. 전체 명령 합계는 895 passed다. 완료 로그는 `workspace-check.log`, 전체 로그에서 다시 집계한 요약은 `workspace-final-summary.json`이다. Windows 한컴 조판 대조를 수행했다는 뜻은 아니다.
