@@ -578,6 +578,10 @@ fn delete_row_with_merged_cells_is_refused_with_the_cells() {
         let detail = r.diagnostics[0].detail.as_ref().unwrap();
         assert!(detail["cellCount"].as_u64().unwrap() >= 1);
         assert!(detail["cells"][0]["rowSpan"].is_number());
+        assert!(
+            detail["cells"][0]["nodeId"].is_string(),
+            "detail names the merged cell node: {detail}"
+        );
     }
     // A clean row of the same table can still go.
     c.ok(
@@ -841,6 +845,20 @@ fn dry_run_reports_the_structure_without_ids_or_changes() {
     assert!(created.iter().all(|n| n["nodeId"].is_null()));
     assert_eq!(created[0]["row"], 1);
     assert_eq!(v["structure"][0]["shiftedCount"], 9);
+    assert_eq!(v["structure"][0]["shifted"].as_array().unwrap().len(), 9);
+    assert!(
+        v["structure"][0]["shifted"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|id| id.is_string()),
+        "dryRun still reports the surviving cells that move"
+    );
+    assert_eq!(
+        v["changedIds"].as_array().unwrap().len(),
+        10,
+        "table + 9 shifted cells; the discarded new ids are not reported"
+    );
     assert_eq!(c.export("same.hwpx"), SOURCE);
     let r = c.exec.call("history.undo", json!({}), Some(0), false);
     assert_eq!(code(&r), Code::HistoryEmpty);

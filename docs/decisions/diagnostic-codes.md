@@ -122,7 +122,7 @@ batch 롤백 뒤 현재 문서에서 재조회한다. 코드는 추가하지 않
 | `INVALID_ARGUMENT` | `count_out_of_range` | `count`가 `1..=1024` 밖 |
 | `INVALID_ARGUMENT` | `table_size_limit` | 결과 행 또는 열 수가 1024 초과 |
 | `INVALID_ARGUMENT` | `would_empty_table` | 모든 행(열)을 지우려 함 |
-| `UNSUPPORTED` | `merged_cell_blocks_delete` | 삭제 구간과 겹치는 셀 중 `rowSpan`/`colSpan`이 1이 아닌 셀이 있음. `detail.cells[]`({row,col,rowSpan,colSpan}, 최대 16개)·`detail.cellCount` |
+| `UNSUPPORTED` | `merged_cell_blocks_delete` | 삭제 구간과 겹치는 셀 중 `rowSpan`/`colSpan`이 1이 아닌 셀이 있음. `detail.cells[]`({nodeId,row,col,rowSpan,colSpan}, 최대 16개)·`detail.cellCount` |
 | `UNSUPPORTED` | `insert_inside_merged_cell` | 삽입 경계가 병합 셀을 가름. `detail.cells[]` 동일 형식 |
 | `UNSUPPORTED` | `no_simple_template_line` | 복제할 단순한 이웃 줄(덮는 모든 셀의 병합 수가 1)이 없음 |
 | `UNSUPPORTED` | `cell_template_unsupported` | 복제할 셀에 `subList` 하나·첫 문단·첫 run·`charPrIDRef`가 없음 |

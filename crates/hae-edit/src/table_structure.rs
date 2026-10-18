@@ -34,9 +34,15 @@ fn invalid(reason: &str, message: impl Into<String>) -> EngineError {
     EngineError::new(Code::InvalidArgument, Stage::Validate, message).with_reason(reason)
 }
 
-fn merged_error(reason: &str, message: &str, cells: Vec<&Cell>) -> EngineError {
+fn merged_error(
+    reason: &str,
+    message: &str,
+    cells: Vec<&Cell>,
+    ids: &BTreeMap<usize, String>,
+) -> EngineError {
     unsupported(reason, message).with_detail(json!({
         "cells": cells.iter().take(16).map(|c| json!({
+            "nodeId": ids.get(&c.el),
             "row": c.row, "col": c.col, "rowSpan": c.rs, "colSpan": c.cs
         })).collect::<Vec<_>>(),
         "cellCount": cells.len(),
@@ -52,6 +58,8 @@ struct Layout {
     tr_el: Vec<usize>,
     tr_pos: Vec<usize>,
     cells: Vec<Cell>,
+    /// Cell element -> node id, filled by `structure` for diagnostics.
+    ids: BTreeMap<usize, String>,
     /// Indexes into `cells`, per row, in element order (= tc position in the tr).
     by_row: Vec<Vec<usize>>,
 }
@@ -158,6 +166,7 @@ fn layout(d: &XmlDoc, table: usize) -> Result<Layout> {
         tr_el,
         tr_pos,
         cells,
+        ids: BTreeMap::new(),
         by_row,
     })
 }
@@ -354,6 +363,7 @@ fn insert_rows(d: &XmlDoc, g: &Layout, index: usize, count: usize) -> Result<Pla
             "insert_inside_merged_cell",
             "the insertion boundary splits a merged cell",
             crossing,
+            &g.ids,
         ));
     }
     let simple: Vec<usize> = [index.checked_sub(1), (index < g.rows).then_some(index)]
@@ -446,6 +456,7 @@ fn insert_columns(d: &XmlDoc, g: &Layout, index: usize, count: usize) -> Result<
             "insert_inside_merged_cell",
             "the insertion boundary splits a merged cell",
             crossing,
+            &g.ids,
         ));
     }
     let widths = column_widths(d, g)?;
@@ -538,6 +549,7 @@ fn delete_rows(d: &XmlDoc, g: &Layout, index: usize, count: usize) -> Result<Pla
             "merged_cell_blocks_delete",
             "the rows to delete overlap merged cells",
             merged,
+            &g.ids,
         ));
     }
     let mut plan = Plan {
@@ -606,6 +618,7 @@ fn delete_columns(d: &XmlDoc, g: &Layout, index: usize, count: usize) -> Result<
             "merged_cell_blocks_delete",
             "the columns to delete overlap merged cells",
             merged,
+            &g.ids,
         ));
     }
     let widths = column_widths(d, g)?;
@@ -680,7 +693,12 @@ pub(crate) fn structure(
         d.doc.check_editable(n)?;
     }
     let xml = d.doc.doc_of(&table).clone();
-    let g = layout(&xml, table.el)?;
+    let mut g = layout(&xml, table.el)?;
+    for n in d.doc.nodes.iter().filter(|n| n.entry == table.entry) {
+        if n.kind == Kind::Cell {
+            g.ids.insert(n.el, n.id.clone());
+        }
+    }
     let rows_before = g.rows;
     let cols_before = g.cols;
     let plan = match (axis_kind, mode) {

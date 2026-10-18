@@ -158,11 +158,17 @@ fn with_structure(
     if !reports.is_empty() {
         let mut v = serde_json::to_value(reports).expect("reports serialize");
         if dry_run {
+            let created_ids: std::collections::HashSet<&str> = reports
+                .iter()
+                .flat_map(|r| r.created.iter().map(|c| c.node_id.as_str()))
+                .collect();
+            if let Some(ids) = result["changedIds"].as_array_mut() {
+                ids.retain(|id| id.as_str().is_none_or(|id| !created_ids.contains(id)));
+            }
             for (step, report) in v.as_array_mut().into_iter().flatten().zip(reports) {
                 for created in step["created"].as_array_mut().into_iter().flatten() {
                     created["nodeId"] = Value::Null;
                 }
-                step["shifted"] = json!([]);
                 step["shiftedCount"] = json!(report.shifted.len());
             }
         }
