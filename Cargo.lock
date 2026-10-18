@@ -363,6 +363,7 @@ version = "0.2.0"
 dependencies = [
  "hae-diag",
  "hae-edit",
+ "hae-hwp5",
  "hae-model",
  "hae-package",
  "hae-project",
@@ -373,6 +374,14 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "hae-hwp5"
+version = "0.2.0"
+dependencies = [
+ "flate2",
+ "hae-diag",
 ]
 
 [[package]]

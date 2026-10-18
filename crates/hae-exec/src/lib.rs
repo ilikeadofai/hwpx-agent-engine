@@ -11,11 +11,11 @@ pub use registry::{
     CommandCategory, CommandDescribeParams, CommandDescriptor, DocumentDiffParams,
     DocumentExportParams, DocumentExportTextParams, DocumentInspectParams, DocumentOpenParams,
     DocumentPreviewParams, ElementGetParams, ElementQueryParams, EmptyParams, ExportTextFormat,
-    ExportTextResultShape, FormFillParams, FormFillResultShape, ImageReplaceParams,
-    LineSpacingParam, LinkListParams, ParagraphFormatParams, ParsedCommand, PictureListParams,
-    ProjectSaveParams, SnapshotCreateParams, SnapshotReleaseParams, StyleListParams,
-    TableGetParams, TextRangeParam, TextReplaceAllParams, TextReplaceParams, TrackChangeListParams,
-    COMMAND_NAMES,
+    ExportTextResultShape, FormFillParams, FormFillResultShape, Hwp5InspectParams,
+    ImageReplaceParams, LineSpacingParam, LinkListParams, ParagraphFormatParams, ParsedCommand,
+    PictureListParams, ProjectSaveParams, SnapshotCreateParams, SnapshotReleaseParams,
+    StyleListParams, TableGetParams, TextRangeParam, TextReplaceAllParams, TextReplaceParams,
+    TrackChangeListParams, COMMAND_NAMES,
 };
 pub use session::{RequestEnvelope, ResponseEnvelope, SessionExecutor};
 

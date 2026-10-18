@@ -29,6 +29,7 @@ clap = { version = "=4.6.6", features = ["derive"] }
 resvg = { version = "=0.45.1", default-features = false, features = ["text", "raster-images", "memmap-fonts"] }
 hae-diag = { path = "crates/hae-diag" }
 hae-zip = { path = "crates/hae-zip" }
+hae-hwp5 = { path = "crates/hae-hwp5" }
 hae-xml = { path = "crates/hae-xml" }
 hae-package = { path = "crates/hae-package" }
 hae-model = { path = "crates/hae-model" }

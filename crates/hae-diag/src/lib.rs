@@ -85,7 +85,7 @@ macro_rules! reasons {
         pub enum PackageRejectReason { $( $variant, )* }
 
         impl PackageRejectReason {
-            pub const ALL: [PackageRejectReason; 18] = [ $( PackageRejectReason::$variant, )* ];
+            pub const ALL: [PackageRejectReason; 22] = [ $( PackageRejectReason::$variant, )* ];
             pub fn as_str(self) -> &'static str {
                 match self { $( PackageRejectReason::$variant => $s, )* }
             }
@@ -112,6 +112,12 @@ reasons! {
     OverlappingEntries => "overlapping_entries";
     MalformedXml => "malformed_xml";
     ForeignNamespace => "foreign_namespace";
+    // HWP5 reasons (§ hwp5-format-notes.md): container damage, missing part,
+    // broken record stream, unsupported distribution documents.
+    MalformedCompoundFile => "malformed_compound_file";
+    MissingComponent => "missing_component";
+    MalformedRecordStream => "malformed_record_stream";
+    DistributionUnsupported => "distribution_unsupported";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -238,6 +244,8 @@ pub struct Limits {
     pub renderer_timeout_secs: u64,
     /// Largest Markdown/HTML file `document.exportText` may write.
     pub max_text_export_bytes: u64,
+    /// Largest number of paragraphs `hwp5.inspect` will enumerate in one HWP5 file.
+    pub max_hwp5_paragraphs: u64,
 }
 
 impl Default for Limits {
@@ -256,6 +264,7 @@ impl Default for Limits {
             max_history_units: 100,
             renderer_timeout_secs: 60,
             max_text_export_bytes: 16 * MIB,
+            max_hwp5_paragraphs: 1_000_000,
         }
     }
 }
@@ -364,7 +373,7 @@ mod tests {
             .iter()
             .map(|r| r.as_str())
             .collect();
-        assert_eq!(set.len(), 18);
+        assert_eq!(set.len(), 22);
         for r in PackageRejectReason::ALL {
             let j = serde_json::to_string(&r).unwrap();
             assert_eq!(j, format!("\"{}\"", r.as_str()));
@@ -431,6 +440,7 @@ mod tests {
         assert_eq!(l.max_history_units, 100);
         assert_eq!(l.renderer_timeout_secs, 60);
         assert_eq!(l.max_text_export_bytes, 16 * MIB);
+        assert_eq!(l.max_hwp5_paragraphs, 1_000_000);
     }
 
     #[test]

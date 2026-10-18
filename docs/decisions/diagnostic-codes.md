@@ -5,7 +5,7 @@
 | 코드 | 설계서 | 단계 | 뜻 |
 |---|---|---|---|
 | PACKAGE_REJECTED | §11 | 1 | 열기 단계 패키지 거절. reason에 사유 |
-| RESOURCE_LIMIT | §8·§11 | 1 | 한도 초과(크기·항목 수·해제량·깊이·화소·메모리·이력). document.exportText는 결과가 Limits.max_text_export_bytes(기본 16 MiB)를 넘으면 reason:text_export_too_large와 detail.{limit,limitBytes,producedBytes}로 거절 text.replaceAll은 바꿀 수 있는 일치가 maxMatches를 넘으면 commit 전에 이 코드로 거절하고 detail.maxMatches를 담음 |
+| RESOURCE_LIMIT | §8·§11 | 1 | 한도 초과(크기·항목 수·해제량·깊이·화소·메모리·이력). document.exportText는 결과가 Limits.max_text_export_bytes(기본 16 MiB)를 넘으면 reason:text_export_too_large와 detail.{limit,limitBytes,producedBytes}로 거절 text.replaceAll은 바꿀 수 있는 일치가 maxMatches를 넘으면 commit 전에 이 코드로 거절하고 detail.maxMatches를 담음 hwp5.inspect는 해제 누적이 max_inflate_total, 컨테이너 항목이 max_entries, 문단 수가 max_hwp5_paragraphs(기본 1,000,000)를 넘으면 거절 |
 | STATE_INVARIANT_ERROR | §4 | 1 | commit 전 정규 상태와 파생물 불일치 |
 | PROJECT_INTEGRITY_ERROR | §5 | 1 | .hwpwork 무결성 검사 실패 |
 | PROJECT_LOCKED | §5·§11 | 1 | 프로젝트 잠금 실패 |
@@ -42,7 +42,9 @@
 
 응답 필드(코드가 아님): unalignedMatches, historyEvicted, controlChanged, replay, outcome, savedVersion.
 
-PACKAGE_REJECTED의 reason 값: encrypted, duplicate_name, case_collision, path_escape, zip64_required, bad_mimetype, broken_manifest, dtd_or_entity, non_utf8, malformed_zip, unsupported_compression, multi_disk, crc_mismatch, size_mismatch, header_mismatch, overlapping_entries, malformed_xml, foreign_namespace. 앞의 9개는 설계서 §11, 나머지는 총괄 추가다.
+PACKAGE_REJECTED의 reason 값: encrypted, duplicate_name, case_collision, path_escape, zip64_required, bad_mimetype, broken_manifest, dtd_or_entity, non_utf8, malformed_zip, unsupported_compression, multi_disk, crc_mismatch, size_mismatch, header_mismatch, overlapping_entries, malformed_xml, foreign_namespace, malformed_compound_file, missing_component, malformed_record_stream, distribution_unsupported. 앞의 9개는 설계서 §11, 나머지는 총괄 추가다.
+
+HWP5(`hwp5.inspect`)의 reason은 `malformed_compound_file`(MS-CFB 헤더·FAT·디렉터리·미니 스트림 손상), `missing_component`(FileHeader/BodyText 같은 필수 요소 없음), `malformed_record_stream`(압축 해제 실패·레코드 경계 손상), `distribution_unsupported`(배포용 문서: ViewText+AES라 읽지 않음), `encrypted`(비밀번호·DRM 문서)다. 근거와 미확인 범위는 `docs/decisions/hwp5-format-notes.md`에 있다.
 
 ## 렌더러 진단(목록 밖 문자열 코드)
 

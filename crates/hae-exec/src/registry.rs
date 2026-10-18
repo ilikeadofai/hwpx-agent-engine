@@ -80,6 +80,70 @@ pub struct DocumentOpenParams {
     pub path: String,
 }
 
+/// HWP5 inspection reads a file directly: no open document is required and the
+/// file is never modified.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Hwp5InspectParams {
+    /// Path to a legacy HWP 5.0 (`.hwp`) file inside the input root.
+    pub path: String,
+    /// Cursor from a previous reply's `nextCursor` (bound to the file SHA-256).
+    #[serde(default)]
+    pub cursor: Option<String>,
+    /// Page size for `paragraphs` (default 100, clamped to 1..=500).
+    #[schemars(range(min = 1, max = 500))]
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// Maximum characters of each paragraph preview (default 120, 1..=1000).
+    #[schemars(range(min = 1, max = 1000))]
+    #[serde(default)]
+    pub preview_chars: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct Hwp5FileHeaderShape {
+    pub version: String,
+    pub compressed: bool,
+    pub encrypted: bool,
+    pub distribution: bool,
+    pub drm: bool,
+    pub properties: u32,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct Hwp5SectionShape {
+    pub index: usize,
+    pub paragraph_count: u64,
+    pub char_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct Hwp5ParagraphShape {
+    pub section_index: usize,
+    pub paragraph_index: u64,
+    pub level: u16,
+    pub char_count: u64,
+    pub preview: String,
+    pub preview_truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct Hwp5InspectResultShape {
+    pub path: String,
+    pub sha256: String,
+    pub file_header: Hwp5FileHeaderShape,
+    pub section_count: usize,
+    pub paragraph_count: u64,
+    pub char_count: u64,
+    pub sections: Vec<Hwp5SectionShape>,
+    pub paragraphs: Vec<Hwp5ParagraphShape>,
+    pub next_cursor: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DocumentInspectParams {
@@ -852,6 +916,7 @@ pub enum ParsedCommand {
     ProjectSave(ProjectSaveParams),
     DocumentExport(DocumentExportParams),
     DocumentExportText(DocumentExportTextParams),
+    Hwp5Inspect(Hwp5InspectParams),
 }
 
 /// Preserve Rust integer ranges as validation keywords before removing the
@@ -973,6 +1038,7 @@ mod schema_tests {
             ("table_get", [true, false, true, false]),
             ("picture_list", [true, false, true, false]),
             ("field_list", [true, false, true, false]),
+            ("hwp5_inspect", [true, false, true, false]),
             ("field_set_text", [false, true, false, false]),
             ("text_replace", [false, true, false, false]),
             ("text_format", [false, true, false, false]),
@@ -1396,6 +1462,12 @@ define_commands! {
         summary: "List field markers, names/IDs, raw Command, current values and safe filling availability in a document or scope, paged with nextCursor",
         category: Query, mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
         stage1: true, reason: None, params: FieldListParams, output: FieldListResultShape,
+    },
+    Hwp5Inspect {
+        name: "hwp5.inspect", cli: "hwp5-inspect", mcp: "hwp5_inspect",
+        summary: "Read a legacy HWP 5.0 (.hwp) file directly: FileHeader version/compression/encryption flags, section and paragraph counts, and paged paragraph text previews",
+        category: Query, mutates: false, doc: false, ver: false, seq: false, dry: false, hist: false,
+        stage1: true, reason: None, params: Hwp5InspectParams, output: Hwp5InspectResultShape,
     },
     FieldSetText {
         name: "field.setText", cli: "field-set-text", mcp: "field_set_text",

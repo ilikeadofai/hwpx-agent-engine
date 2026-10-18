@@ -7,12 +7,13 @@ use crate::registry::{
     CellSetTextParams, CommandBatchParams, CommandDescriptor, DocumentDiffParams,
     DocumentExportParams, DocumentExportTextParams, DocumentOpenParams, DocumentPreviewParams,
     EquationSetPropertiesParams, EquationSetScriptParams, ExportTextFormat, FormFillParams,
-    HeaderSetTextParams, ImageFitParams, ImageReplaceParams, LineSpacingParam, LinkListParams,
-    ParagraphFormatParams, ParagraphSetStyleParams, ParsedCommand, ProjectSaveParams,
-    SectionSetPageNumberingParams, SectionSetPageParams, SectionSetVisibilityParams,
-    SnapshotCreateParams, SnapshotReleaseParams, TableSetColumnWidthsParams,
-    TableSetRowHeightsParams, TextFormatParams, TextReplaceAllParams, TextReplaceParams,
-    TrackChangeListParams,
+    HeaderSetTextParams, Hwp5FileHeaderShape, Hwp5InspectParams, Hwp5InspectResultShape,
+    Hwp5ParagraphShape, Hwp5SectionShape, ImageFitParams, ImageReplaceParams, LineSpacingParam,
+    LinkListParams, ParagraphFormatParams, ParagraphSetStyleParams, ParsedCommand,
+    ProjectSaveParams, SectionSetPageNumberingParams, SectionSetPageParams,
+    SectionSetVisibilityParams, SnapshotCreateParams, SnapshotReleaseParams,
+    TableSetColumnWidthsParams, TableSetRowHeightsParams, TextFormatParams, TextReplaceAllParams,
+    TextReplaceParams, TrackChangeListParams,
 };
 use hae_diag::{Code, Diagnostic, EngineError, Limits, Result, Stage};
 use hae_edit::{Alignment, Applied, EditOp, ImageBytes, LineSpacing};
@@ -250,6 +251,32 @@ fn add_state_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, state: &
     for e in &state.entries {
         add_arc_bytes(seen, total, &e.payload);
     }
+}
+
+/// Parse a `sha256:offset` HWP5 cursor. The hash must match the file being read
+/// so a client following a cursor never mixes pages from two file states.
+fn hwp5_cursor_offset(cursor: &str, sha256: &str) -> Result<u64> {
+    let Some((hash, offset_s)) = cursor.split_once(':') else {
+        return Err(EngineError::new(
+            Code::InvalidRequest,
+            Stage::Query,
+            "invalid hwp5.inspect cursor format",
+        ));
+    };
+    if hash != sha256 {
+        return Err(EngineError::new(
+            Code::VersionConflict,
+            Stage::Query,
+            "hwp5.inspect cursor was issued for different file bytes; re-run without cursor",
+        ));
+    }
+    offset_s.parse::<u64>().map_err(|_| {
+        EngineError::new(
+            Code::InvalidRequest,
+            Stage::Query,
+            "invalid hwp5.inspect cursor offset",
+        )
+    })
 }
 
 /// Parse a `revision:index` page cursor. The revision must be current so a
@@ -1293,6 +1320,7 @@ impl SessionExecutor {
                     params: serde_json::to_value(p).unwrap(),
                 }],
             ),
+            ParsedCommand::Hwp5Inspect(p) => self.handle_hwp5_inspect(p),
             ParsedCommand::TextFormat(p) => self.handle_edit_steps(
                 req,
                 &[BatchStepParam {
@@ -1729,6 +1757,85 @@ impl SessionExecutor {
         });
         self.open_doc = Some(session);
         Ok((res, Vec::new()))
+    }
+
+    /// `hwp5.inspect`: reads a legacy `.hwp` file directly. It never touches the
+    /// session document and never writes; cursors bind to the file's SHA-256 so a
+    /// changed file cannot hand out a paged mixture of two states.
+    fn handle_hwp5_inspect(&mut self, p: Hwp5InspectParams) -> Result<(Value, Vec<Diagnostic>)> {
+        let path = PathBuf::from(&p.path);
+        let is_hwp = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("hwp"));
+        if !is_hwp {
+            return Err(EngineError::new(
+                Code::InvalidArgument,
+                Stage::Request,
+                "hwp5.inspect expects a path ending in .hwp",
+            )
+            .with_reason("extension_mismatch"));
+        }
+        let input = self.roots.read_input(&path)?;
+        let offset = match p.cursor.as_deref() {
+            None => 0,
+            Some(cursor) => hwp5_cursor_offset(cursor, &input.sha256)?,
+        };
+        let limit = p.limit.unwrap_or(100).clamp(1, 500);
+        let preview_chars = p.preview_chars.unwrap_or(120).clamp(1, 1000);
+        let report = hae_hwp5::inspect(
+            &input.bytes,
+            &self.limits,
+            &hae_hwp5::InspectOptions {
+                offset,
+                limit,
+                preview_chars,
+            },
+        )?;
+        let next_cursor = report
+            .next_offset
+            .map(|next| format!("{}:{}", input.sha256, next));
+        let result = Hwp5InspectResultShape {
+            path: input.path.display().to_string(),
+            sha256: input.sha256,
+            file_header: Hwp5FileHeaderShape {
+                version: report.file_header.version.to_string(),
+                compressed: report.file_header.is_compressed(),
+                encrypted: report.file_header.is_encrypted(),
+                distribution: report.file_header.is_distribution(),
+                drm: report.file_header.is_drm(),
+                properties: report.file_header.properties,
+            },
+            section_count: report.sections.len(),
+            paragraph_count: report.paragraph_total,
+            char_count: report.char_total,
+            sections: report
+                .sections
+                .into_iter()
+                .map(|s| Hwp5SectionShape {
+                    index: s.index,
+                    paragraph_count: s.paragraph_count,
+                    char_count: s.char_count,
+                })
+                .collect(),
+            paragraphs: report
+                .paragraphs
+                .into_iter()
+                .map(|p| Hwp5ParagraphShape {
+                    section_index: p.section_index,
+                    paragraph_index: p.paragraph_index,
+                    level: p.level,
+                    char_count: p.char_count,
+                    preview: p.preview,
+                    preview_truncated: p.preview_truncated,
+                })
+                .collect(),
+            next_cursor,
+        };
+        let value = serde_json::to_value(result).map_err(|e| {
+            EngineError::new(Code::StateInvariantError, Stage::Query, e.to_string())
+        })?;
+        Ok((value, Vec::new()))
     }
 
     fn build_step_ops(

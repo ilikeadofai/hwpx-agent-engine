@@ -21,10 +21,11 @@
 - **구역 용지·여백·쪽 번호·표시 설정 (0.3, `section.*`)**: 기존 구역 하나의 용지 방향·크기·제본 방식·여백, 쪽 시작 방식과 시작 번호, 첫 쪽 머리말·꼬리말·쪽 번호 숨김과 테두리·채우기 표시, 격자를 조회하고(`section_get_page`) 지정한 항목만 바꿉니다(`section_set_page`, `section_set_page_numbering`, `section_set_visibility`). 조회 값은 XML에 명시된 것만 `explicit`으로, 없는 값은 `unspecified`로 구분해 알려 주며 상속·기본값을 추측하지 않습니다. 자세한 내용은 아래 0.3절 「구역 용지·여백·쪽 번호·표시 설정」을 보세요.
 - **Markdown·HTML로 내보내기 (`document_export_text`)**: 문서(또는 한 구역)를 읽기 전용으로 변환해 새 `.md`/`.html` 파일로 씁니다. 문서·`revision`·되돌리기 이력은 바뀌지 않습니다(아래 ⑧).
 - **누름틀(필드) 조회와 값 채우기 (`field_list`·`field_set_text`, 0.3)**: 공문서 서식의 누름틀(`CLICK_HERE`)·하이퍼링크(`HYPERLINK`) 필드를 찾아 이름·ID·Command 원문·현재 값·채우기 가능 여부를 조회하고, 필드 마커와 서식을 그대로 둔 채 표시 텍스트만 채웁니다.
+- **구형 `.hwp`(HWP5) 읽기 전용 조회 (`hwp5_inspect`, 0.3)**: HWPX와 별개 crate(`hae-hwp5`)로 구형 HWP5 바이너리를 직접 열어 버전·압축·암호화 여부, 구역·문단·글자 수와 문단별 텍스트 앞부분을 돌려줍니다. 열린 문서가 필요 없고 파일을 바꾸지 않습니다(아래 0.3절 「구형 .hwp(HWP5) 읽기 전용 조회」).
 - **되돌리기·다시 실행 및 미리보기**: 작업 전 가상 적용(`dryRun`), 변경 내역 비교(`document_diff`), 실행 취소(`history_undo`)·다시 실행(`history_redo`), 외부 렌더러 연동을 통한 PNG/SVG 미리보기(`document_preview`)를 지원합니다.
 
 ### 하지 않는 것 및 한계 (0.2 제외 범위)
-- **전체 HWP/HWPX 기능 지원 아님**: 문단 추가·삭제·합치기·나누기, 표의 행·열 추가 및 삭제, 셀 병합 구조나 문단 수 변경, 수식 새로 만들기, 도형 편집, 구형 `.hwp`(HWP5 바이너리) 파일 읽기·쓰기는 0.2에서도 지원하지 않습니다.
+- **전체 HWP/HWPX 기능 지원 아님**: 문단 추가·삭제·합치기·나누기, 표의 행·열 추가 및 삭제, 셀 병합 구조나 문단 수 변경, 수식 새로 만들기, 도형 편집은 0.2에서도 지원하지 않습니다. 구형 `.hwp`(HWP5 바이너리)는 0.3의 **읽기 전용 조회(`hwp5.inspect`)만** 지원하며 편집·쓰기·HWPX 변환은 지원하지 않습니다.
 - **읽기 전용 문서**: 암호화된 문서는 열지 않으며, 전자서명이나 변경 추적(Track Changes)이 들어 있는 문서는 열어서 내용을 조회하거나 무편집 상태로 내보내는 것만 허용하고 편집은 거절합니다. 변경 추적 표시와 작성자는 `trackchange_list`로 확인합니다.
 - **외부 렌더러 별도 준비 필요**: 이 엔진에는 미리보기 렌더러가 내장되어 있지 않습니다. `document_preview`를 사용하려면 별도의 `rhwp` 실행 파일, `bubblewrap`(`bwrap`) 샌드박스 도구, 읽을 수 있는 글꼴 폴더를 환경 변수(`HAE_RHWP`, `HAE_BWRAP`, `HAE_FONT_DIR`)로 직접 지정해야 합니다.
 - **엔진 구현 완료 범위와 Windows 한컴오피스 실기 호환성(단계 4 예정)의 구분**: 현재 엔진의 파일 편집·보존 검증·격리 미리보기 기능은 구현되어 있으나, 수정된 문서를 실제 Windows 한컴오피스(한글)에서 열었을 때의 실기 호환성 및 조판 대조 검증(단계 4)은 별도 확인 대상입니다. `document_preview`가 만드는 SVG/PNG 이미지와 쪽 번호는 외부 렌더러(`rhwp`)가 어림잡아 계산한 **추정치**이므로 실제 Windows 한컴오피스의 줄바꿈·쪽 나눔·표현 범위와 100% 일치한다고 보장하지 않습니다.
@@ -924,3 +925,22 @@ external은 null로 남기되 ZIP payload가 있으면 해시는 제공합니다
 검증 근거는 두 갈래입니다. 첫째는 결정론적 생성기 `gen_fields.py`가 만드는 합성 픽스처 `tests/fixtures/editing/fields.hwpx`로, 빈 값·다문단·중첩·개체·탭·CDATA·MEMO·표 셀·중복 이름 같은 경계를 시험합니다. 둘째는 저장소에 공개 서식으로 들어 있는 실제 기안문 표본 `tests/fixtures/corpus/gani-gian.hwpx`(누름틀 13개)와 `tests/fixtures/corpus/ilban-gian.hwpx`(누름틀 23개)이며, 두 문서 모두 한컴이 저장한 `type="CLICK_HERE"` 표기를 씁니다. 실제 표본에서는 표 셀 안 누름틀 채우기, `id`로 지목하기, 여러 필드 일괄 채우기와 Undo 뒤 원본 바이트 복원, 한컴 Linux 열기 게이트까지 확인했습니다.
 
 다만 이 표본은 공개 배포된 **서식 파일**이지 사용자가 실제로 쓰는 공문서가 아니며, Windows 한컴오피스 2024에서의 열기·조판 대조는 아직 하지 않았습니다. Linux 한컴 열기 게이트는 프로세스가 살아남았는지만 보고 내용·조판은 대조하지 않습니다.
+
+## 구형 .hwp(HWP5) 읽기 전용 조회 (0.3)
+
+`hwp5.inspect`(MCP `hwp5_inspect`, CLI의 `--command hwp5.inspect` 또는 별칭 `hwp5-inspect`)는 구형 HWP 5.0 바이너리 파일을 **열린 문서 없이** 직접 읽습니다. HWPX 파이프라인과는 별개 crate(`hae-hwp5`)이며, `document.open`을 비롯한 `document.*` 명령은 계속 HWPX 전용입니다. 이 명령은 파일을 바꾸지 않습니다(실행 전후 바이트와 mtime이 같습니다).
+
+```json
+{"command":"hwp5.inspect","params":{"path":"/입력루트/문서.hwp","limit":100,"previewChars":120}}
+```
+
+- `path`는 입력 루트 안의 `.hwp` 파일이어야 합니다. 다른 확장자는 `INVALID_ARGUMENT`(`extension_mismatch`)로 거절합니다.
+- 결과에는 `fileHeader`(`version`은 `5.1.0.1` 형식, `compressed`·`encrypted`·`distribution`·`drm`, 원값 `properties`), `sectionCount`(컨테이너에서 찾은 `BodyText/SectionN` 수), `paragraphCount`, `charCount`, 구역별 `sections`, 그리고 `paragraphs` 한 쪽이 들어 있습니다.
+- 각 문단 항목: `paragraphIndex`(문서 전체 순번), `sectionIndex`, `level`(`PARA_HEADER`의 level), `charCount`, `preview`, `previewTruncated`. `previewChars`(기본 120, 1..=1000)는 미리보기 길이를, `limit`(기본 100, 1..=500)은 쪽 크기를 정합니다.
+- 페이징: 결과의 `nextCursor`(형식 `<sha256>:<offset>`)를 그대로 `cursor`에 넣어 이어 읽습니다. 커서는 **파일 바이트 해시**에 묶여 있어 같은 경로의 파일 내용이 바뀌면 `VERSION_CONFLICT`로 거절합니다. 형식이 틀린 커서는 `INVALID_REQUEST`, 문서 밖 offset은 빈 쪽과 `null` 커서입니다.
+- 텍스트는 `BodyText/SectionN` 레코드 스트림의 `PARA_TEXT`를 UTF-16LE로 디코드합니다. 제어 문자는 HWP 5.0 표 6 분류대로 처리합니다: 줄 끝(0x0A)은 줄바꿈, 탭은 유지, 묶음 빈칸(0x1E)은 U+00A0, 고정폭 빈칸(0x1F)은 U+2007, 소프트 하이픈(0x18)은 U+00AD로 옮기고, 16바이트 컨트롤(0x01–0x09, 0x0B–0x0C, 0x0E–0x17)은 8코드유닛을 통째로 건너뛰며, 문단 끝(0x0D)에서 그 레코드를 끝냅니다. **자동 번호·수식·글자겹침처럼 조판할 때 만들어지는 글자는 PARA_TEXT에 없으므로 지어내지 않습니다.** `charCount`는 이 규칙으로 읽은 Unicode 스칼라 값 수이고, 표 셀 안 문단도 포함합니다(셀 경계는 구분하지 않습니다).
+- 압축(`COMPRESSED`) 스트림은 raw DEFLATE로 풉니다. 해제에 실패하면 원시 바이트로 대신 읽지 않고 거절합니다.
+- 거절 사유: 암호·DRM 문서는 `PACKAGE_REJECTED(encrypted)`, 배포용 문서는 `PACKAGE_REJECTED(distribution_unsupported)`, 필수 요소(FileHeader/BodyText)가 없으면 `missing_component`, 컨테이너 손상은 `malformed_compound_file`, 압축·레코드 손상은 `malformed_record_stream`입니다. 한도 초과는 `RESOURCE_LIMIT`입니다(해제 누적 `max_inflate_total`, 컨테이너 항목 `max_entries`, 문단 수 `max_hwp5_paragraphs` 기본 1,000,000, 입력 파일 크기는 다른 입력과 같은 `max_hwpx_bytes`).
+- 지원하지 않는 것: 쓰기·변환 저장, 암호 문서, 배포용 문서, HWP 3.x, DocInfo의 폰트·스타일 해석과 표·컨트롤 구조 해석(구역 수는 DocInfo가 아니라 컨테이너의 `BodyText/SectionN` 열거로 셉니다), 수식·그림·글자겹침의 내용 추출.
+
+검증 범위: 합성 CFB 컨테이너 시험 22개(`crates/hae-hwp5/tests/hwp5.rs`)와 명령 시험 5개(`crates/hae-exec/tests/hwp5.rs`)가 `scripts/check.sh`에 포함됩니다. 실물은 공개 표본 44개 중 43개를 읽었고 배포용 1개는 위 사유로 거절했으며, `rhwp` `export-text`와 대조한 42개 중 30개가 공백 제거 후 문자 단위로 일치했습니다(나머지 차이는 자동 번호·수식·글자겹침·숨은 설명·조판 순서 등 조판 시 만들어지는 값입니다). **Windows 한컴오피스에서의 열기·조판 대조는 하지 않았습니다.** 형식 근거와 확인/미확인 구분은 `docs/decisions/hwp5-format-notes.md`에 있습니다.
