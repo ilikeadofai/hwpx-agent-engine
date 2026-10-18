@@ -85,3 +85,14 @@ batch 롤백 뒤 현재 문서에서 재조회한다. 코드는 추가하지 않
 0.3 `text.format`은 새 코드를 만들지 않는다. 길이 0·역전·문단 밖 범위는 INVALID_RANGE, CDATA·주석·PI 교차와 해석 불가 속성은 UNSUPPORTED_CONTENT_IN_RANGE, 필드 경계는 field_boundary_in_range, 외부 namespace 요소를 품은 문단은 contains_opaque(UNSUPPORTED)로 0.2와 같은 코드를 쓴다.
 
 0.2 §7-2: text.replaceAll은 건너뛴 일치를 MATCHES_SKIPPED(경고)로, 여러 글자 모양이 합쳐진 일치를 하나의 FORMAT_COLLAPSED(경고, detail.matches)로 알린다. 빈 find·탭/줄바꿈이 든 text는 INVALID_REQUEST, maxMatches가 1..10000 밖이면 INVALID_ARGUMENT, 없는 scope는 TARGET_NOT_FOUND다.
+
+## 0.3 구역 설정의 reason
+
+새 `Code` enum은 추가하지 않습니다.
+
+| 코드 | reason | 조건 |
+|---|---|---|
+| `UNSUPPORTED` | `structure_change_unsupported` | 없는 구역/요소 생성이 필요함, secPr 개수·소유 문단이 지원 구조가 아님, scope가 구역 문단이 아님, 본문 영역 검사를 위한 명시 원본 값이 없거나 수치가 아님 |
+| `INVALID_REQUEST` | `non_positive_body_area` | 용지·여백·제본을 반영한 본문 폭 또는 높이가 0 이하 |
+| `INVALID_REQUEST` | (없음) | 빈 편집, 잘못된 enum/범위/자료형, scope와 sectionIndex 동시 지정 |
+| `VERIFY_FAILED` | 기존 검증 reason | 원본과 요청에서 독립 도출한 결과와 후보가 다름. 요청 밖 속성·구역·순서·ZIP 재인코딩 포함 |

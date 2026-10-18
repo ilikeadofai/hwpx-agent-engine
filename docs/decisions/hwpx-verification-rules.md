@@ -100,3 +100,21 @@ python3 -m unittest discover -s tests/oracle
 - `crates/hae-verify/src/image.rs` — 그림
 - `crates/hae-verify/src/contract.rs` — 요청(`VerifyOperation`) 정의
 - `crates/hae-verify/tests/` — 거절·수용 시험
+
+## 0.3 구역 속성(`section.*`) 독립 검증
+
+`hae-verify/src/section.rs`는 요청의 `PageSettings`·`PageNumbering`·`Visibility`를
+편집기와 별도로 정의·검증합니다. 구역당 secPr 하나와 최상위 소유 문단을 확인하고,
+원본 토큰의 요청된 속성 값 위치만 바꾼 기대 payload를 도출합니다. 요청한 누락 속성의
+추가는 허용하지만 새 요소 생성은 거절합니다. 자식 요소와 다른 속성의 순서는 그대로입니다.
+용지 본문 영역 계산도 별도로 수행하고 해당 구역의 전체 문단 캐시 제거를 도출합니다.
+`pic`/`tbl`/`equation`, 다른 구역, 본문 텍스트, UTF-8 PrvText, 미편집 ZIP 항목의 원시 압축
+바이트·로컬 헤더는 바뀔 수 없습니다. 시험 후보는 편집기를 호출하지 않고 손으로 조립합니다.
+
+머리말/꼬리말 여백도 본문 공간을 차지한다는 근거는
+[한컴 용지 여백 도움말](https://help.hancom.com/hoffice/webhelp/9.0/ko_kr/hwp/format/setting_paper/setting_paper%28margins%29.htm)입니다.
+방향 속성과 저장된 width/height가 별개라는 근거는
+[한컴 개발자 답변](https://forum.developer.hancom.com/t/pagepr-width-height/1693)입니다.
+`WIDELY` 원본 용지와 `NARROWLY` 축 교환의 대응은 corpus 및 구현 계약으로 고정했으며,
+모든 네이티브 버전의 표시 결과를 보증하는 것으로 확대하지 않습니다. 가로 용지와 제본 방식별
+시각 비교, Windows 한컴, 공식 XSD 전체 적합성은 별도 검증 대상입니다.

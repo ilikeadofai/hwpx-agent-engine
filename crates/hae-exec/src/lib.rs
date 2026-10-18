@@ -2,6 +2,7 @@
 
 mod preview;
 pub mod registry;
+mod section;
 pub mod session;
 
 pub use registry::{

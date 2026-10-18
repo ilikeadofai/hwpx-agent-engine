@@ -165,6 +165,64 @@ pub struct TextFormatParams {
     pub controls: Controls,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SectionSetPageParams {
+    pub scope: Option<String>,
+    pub section_index: Option<usize>,
+    #[schemars(regex(pattern = r"^(NARROWLY|WIDELY)$"))]
+    pub landscape: Option<String>,
+    #[schemars(range(min = 1))]
+    pub width: Option<u32>,
+    #[schemars(range(min = 1))]
+    pub height: Option<u32>,
+    #[schemars(regex(pattern = r"^(LEFT_ONLY|LEFT_RIGHT|TOP_BOTTOM)$"))]
+    pub gutter_type: Option<String>,
+    pub margins: Option<Margins>,
+}
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Margins {
+    pub left: Option<u32>,
+    pub right: Option<u32>,
+    pub top: Option<u32>,
+    pub bottom: Option<u32>,
+    pub header: Option<u32>,
+    pub footer: Option<u32>,
+    pub gutter: Option<u32>,
+}
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SectionSetPageNumberingParams {
+    pub scope: Option<String>,
+    pub section_index: Option<usize>,
+    #[schemars(regex(pattern = r"^(BOTH|EVEN|ODD)$"))]
+    pub page_starts_on: Option<String>,
+    pub page: Option<u32>,
+}
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SectionSetVisibilityParams {
+    pub scope: Option<String>,
+    pub section_index: Option<usize>,
+    pub hide_first_header: Option<bool>,
+    pub hide_first_footer: Option<bool>,
+    pub hide_first_page_num: Option<bool>,
+    pub hide_first_empty_line: Option<bool>,
+    pub show_line_number: Option<bool>,
+    #[schemars(regex(pattern = r"^(SHOW_ALL|HIDE_ALL|SHOW_FIRST|HIDE_FIRST)$"))]
+    pub border: Option<String>,
+    #[schemars(regex(pattern = r"^(SHOW_ALL|HIDE_ALL|SHOW_FIRST|HIDE_FIRST)$"))]
+    pub fill: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SectionGetPageParams {
+    pub scope: Option<String>,
+    pub section_index: Option<usize>,
+}
+
 /// Exact-match search and replace over the document or one subtree.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -368,6 +426,10 @@ pub enum ParsedCommand {
     DocumentClose(EmptyParams),
     ElementQuery(ElementQueryParams),
     ElementGet(ElementGetParams),
+    SectionGetPage(SectionGetPageParams),
+    SectionSetPage(SectionSetPageParams),
+    SectionSetPageNumbering(SectionSetPageNumberingParams),
+    SectionSetVisibility(SectionSetVisibilityParams),
     TextFormat(TextFormatParams),
     TextReplace(TextReplaceParams),
     TextReplaceAll(TextReplaceAllParams),
@@ -458,6 +520,10 @@ mod schema_tests {
             ("element_get", [true, false, true, false]),
             ("text_replace", [false, true, false, false]),
             ("text_format", [false, true, false, false]),
+            ("section_get_page", [true, false, true, false]),
+            ("section_set_page", [false, true, false, false]),
+            ("section_set_page_numbering", [false, true, false, false]),
+            ("section_set_visibility", [false, true, false, false]),
             ("text_replace_all", [false, true, false, false]),
             ("paragraph_format", [false, true, false, false]),
             ("cell_set_text", [false, true, false, false]),
@@ -680,6 +746,34 @@ define_commands! {
         mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
         stage1: true, reason: None,
         params: ElementGetParams, output: GetResultShape,
+    },
+    SectionGetPage {
+        name: "section.getPage", cli: "section-get-page", mcp: "section_get_page",
+        summary: "Read explicit page, margin, numbering, visibility and grid values; absent attributes are null with unspecified source; no inherited defaults inferred", category: Query,
+        mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
+        stage1: true, reason: None,
+        params: SectionGetPageParams, output: GenericResultShape,
+    },
+    SectionSetPage {
+        name: "section.setPage", cli: "section-set-page", mcp: "section_set_page",
+        summary: "Edit only requested existing-section page/margin attributes in HWPUNIT; reject non-positive body area; never create nodes", category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None,
+        params: SectionSetPageParams, output: MutationResultShape,
+    },
+    SectionSetPageNumbering {
+        name: "section.setPageNumbering", cli: "section-set-page-numbering", mcp: "section_set_page_numbering",
+        summary: "Edit only requested pageStartsOn BOTH/EVEN/ODD and page start number; preserve pic/tbl/equation counters", category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None,
+        params: SectionSetPageNumberingParams, output: MutationResultShape,
+    },
+    SectionSetVisibility {
+        name: "section.setVisibility", cli: "section-set-visibility", mcp: "section_set_visibility",
+        summary: "Edit only requested first-page visibility flags and border/fill; preserve all other attributes and children", category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None,
+        params: SectionSetVisibilityParams, output: MutationResultShape,
     },
     TextFormat {
         name: "text.format", cli: "text-format", mcp: "text_format",

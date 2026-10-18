@@ -142,3 +142,11 @@ diff <(cd /tmp/edit_a && find . -type f | sort | xargs sha256sum) \
 - `image.replace` 의 엔진 구현(1-12)은 다른 담당이 진행 중이다. 여기서는 입력·기대 코드·보존 조건만 고정한다.
 - 작업 1-8~1-12 를 시작하기 전에 이 표를 총괄이 확인한다. `paragraph.format`(1-11) 자료도 함께 고정해 두었다.
 - 저장·다시 열기(1-13, 1-15)와 변조 oracle(1-14)은 이 디렉터리 범위가 아니다(`tests/oracle/`).
+
+### section.hwpx (0.3)
+
+`gen_section.py`는 허용된 corpus/ref_empty.hwpx의 패키지·네이티브 구역 설정 골격에
+합성 본문만 넣어 구역 2개를 만듭니다. 0번 WIDELY, 1번 NARROWLY이고 각 구역에는
+secPr 소유 문단과 뒤따르는 문단, 줄 캐시 2개가 있습니다. 원본 corpus는 수정하지 않습니다.
+`python3 -I tests/fixtures/editing/gen_section.py --check-determinism`으로 재생성합니다.
+SHA-256: `166184cd082c32e845d5ff38fba3d133bd4c0f3da640a9a87a01bd8e561ef6c2`.
