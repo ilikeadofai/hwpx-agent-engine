@@ -494,6 +494,10 @@ fn legacy_batch_wire_budget_preserves_each_request_id() {
     let mut c = McpClient::start_raw(t.path());
     c.rpc("initialize", json!({"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1"}}));
     c.notify("notifications/initialized", json!({}));
+    let expected = c.rpc("tools/list", json!({}))["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .len();
     let batch: Vec<_> = (0..128)
         .map(|id| json!({"jsonrpc":"2.0","id":format!("batch-{id}"),"method":"tools/list"}))
         .collect();
@@ -508,7 +512,7 @@ fn legacy_batch_wire_budget_preserves_each_request_id() {
             limited += 1;
             assert_eq!(reply["error"]["code"], -32603);
         } else {
-            assert_eq!(reply["result"]["tools"].as_array().unwrap().len(), 22);
+            assert_eq!(reply["result"]["tools"].as_array().unwrap().len(), expected);
         }
     }
     assert!(limited > 0);
