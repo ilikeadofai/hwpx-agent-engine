@@ -5,7 +5,7 @@
 | 코드 | 설계서 | 단계 | 뜻 |
 |---|---|---|---|
 | PACKAGE_REJECTED | §11 | 1 | 열기 단계 패키지 거절. reason에 사유 |
-| RESOURCE_LIMIT | §8·§11 | 1 | 한도 초과(크기·항목 수·해제량·깊이·화소·메모리·이력). text.replaceAll은 바꿀 수 있는 일치가 maxMatches를 넘으면 commit 전에 이 코드로 거절하고 detail.maxMatches를 담음 |
+| RESOURCE_LIMIT | §8·§11 | 1 | 한도 초과(크기·항목 수·해제량·깊이·화소·메모리·이력). document.exportText는 결과가 Limits.max_text_export_bytes(기본 16 MiB)를 넘으면 reason:text_export_too_large와 detail.{limit,limitBytes,producedBytes}로 거절 text.replaceAll은 바꿀 수 있는 일치가 maxMatches를 넘으면 commit 전에 이 코드로 거절하고 detail.maxMatches를 담음 |
 | STATE_INVARIANT_ERROR | §4 | 1 | commit 전 정규 상태와 파생물 불일치 |
 | PROJECT_INTEGRITY_ERROR | §5 | 1 | .hwpwork 무결성 검사 실패 |
 | PROJECT_LOCKED | §5·§11 | 1 | 프로젝트 잠금 실패 |
@@ -24,7 +24,7 @@
 | AMBIGUOUS_TARGET | §6 | 1 | 대상 모호 |
 | UNSUPPORTED | §6 | 1 | 지원하지 않는 변경·문서 조건. reason에 사유 |
 | INVALID_RANGE | §6·0.2 §2 | 1 | 범위가 문단 밖·역순이거나 빈 문자열 삽입, 삽입 위치가 textSpans 밖 |
-| INVALID_ARGUMENT | 0.2 §4 | 1 | text/paragraphs 누락·동시 입력 또는 문단 배열 길이 불일치. detail.paragraphCount는 실제 문단 수 |
+| INVALID_ARGUMENT | 0.2 §4 | 1 | text/paragraphs 누락·동시 입력 또는 문단 배열 길이 불일치. detail.paragraphCount는 실제 문단 수. document.exportText는 path 확장자가 format과 맞지 않으면 reason:extension_mismatch |
 | RANGE_CROSSES_CONTROL | §6 | 1 | 범위가 탭·줄바꿈·필드·개체 경계를 지남 |
 | UNSUPPORTED_CONTENT_IN_RANGE | §6 | 1 | 범위 안 텍스트 외 자식·해석 불가 속성 |
 | CONTROLS_PRESERVED | 0.2 §3 | 1 | (경고) 범위 내 개체·탭·줄바꿈 유지. detail.count는 유지 수, detail.offsets는 그 개체들의 변경 후 문단 grapheme 오프셋 배열(원래 순서) |

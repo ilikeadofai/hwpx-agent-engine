@@ -236,6 +236,8 @@ pub struct Limits {
     pub max_response_bytes: u64,
     pub max_history_units: u64,
     pub renderer_timeout_secs: u64,
+    /// Largest Markdown/HTML file `document.exportText` may write.
+    pub max_text_export_bytes: u64,
 }
 
 impl Default for Limits {
@@ -253,6 +255,7 @@ impl Default for Limits {
             max_response_bytes: 4 * MIB,
             max_history_units: 100,
             renderer_timeout_secs: 60,
+            max_text_export_bytes: 16 * MIB,
         }
     }
 }
@@ -427,6 +430,7 @@ mod tests {
         assert_eq!(l.max_response_bytes, 4 * MIB);
         assert_eq!(l.max_history_units, 100);
         assert_eq!(l.renderer_timeout_secs, 60);
+        assert_eq!(l.max_text_export_bytes, 16 * MIB);
     }
 
     #[test]
