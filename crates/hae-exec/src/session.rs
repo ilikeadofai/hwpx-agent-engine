@@ -215,6 +215,87 @@ fn add_arc_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, buf: &Arc<
     }
 }
 
+/// Account a byte slice by identity. Small text fields are cheap but the
+/// `image.replace` payload is not, so counting them keeps the session budget
+/// honest without needing a second bookkeeping structure.
+fn add_slice_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, buf: &[u8]) {
+    if buf.is_empty() {
+        return;
+    }
+    let key = (buf.as_ptr() as usize, buf.len());
+    if seen.insert(key) {
+        *total = total.saturating_add(buf.len() as u64);
+    }
+}
+
+fn add_state_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, state: &PackageState) {
+    for e in &state.entries {
+        add_arc_bytes(seen, total, &e.payload);
+    }
+}
+
+fn add_op_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, op: &VerifyOperation) {
+    match op {
+        VerifyOperation::TextReplace {
+            entry,
+            replacement,
+            ..
+        } => {
+            add_slice_bytes(seen, total, entry.as_bytes());
+            add_slice_bytes(seen, total, replacement.as_bytes());
+        }
+        VerifyOperation::TextReplaceAll {
+            find,
+            replacement,
+            scope,
+            ..
+        } => {
+            add_slice_bytes(seen, total, find.as_bytes());
+            add_slice_bytes(seen, total, replacement.as_bytes());
+            if let Some(s) = scope {
+                add_slice_bytes(seen, total, s.entry.as_bytes());
+            }
+        }
+        VerifyOperation::CellSetText { entry, text, .. } => {
+            add_slice_bytes(seen, total, entry.as_bytes());
+            add_slice_bytes(seen, total, text.as_bytes());
+        }
+        VerifyOperation::CellSetParagraphs {
+            entry, paragraphs, ..
+        } => {
+            add_slice_bytes(seen, total, entry.as_bytes());
+            for p in paragraphs {
+                add_slice_bytes(seen, total, p.as_bytes());
+            }
+        }
+        VerifyOperation::ParagraphFormat { entry, .. } => {
+            add_slice_bytes(seen, total, entry.as_bytes());
+        }
+        VerifyOperation::ImageReplace { entry, bytes, .. } => {
+            add_slice_bytes(seen, total, entry.as_bytes());
+            add_slice_bytes(seen, total, bytes);
+        }
+    }
+}
+
+/// Verification logs keep the pre-edit package state and the fixed request
+/// bytes for every commit that is still reachable from the current state or
+/// from an Undo/Redo unit. They were previously left out of the session
+/// budget entirely, so a long edit run could retain many XML generations while
+/// `memory_used_bytes` stayed flat.
+fn add_steps_bytes(
+    seen: &mut HashSet<(usize, usize)>,
+    total: &mut u64,
+    steps: &[VerifyStepRecord],
+) {
+    for step in steps {
+        add_state_bytes(seen, total, &step.pre_state);
+        for op in &step.ops {
+            add_op_bytes(seen, total, op);
+        }
+    }
+}
+
 fn add_doc_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, doc: &Document) {
     let raw = doc.original.raw_bytes();
     let raw_key = (raw.as_ptr() as usize, raw.len());
@@ -311,7 +392,9 @@ impl SessionExecutor {
     }
 
     /// Unique session memory currently held across original, current state,
-    /// Undo/Redo history units, and explicit snapshots (shared buffers counted once).
+    /// Undo/Redo history units, explicit snapshots, and the retained
+    /// verification logs of every reachable committed state (shared buffers
+    /// counted once).
     pub fn memory_used_bytes(&self) -> u64 {
         let Some(s) = &self.open_doc else {
             return 0;
@@ -324,13 +407,18 @@ impl SessionExecutor {
         let mut total = 0u64;
         add_doc_bytes(&mut seen, &mut total, &s.initial_doc);
         add_doc_bytes(&mut seen, &mut total, &s.current.doc);
+        add_steps_bytes(&mut seen, &mut total, &s.current.verify_steps);
         for u in &s.undo_stack {
             add_doc_bytes(&mut seen, &mut total, &u.before.doc);
             add_doc_bytes(&mut seen, &mut total, &u.after.doc);
+            add_steps_bytes(&mut seen, &mut total, &u.before.verify_steps);
+            add_steps_bytes(&mut seen, &mut total, &u.after.verify_steps);
         }
         for u in &s.redo_stack {
             add_doc_bytes(&mut seen, &mut total, &u.before.doc);
             add_doc_bytes(&mut seen, &mut total, &u.after.doc);
+            add_steps_bytes(&mut seen, &mut total, &u.before.verify_steps);
+            add_steps_bytes(&mut seen, &mut total, &u.after.verify_steps);
         }
         for snap in s.snapshots.values() {
             add_doc_bytes(&mut seen, &mut total, &snap.doc);
@@ -1250,11 +1338,15 @@ impl SessionExecutor {
             )?;
         }
 
-        if Self::compute_memory(s, Some(&applied.doc)) > self.limits.max_session_memory {
+        let used = Self::compute_memory(s, Some(&applied.doc));
+        if used > self.limits.max_session_memory {
             return Err(EngineError::new(
                 Code::ResourceLimit,
                 Stage::Validate,
-                "edit exceeds session memory limit (512 MiB)",
+                format!(
+                    "edit exceeds session memory limit ({used} bytes used, limit {} bytes)",
+                    self.limits.max_session_memory
+                ),
             ));
         }
 

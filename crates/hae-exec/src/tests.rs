@@ -562,3 +562,66 @@ fn default_inspect_page_with_many_spans_stays_under_response_budget() {
         assert_eq!(item["textSpansTruncated"], true);
     }
 }
+
+/// A commit keeps the pre-edit package state and the fixed request bytes so the
+/// save gate can re-derive the edit without trusting the editor. Those buffers
+/// are reachable from the current state and from Undo/Redo units, so they have
+/// to count against the session budget; otherwise a long run reports a flat
+/// figure while retaining one XML generation per commit.
+///
+/// `history.clear` removes the Undo/Redo units but not the verification logs,
+/// which is what makes the two contributions separable here.
+#[test]
+fn retained_verification_logs_are_counted_in_the_session_budget() {
+    let t = TempDir::new();
+    let src = t.0.join("doc.hwpx");
+    let bytes = rich_hwpx_bytes();
+    fs::write(&src, &bytes).unwrap();
+    let section_len = hae_zip::Archive::open(bytes, &Limits::default())
+        .unwrap()
+        .entries()
+        .iter()
+        .filter(|e| e.name.starts_with("Contents/section"))
+        .map(|e| e.uncompressed_size as u64)
+        .max()
+        .expect("fixture has a section");
+
+    let mut exec = SessionExecutor::new(&t.0, &t.0, Limits::default()).unwrap();
+    assert!(exec
+        .call("document.open", json!({ "path": src }), None, false)
+        .ok);
+    let p_id = exec
+        .call(
+            "element.query",
+            json!({ "kind": "paragraph", "textContains": "제목" }),
+            None,
+            false,
+        )
+        .result
+        .unwrap()["matches"][0]["nodeId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let mut accounted = Vec::new();
+    for i in 0..8u64 {
+        let r = exec.call(
+            "text.replace",
+            json!({ "target": p_id, "range": { "start": 0, "end": 4 }, "text": format!("{i:04}") }),
+            Some(i),
+            false,
+        );
+        assert!(r.ok, "step {i}: {r:?}");
+        assert!(exec.call("history.clear", json!({}), None, false).ok);
+        accounted.push(exec.memory_used_bytes());
+    }
+
+    assert!(
+        accounted[7] > accounted[1],
+        "accounted memory must grow with retained verification logs: {accounted:?}"
+    );
+    assert!(
+        accounted[7] - accounted[1] >= 2 * section_len,
+        "at least two retained section generations must be counted: {accounted:?} section={section_len}"
+    );
+}
