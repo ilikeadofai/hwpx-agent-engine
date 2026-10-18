@@ -429,7 +429,35 @@ impl Document {
                     vec![]
                 });
             }
+            Kind::Table => {
+                let reason = self.table_geometry_block_reason(n);
+                add("table.setColumnWidths", reason.clone());
+                add("table.setRowHeights", reason);
+            }
             Kind::Cell => {
+                let xml = self.doc_of(n);
+                let owner = xml
+                    .ancestors(n.el)
+                    .find(|&i| is_hp(xml.el(i).ns.as_deref()) && xml.el(i).local == "tbl")
+                    .and_then(|i| self.nodes.iter().find(|m| m.entry == n.entry && m.el == i));
+                let geometry = owner.map_or(Some("table_geometry_unsupported".into()), |t| {
+                    self.table_geometry_block_reason(t)
+                });
+                let merged = self
+                    .cell_addr(n)
+                    .is_some_and(|a| a.row_span != 1 || a.col_span != 1);
+                let format = if child_attr(xml, n.el, "cellMargin", "left").is_none()
+                    || xml.el(n.el).attr("borderFillIDRef").is_none()
+                {
+                    Some("table_geometry_unsupported".into())
+                } else {
+                    None
+                };
+                add("cell.setFormat", format);
+                add(
+                    "cell.setSize",
+                    geometry.or_else(|| merged.then(|| "merged_cell_size_unsupported".into())),
+                );
                 add("cell.setText", self.cell_set_text_block_reason(n));
                 let e = edits.get_mut("cell.setText").unwrap();
                 if e.available
@@ -589,6 +617,45 @@ impl Document {
         None
     }
 
+    /// Discovery preconditions only; the request planner checks the full grid,
+    /// resource selection, parameter bounds and effective margin minima.
+    fn table_geometry_block_reason(&self, n: &Node) -> Option<String> {
+        let doc = self.doc_of(n);
+        let bad = || Some("table_geometry_unsupported".into());
+        if doc.el(n.el).attr_value("cellSpacing") != Some("0") {
+            return bad();
+        }
+        for a in ["rowCnt", "colCnt"] {
+            if !doc
+                .el(n.el)
+                .attr_value(a)
+                .and_then(|s| s.parse::<u32>().ok())
+                .is_some_and(|v| (1..=1024).contains(&v))
+            {
+                return bad();
+            }
+        }
+        for a in ["widthRelTo", "heightRelTo"] {
+            if child_attr(doc, n.el, "sz", a).as_deref() != Some("ABSOLUTE") {
+                return bad();
+            }
+        }
+        if doc
+            .descendants(n.el)
+            .any(|i| is_hp(doc.el(i).ns.as_deref()) && doc.el(i).local == "tbl")
+        {
+            return Some("nested_table".into());
+        }
+        if self.children_deep(n, Kind::Cell).iter().any(|c| {
+            self.cell_addr(c).is_none()
+                || child_attr(doc, c.el, "cellSz", "width").is_none()
+                || child_attr(doc, c.el, "cellSz", "height").is_none()
+        }) {
+            return bad();
+        }
+        None
+    }
+
     fn children_deep(&self, n: &Node, kind: Kind) -> Vec<&Node> {
         self.nodes
             .iter()
@@ -614,7 +681,11 @@ impl Document {
         } else {
             (None, None)
         };
-        let size = if n.kind == Kind::Picture || n.kind == Kind::Table {
+        let size = if n.kind == Kind::Cell {
+            num(child_attr(doc, n.el, "cellSz", "width"))
+                .zip(num(child_attr(doc, n.el, "cellSz", "height")))
+                .map(|(w, h)| (i64::from(w), i64::from(h)))
+        } else if n.kind == Kind::Picture || n.kind == Kind::Table {
             let w = child_attr(
                 doc,
                 n.el,

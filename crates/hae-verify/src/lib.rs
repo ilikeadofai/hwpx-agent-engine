@@ -35,10 +35,12 @@ mod char_format;
 mod contract;
 mod format;
 mod image;
+mod table;
 mod text;
 
 pub use contract::{
-    Alignment, CharProps, LineSpacing, LineSpacingKind, VerifyOperation, VerifyReport, VerifyScope,
+    Alignment, CellFormat, CellMargin, CharProps, LineSpacing, LineSpacingKind, VerifyOperation,
+    VerifyReport, VerifyScope,
 };
 use hae_diag::{Budget, Code, EngineError, Limits, Result, Stage};
 use hae_package::{PackageInfo, PackageState, XmlMap, NS_HC, NS_HH, NS_HP, NS_HP10, NS_HS};
@@ -304,6 +306,25 @@ fn verify_inner(
         let target = stable_at(&doc, &stable_path(&xml[entry], original_target))?;
         check_opaque_refs(&xml, entry, &doc, target)?;
         match op {
+            VerifyOperation::TableSetColumnWidths { .. }
+            | VerifyOperation::TableSetRowHeights { .. }
+            | VerifyOperation::CellSetFormat { .. }
+            | VerifyOperation::CellSetSize { .. } => {
+                if let Some(table) =
+                    table::check(&mut expected, &info, entry, &doc, target, op, limits)?
+                {
+                    check_opaque_refs(&xml, entry, &doc, table)?;
+                    for p in doc.descendants(table).filter(|&i| hp(doc.el(i), "p")) {
+                        anchor(&mut anchors, entry, &doc, p)?;
+                    }
+                    let carrier = doc
+                        .ancestors(table)
+                        .find(|&i| hp(doc.el(i), "p"))
+                        .ok_or_else(|| unsupported("table has no paragraph carrier"))?;
+                    anchor(&mut anchors, entry, &doc, carrier)?;
+                    material = true;
+                }
+            }
             VerifyOperation::TextFormat {
                 range,
                 props,

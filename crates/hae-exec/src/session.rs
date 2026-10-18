@@ -2,11 +2,12 @@
 //! batch, dryRun, 100-unit Undo/Redo history, snapshots, and resource budgets.
 
 use crate::registry::{
-    command_describe, command_list, BatchStepParam, CellSetTextParams, CommandBatchParams,
-    CommandDescriptor, DocumentDiffParams, DocumentExportParams, DocumentOpenParams,
-    DocumentPreviewParams, ImageReplaceParams, LineSpacingParam, ParagraphFormatParams,
-    ParsedCommand, ProjectSaveParams, SnapshotCreateParams, SnapshotReleaseParams,
-    TextFormatParams, TextReplaceAllParams, TextReplaceParams,
+    command_describe, command_list, BatchStepParam, CellSetFormatParams, CellSetSizeParams,
+    CellSetTextParams, CommandBatchParams, CommandDescriptor, DocumentDiffParams,
+    DocumentExportParams, DocumentOpenParams, DocumentPreviewParams, ImageReplaceParams,
+    LineSpacingParam, ParagraphFormatParams, ParsedCommand, ProjectSaveParams,
+    SnapshotCreateParams, SnapshotReleaseParams, TableSetColumnWidthsParams,
+    TableSetRowHeightsParams, TextFormatParams, TextReplaceAllParams, TextReplaceParams,
 };
 use hae_diag::{Code, Diagnostic, EngineError, Limits, Result, Stage};
 use hae_edit::{Alignment, Applied, EditOp, ImageBytes, LineSpacing};
@@ -264,6 +265,26 @@ fn add_op_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, op: &Verify
             add_slice_bytes(seen, total, entry.as_bytes());
             for p in paragraphs {
                 add_slice_bytes(seen, total, p.as_bytes());
+            }
+        }
+        VerifyOperation::TableSetColumnWidths { entry, widths, .. } => {
+            add_slice_bytes(seen, total, entry.as_bytes());
+            *total = total.saturating_add(widths.as_ref().map_or(0, |v| v.len() as u64 * 4));
+        }
+        VerifyOperation::TableSetRowHeights { entry, heights, .. } => {
+            add_slice_bytes(seen, total, entry.as_bytes());
+            *total = total.saturating_add(heights.as_ref().map_or(0, |v| v.len() as u64 * 4));
+        }
+        VerifyOperation::CellSetSize { entry, .. } => {
+            add_slice_bytes(seen, total, entry.as_bytes())
+        }
+        VerifyOperation::CellSetFormat { entry, format, .. } => {
+            add_slice_bytes(seen, total, entry.as_bytes());
+            for value in [&format.border_fill_id, &format.background]
+                .into_iter()
+                .flatten()
+            {
+                add_slice_bytes(seen, total, value.as_bytes());
             }
         }
         VerifyOperation::TextFormat { entry, props, .. } => {
@@ -819,6 +840,34 @@ impl SessionExecutor {
                     Vec::new(),
                 ))
             }
+            ParsedCommand::TableSetColumnWidths(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "table.setColumnWidths".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
+            ParsedCommand::TableSetRowHeights(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "table.setRowHeights".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
+            ParsedCommand::CellSetFormat(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "cell.setFormat".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
+            ParsedCommand::CellSetSize(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "cell.setSize".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
             ParsedCommand::TextFormat(p) => self.handle_edit_steps(
                 req,
                 &[BatchStepParam {
@@ -1127,7 +1176,135 @@ impl SessionExecutor {
                 "per-step expectedVersion or requestSequence is not allowed inside command.batch",
             )));
         }
+        crate::registry::reject_structure_change(&step.command).map_err(&wrap_err)?;
         match step.command.as_str() {
+            "table.setColumnWidths" => {
+                let p: TableSetColumnWidthsParams = serde_json::from_value(step.params.clone())
+                    .map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            e.to_string(),
+                        ))
+                    })?;
+                let (entry, path) = doc
+                    .node(&p.target)
+                    .map(|n| (n.entry.clone(), doc.doc_of(n).path(n.el)))
+                    .unwrap_or_default();
+                Ok((
+                    EditOp::TableSetColumnWidths {
+                        target: p.target,
+                        widths: p.widths.clone(),
+                        width: p.width,
+                    },
+                    VerifyOperation::TableSetColumnWidths {
+                        entry,
+                        path,
+                        widths: p.widths,
+                        width: p.width,
+                    },
+                ))
+            }
+            "table.setRowHeights" => {
+                let p: TableSetRowHeightsParams = serde_json::from_value(step.params.clone())
+                    .map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            e.to_string(),
+                        ))
+                    })?;
+                let (entry, path) = doc
+                    .node(&p.target)
+                    .map(|n| (n.entry.clone(), doc.doc_of(n).path(n.el)))
+                    .unwrap_or_default();
+                Ok((
+                    EditOp::TableSetRowHeights {
+                        target: p.target,
+                        heights: p.heights.clone(),
+                        height: p.height,
+                    },
+                    VerifyOperation::TableSetRowHeights {
+                        entry,
+                        path,
+                        heights: p.heights,
+                        height: p.height,
+                    },
+                ))
+            }
+            "cell.setSize" => {
+                let p: CellSetSizeParams =
+                    serde_json::from_value(step.params.clone()).map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            e.to_string(),
+                        ))
+                    })?;
+                let (entry, path) = doc
+                    .node(&p.target)
+                    .map(|n| (n.entry.clone(), doc.doc_of(n).path(n.el)))
+                    .unwrap_or_default();
+                Ok((
+                    EditOp::CellSetSize {
+                        target: p.target,
+                        width: p.width,
+                        height: p.height,
+                    },
+                    VerifyOperation::CellSetSize {
+                        entry,
+                        path,
+                        width: p.width,
+                        height: p.height,
+                    },
+                ))
+            }
+            "cell.setFormat" => {
+                let p: CellSetFormatParams =
+                    serde_json::from_value(step.params.clone()).map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            e.to_string(),
+                        ))
+                    })?;
+                let (entry, path) = doc
+                    .node(&p.target)
+                    .map(|n| (n.entry.clone(), doc.doc_of(n).path(n.el)))
+                    .unwrap_or_default();
+                let border_fill_id = p.border_fill_id.as_ref().map(|v| v.value());
+                let format = hae_edit::CellFormat {
+                    border_fill_id: border_fill_id.clone(),
+                    background: p.background.clone(),
+                    cell_margin: p.cell_margin.as_ref().map(|m| hae_edit::CellMargin {
+                        left: m.left,
+                        right: m.right,
+                        top: m.top,
+                        bottom: m.bottom,
+                    }),
+                };
+                let independent = hae_verify::CellFormat {
+                    border_fill_id,
+                    background: p.background,
+                    cell_margin: p.cell_margin.map(|m| hae_verify::CellMargin {
+                        left: m.left,
+                        right: m.right,
+                        top: m.top,
+                        bottom: m.bottom,
+                    }),
+                };
+                Ok((
+                    EditOp::CellSetFormat {
+                        target: p.target,
+                        format,
+                    },
+                    VerifyOperation::CellSetFormat {
+                        entry,
+                        path,
+                        format: independent,
+                    },
+                ))
+            }
             "text.format" => {
                 let p: TextFormatParams =
                     serde_json::from_value(step.params.clone()).map_err(|e| {

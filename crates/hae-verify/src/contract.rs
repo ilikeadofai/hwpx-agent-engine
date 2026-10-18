@@ -36,6 +36,23 @@ pub enum LineSpacingKind {
     Percent,
 }
 
+/// Table request types are owned by the verifier, independent of the editor.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CellMargin {
+    pub left: Option<u32>,
+    pub right: Option<u32>,
+    pub top: Option<u32>,
+    pub bottom: Option<u32>,
+}
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CellFormat {
+    pub border_fill_id: Option<String>,
+    pub background: Option<String>,
+    pub cell_margin: Option<CellMargin>,
+}
+
 /// Request properties, deliberately independent from hae-edit's type.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -55,6 +72,33 @@ pub struct CharProps {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "op", deny_unknown_fields)]
 pub enum VerifyOperation {
+    #[serde(rename = "table.setColumnWidths")]
+    TableSetColumnWidths {
+        entry: String,
+        path: Vec<usize>,
+        widths: Option<Vec<u32>>,
+        width: Option<u32>,
+    },
+    #[serde(rename = "table.setRowHeights")]
+    TableSetRowHeights {
+        entry: String,
+        path: Vec<usize>,
+        heights: Option<Vec<u32>>,
+        height: Option<u32>,
+    },
+    #[serde(rename = "cell.setFormat")]
+    CellSetFormat {
+        entry: String,
+        path: Vec<usize>,
+        format: CellFormat,
+    },
+    #[serde(rename = "cell.setSize")]
+    CellSetSize {
+        entry: String,
+        path: Vec<usize>,
+        width: Option<u32>,
+        height: Option<u32>,
+    },
     #[serde(rename = "text.format")]
     TextFormat {
         entry: String,
@@ -131,7 +175,11 @@ impl VerifyOperation {
             Self::TextReplaceAll { scope, .. } => scope
                 .as_ref()
                 .map_or(("", &[][..]), |s| (s.entry.as_str(), s.path.as_slice())),
-            Self::TextFormat { entry, path, .. }
+            Self::TableSetColumnWidths { entry, path, .. }
+            | Self::TableSetRowHeights { entry, path, .. }
+            | Self::CellSetFormat { entry, path, .. }
+            | Self::CellSetSize { entry, path, .. }
+            | Self::TextFormat { entry, path, .. }
             | Self::TextReplace { entry, path, .. }
             | Self::CellSetText { entry, path, .. }
             | Self::CellSetParagraphs { entry, path, .. }

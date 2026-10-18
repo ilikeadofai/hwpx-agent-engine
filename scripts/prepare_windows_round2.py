@@ -5,6 +5,7 @@ Uses the real stdio MCP engine. Private inputs/logs/outputs stay under spikes/wo
 Existing outputs are refused. Originals are hashed before and after, never modified.
 """
 import argparse
+import os
 from collections import Counter
 import hashlib
 import json
@@ -347,7 +348,7 @@ def main():
     parser.add_argument("--return-root", type=Path, default=DEFAULT_RETURN)
     parser.add_argument("--handoff-root", type=Path, default=DEFAULT_HANDOFF)
     parser.add_argument("--output-dir", type=Path, default=REPO_ROOT / "spikes/work/windows-round2")
-    parser.add_argument("--binary", type=Path, default=REPO_ROOT / "target/debug/hae-mcp")
+    parser.add_argument("--binary", type=Path, default=Path(os.environ.get("CARGO_TARGET_DIR", str(REPO_ROOT / "target"))) / "debug/hae-mcp")
     parser.add_argument("--rhwp", type=Path, default=REPO_ROOT / "spikes/vendor/rhwp-src/target/release/rhwp")
     args = parser.parse_args()
     out = args.output_dir.resolve()
