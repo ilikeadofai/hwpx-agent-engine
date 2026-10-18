@@ -44,6 +44,14 @@ fn trackchange_list() -> &'static str {
     "List the revision marks of the open document (`documentId`): for each `hp:insertBegin`/`insertEnd`/`deleteBegin`/`deleteEnd` mark the containing paragraph `nodeId`, `section`, mark `id`, `TcId`, `paraEnd`, and the codepoint `textOffset` inside its `hp:t`, resolved against the header records as `changeType` (Insert/Delete/CharShape/ParaShape), `date`, `authorId`, and `authorName`. The reply also carries every header `changes`/`authors` record (from `hh:trackChanges`/`hh:trackChangeAuthors`), `readonlyReasons`, and `hasTrackChanges`. Documents carrying track changes stay read-only (edits are refused with `UNSUPPORTED`/`document_readonly`); this tool only reports them and never lifts that lock. Optional `scope` limits marks to one nodeId and its descendants. Pass `cursor` from `nextCursor` and optional `limit` (default 100, max 500) to page; `markCount` counts filtered marks and cursors invalidate when `revision` changes. Read-only; never modifies the document."
 }
 
+fn bookmark_list() -> &'static str {
+    "List the bookmark markers of the open document (`documentId`) in document order: for each marker the containing paragraph `nodeId`, its `section`/`entry`, the marker shape (`bookmark` for an `hp:bookmark` element, `field` for `hp:fieldBegin type=\"BOOKMARK\"`), the `name` attribute, `id`/`fieldid`, the marker's `graphemeOffset` inside its paragraph text, and (field form) the matching `hp:fieldEnd` paragraph/offset plus every `hp:parameters` entry raw. `name` is `null` for a marker that carries no name attribute or an empty one — Hancom writes nameless bookmarks and nothing is inferred from parameters or nearby text. Duplicate names are listed once per marker. Optional `scope` limits the list to one nodeId (section, table, cell, or paragraph) and its descendants. Pass `cursor` from `nextCursor` and optional `limit` (default 100, max 500) to page; `total` counts filtered markers and cursors invalidate when `revision` changes. Read-only; never modifies the document."
+}
+
+fn memo_list() -> &'static str {
+    "List the memos of the open document (`documentId`) in document order. A memo is a `hp:fieldBegin type=\"MEMO\"` control (what Hancom saves and HWP files converted to HWPX hold) or a grouped `hp:memo` element; each item reports `source` (`field`/`memo`), `id` (`ID` parameter or `hp:memo@id`), `beginId`/`fieldId`, `number`/`rawNumber`, `author`, `createdAt`, `memoShapeIdRef` and the exact-match `shape` resolved from `hh:refList/hh:memoProperties/hh:memoPr`, the memo's `paragraphNodeId` anchor and `graphemeOffset`, `parentBeginId` for reply links recorded in `Contents/memoExtended.xml`, `paragraphCount`, `paragraphs` (each with `nodeId`, full `text`, `preview` of the first 120 graphemes, `previewTruncated`, `graphemeCount`), the joined `text`, and the raw `hp:parameters` for field memos. Missing attributes stay `null` (never invented); `hidden` is reported only when the marker states a boolean `hidden` attribute. Optional `scope` limits the list to memos anchored in one nodeId and its descendants. Pass `cursor` from `nextCursor` and optional `limit` (default 100, max 500) to page; `total` counts filtered memos and cursors invalidate when `revision` changes. Read-only; never modifies the document."
+}
+
 fn section_get_page() -> &'static str {
     "Read the page setup of one existing section, chosen by `scope` (nodeId of the top-level paragraph that contains `hp:secPr`) or `sectionIndex` (0-based, default 0); supplying both is refused. Returns `landscape`, `width`, `height`, `gutterType`, `margins`, `textDirection`, `spaceColumns`, `startNum` (`pageStartsOn`, `page`, `pic`, `tbl`, `equation`), `visibility`, and `grid`, each as `{\"value\":…,\"source\":\"explicit\"|\"unspecified\"}`. Values come from XML attributes only: absent attributes are `null` with `unspecified`, and HWPUNIT measurements are never substituted from inherited or application defaults. Flags keep their stored numeric form. Column count/width (`colPr`) and page-number display controls are read-only here. Read-only; never modifies the document."
 }
@@ -227,6 +235,8 @@ pub const TABLE: &[(&str, Describe)] = &[
     ("element.get", element_get),
     ("link.list", link_list),
     ("trackchange.list", trackchange_list),
+    ("bookmark.list", bookmark_list),
+    ("memo.list", memo_list),
     ("section.getPage", section_get_page),
     ("section.setPage", section_set_page),
     ("section.setPageNumbering", section_set_page_numbering),

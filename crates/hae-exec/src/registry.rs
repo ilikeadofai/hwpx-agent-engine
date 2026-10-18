@@ -197,6 +197,30 @@ pub struct TrackChangeListParams {
     pub scope: Option<String>,
 }
 
+/// Same paging/scope contract as `LinkListParams` (bookmark markers).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BookmarkListParams {
+    #[serde(default)]
+    pub cursor: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
+/// Same paging/scope contract as `LinkListParams` (memo controls).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MemoListParams {
+    #[serde(default)]
+    pub cursor: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ElementGetParams {
@@ -881,6 +905,29 @@ pub struct LinkListResultShape {
     pub next_cursor: Option<String>,
 }
 
+/// One page of bookmark markers (`bookmark.list`); `total` counts the filtered
+/// markers, not the page.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BookmarkListResultShape {
+    pub document_id: String,
+    pub revision: u64,
+    pub bookmarks: Vec<hae_model::annotations::BookmarkInfo>,
+    pub total: usize,
+    pub next_cursor: Option<String>,
+}
+
+/// One page of memos (`memo.list`); `total` counts the filtered memos.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoListResultShape {
+    pub document_id: String,
+    pub revision: u64,
+    pub memos: Vec<hae_model::annotations::MemoInfo>,
+    pub total: usize,
+    pub next_cursor: Option<String>,
+}
+
 /// One page of track-change marks plus the header records that name their kind
 /// and author (`trackchange.list`). `markCount` counts the filtered marks.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -924,6 +971,8 @@ pub enum ParsedCommand {
     TableDeleteColumn(TableDeleteColumnParams),
     LinkList(LinkListParams),
     TrackChangeList(TrackChangeListParams),
+    BookmarkList(BookmarkListParams),
+    MemoList(MemoListParams),
     SectionGetPage(SectionGetPageParams),
     SectionSetPage(SectionSetPageParams),
     SectionSetPageNumbering(SectionSetPageNumberingParams),
@@ -1086,6 +1135,8 @@ mod schema_tests {
             ("equation_set_properties", [false, true, false, false]),
             ("link_list", [true, false, true, false]),
             ("trackchange_list", [true, false, true, false]),
+            ("bookmark_list", [true, false, true, false]),
+            ("memo_list", [true, false, true, false]),
             ("style_list", [true, false, true, false]),
             ("table_get", [true, false, true, false]),
             ("picture_list", [true, false, true, false]),
@@ -1466,6 +1517,26 @@ define_commands! {
         mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
         stage1: true, reason: None,
         params: TrackChangeListParams, output: TrackChangeListResultShape,
+    },
+    BookmarkList {
+        name: "bookmark.list",
+        cli: "bookmark-list",
+        mcp: "bookmark_list",
+        summary: "List bookmark markers (hp:bookmark controls and BOOKMARK field spans) with name, paragraph nodeId, grapheme offset and raw parameters; unnamed markers stay unnamed",
+        category: Query,
+        mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
+        stage1: true, reason: None,
+        params: BookmarkListParams, output: BookmarkListResultShape,
+    },
+    MemoList {
+        name: "memo.list",
+        cli: "memo-list",
+        mcp: "memo_list",
+        summary: "List memos (MEMO fields and hp:memo controls) with id, author, time, shape reference, anchor paragraph, body paragraphs and text; unstated attributes stay null",
+        category: Query,
+        mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
+        stage1: true, reason: None,
+        params: MemoListParams, output: MemoListResultShape,
     },
     SectionGetPage {
         name: "section.getPage", cli: "section-get-page", mcp: "section_get_page",

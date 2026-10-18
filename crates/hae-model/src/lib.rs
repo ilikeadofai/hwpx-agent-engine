@@ -8,6 +8,7 @@
 //! structure edit, which declares a [`TableRemap`] and goes through
 //! [`Document::rebuild_table_structure`] (docs/decisions/table-structure-node-creation-design.md).
 
+pub mod annotations;
 pub mod equation;
 pub mod export_text;
 pub mod fields;

@@ -479,6 +479,38 @@ impl ParaText {
         self.grapheme_cps.binary_search(&cp).ok()
     }
 
+    /// Grapheme index at which a marker element inside this paragraph sits.
+    ///
+    /// `mark` must be inside the same entry as the paragraph. The flattened
+    /// text already carries one placeholder for every control or object the
+    /// paragraph holds, so the marker's own position is the total length of the
+    /// pieces whose source starts before the marker's `<`. Reading offsets this
+    /// way keeps annotation positions aligned with `textSpans` (both are
+    /// grapheme indices into the same paragraph text).
+    pub fn grapheme_offset_of(&self, doc: &XmlDoc, mark: usize) -> usize {
+        let mark_start = doc.el(mark).start.start;
+        let mut cp = 0usize;
+        for piece in &self.pieces {
+            // Only material that ends before the marker counts; the marker's
+            // own control/object placeholder sits at its position, so the
+            // enclosing element (which ends after it) must not be added.
+            let before = match &piece.kind {
+                PieceKind::Text { raw } | PieceKind::Ref { raw } | PieceKind::CData { raw } => {
+                    raw.end <= mark_start
+                }
+                PieceKind::Control { el, .. } | PieceKind::Other { el, .. } => {
+                    doc.el(*el).outer().end <= mark_start
+                }
+            };
+            if before {
+                cp += piece.cp_len;
+            }
+        }
+        self.grapheme_cps
+            .partition_point(|&c| c <= cp)
+            .saturating_sub(1)
+    }
+
     /// Plain text for display: placeholders included.
     pub fn display(&self) -> &str {
         &self.text

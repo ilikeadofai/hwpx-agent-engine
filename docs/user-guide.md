@@ -37,6 +37,8 @@
 
 - **링크 목록 조회 (`link_list`)**: 본문 하이퍼링크 필드의 문단 `nodeId`, `fieldid`/`id`, `hp:parameters` 원문(`Command`·`Path` 등), 표시 텍스트, 참조가 내부 문서인지 외부인지, 커서 페이징을 제공합니다.
 - **변경 추적 목록 조회 (`trackchange_list`)**: 삽입·삭제 표시(`insertBegin`/`insertEnd`/`deleteBegin`/`deleteEnd`)의 문단 위치·종류·오프셋과 머리말 `hh:trackChange`/`hh:trackChangeAuthor` 작성자 연결을 보여 줍니다. 변경 추적 문서는 계속 읽기 전용이며 조회만 허용됩니다.
+- **책갈피 목록 조회 (`bookmark_list`)**: 책갈피 표식(`hp:ctrl/hp:bookmark`, `hp:fieldBegin type="BOOKMARK"`)의 이름, 담은 문단 `nodeId`, 문단 안 자소 위치, 짝이 맞는 범위 끝, `hp:parameters` 원문을 보여 줍니다. 이름이 없는 책갈피는 `null`로 두고 지어내지 않습니다.
+- **메모 목록 조회 (`memo_list`)**: 메모(`hp:fieldBegin type="MEMO"`, `hp:memo`)의 `id`, 작성자, 작성 시각, 모양 참조, 달린 문단과 자소 위치, 본문 문단(`nodeId`·텍스트·미리보기), 답글 관계를 보여 줍니다. XML에 없는 속성은 `null`로 둡니다.
 
 두 명령의 자세한 인자·결과는 아래 §0.3 절을 참고하세요.
 
@@ -773,6 +775,43 @@ cell.setText는 실제 존재하는 병합 기준 셀도 지원한다. 한 문�
 - **`hasTrackChanges`**는 본문 표시나 머리말 기록이 있거나 엔진이 변경 추적으로 잠근 문서면 true입니다.
 - **잠금 유지**: 변경 추적이 있는 문서는 지금처럼 읽기 전용으로 열립니다(`readonlyReasons: ["track_changes"]`). 조회와 무편집 내보내기만 가능하고 편집 명령은 `UNSUPPORTED`(`document_readonly`)로 거절됩니다. `trackchange_list`는 이 잠금을 풀지 않습니다.
 - **검증 범위**: 로컬 입력(픽스처·spikes)에는 변경 추적 문서가 없어 이 명령의 시험은 KS X 6101 표기(`Id`/`TcId`/`paraend`)와 `hh:trackChanges`/`hh:trackChangeAuthors` 스키마를 따른 **합성 문서로만** 수행했습니다. 실제 한컴 변경 추적 문서로는 아직 확인하지 않았습니다.
+
+## 0.3 책갈피·메모 조회 (`bookmark_list`, `memo_list`)
+
+0.3에서 읽기 전용 조회 두 가지가 더 추가되었습니다. 두 명령 모두 문서를 바꾸지 않으며 `revision`·Undo 이력·세션 상태를 그대로 둡니다. 시험에서 명령 실행 전후 `document_export` 결과가 원본과 바이트 단위로 같음을 확인했습니다. `cursor`/`limit`/`scope` 규약은 `link_list`와 같습니다(`revision:offset`, 기본 100·최대 500, 다른 `revision`의 커서는 `VERSION_CONFLICT`, 형식 오류는 `INVALID_REQUEST`, 목록 범위를 넘는 커서는 빈 쪽과 `nextCursor: null`).
+
+### 책갈피 목록 (`bookmark_list`)
+
+문서의 책갈피 표식을 문서 순서대로 나열합니다. 책갈피는 두 모양으로 저장되며 **둘 다** 보고합니다.
+
+```json
+{"command":"bookmark.list","params":{"limit":100}}
+```
+
+- **모양(`marker`)**: `bookmark`는 `hp:bookmark` 요소(한컴은 `hp:ctrl`의 유일한 자식으로 저장합니다. 한 점을 가리키는 표식), `field`는 `hp:fieldBegin type="BOOKMARK"`와 짝이 맞는 `hp:fieldEnd`(범위 표식)입니다.
+- **인자**: `cursor`, `limit`(기본 100, 최대 500), `scope`(구역·표·셀·문단 `nodeId`; 그 노드와 하위 문단만 조회).
+- **결과**: `bookmarks[]`, `total`(scope 적용 후 전체 표식 수), `nextCursor`, `documentId`, `revision`.
+- **`bookmarks[]` 항목**: `nodeId`(표식을 담은 문단, 표 셀 안 문단 포함), `section`, `entry`, `marker`, `name`, `id`, `fieldId`, `graphemeOffset`, `endNodeId`/`endGraphemeOffset`(field 모양이고 짝이 맞는 `fieldEnd`가 있을 때만), `parameters[]`(field 모양의 `hp:parameters` 원문, `{kind,name,value}`).
+- **`graphemeOffset`**: 표식이 그 문단 텍스트 안에서 차지하는 **자소(grapheme) 위치**입니다. `element_get`의 `textSpans`·`text_replace` 범위와 같은 단위이며, 그 위치의 문자는 표식의 자리 표시자(`U+FFFC`)입니다.
+- **이름 없는 책갈피**: 한컴은 `name` 속성이 없거나 빈 책갈피도 저장합니다. 엔진은 그때 `name`을 `null`로 두고 `parameters`·주변 글자에서 이름을 **지어내지 않습니다**. 같은 이름이 여러 번 나오면 표식마다 한 번씩 그대로 보고하며 하나를 골라 합치지 않습니다.
+- **검증 범위**: 공개 코퍼스 10종과 로컬 입력 `04_complex.hwpx`에는 책갈피가 없습니다(코퍼스 `hp:bookmark` 0건). 이 명령의 시험은 KS X 6101 `hp:bookmark@name`·`fieldBegin type="BOOKMARK"` 표기를 따른 **합성 문서로만** 수행했고, 실제 한컴 책갈피 문서로는 아직 확인하지 않았습니다.
+
+### 메모 목록 (`memo_list`)
+
+검토 메모를 문서 순서대로 나열합니다.
+
+```json
+{"command":"memo.list","params":{"limit":20}}
+```
+
+- **모양(`source`)**: `field`는 한컴이 실제로 저장하는 `hp:fieldBegin type="MEMO"`(본문은 그 컨트롤의 `hp:subList`), `memo`는 `hp:memo` 요소(본문은 `hp:paraList`/`hp:p`)입니다. 그룹형 `hp:memo`는 그 메모의 `ID`를 가리키는 MEMO 필드가 있으면 그 필드를 `paragraphNodeId`(달린 위치)로 삼고, 그 필드 자체도 별도 항목으로 함께 보고합니다.
+- **인자**: `cursor`, `limit`(기본 100, 최대 500), `scope`(메모가 달린 문단이 scope 노드 또는 그 하위일 때만).
+- **결과**: `memos[]`, `total`(scope 적용 후 전체 메모 수), `nextCursor`, `documentId`, `revision`.
+- **`memos[]` 항목**: `id`(`ID` 파라미터 또는 `hp:memo@id`), `beginId`/`fieldId`, `number`/`rawNumber`, `author`, `createdAt`(`CreateDateTime` 원문), `memoShapeIdRef`, `shape`(머리말 `hh:memoPr@id`와 정확히 일치할 때만 해석, 아니면 `null`), `hidden`, `source`, `paragraphNodeId`(메모가 달린 문단), `graphemeOffset`(그 문단 안에서 표식의 자소 위치), `parentBeginId`(`Contents/memoExtended.xml`의 `he:memo@parentId`, 답글 관계), `paragraphCount`, `paragraphs[]`, `text`, `parameters[]`(field 모양의 원문).
+- **본문이 여러 문단일 때**: `paragraphCount`에 문단 수를 담고 `paragraphs[]`에 문단마다 `nodeId`, 전체 `text`, `preview`(앞 120자소), `previewTruncated`, `graphemeCount`를 담습니다. `text`는 문단들을 `\n`으로 이어 붙인 본문입니다. 문단 전체 텍스트가 필요하면 `paragraphs[].nodeId`를 `element_get`에 넘기세요.
+- **`hidden`(숨김 여부)**: 표식이 `hidden="1"`/`"true"` 같은 **불리언 속성을 실제로 밝힐 때만** true/false를 보고하고, 그런 표기가 없으면 `null`입니다. 지금까지 확인한 2011 `hp:fieldBegin(MEMO)`·`hp:memo`·`hh:memoPr` 표기에는 숨김 속성이 없어(로컬 `04_complex.hwpx` 메모 2건 모두 `null`) `false`로 단정하지 않습니다.
+- **추측 금지**: `ID`·`Author`·`Number`·`CreateDateTime`이 없으면 그대로 `null`입니다. `MemoShapeIDRef`가 `hh:memoPr` 목록에 없으면(예: `04_complex.hwpx`의 `65535`) `shape: null`이며 기본 모양을 가정하지 않습니다.
+- **검증 범위**: 로컬 한컴 문서 `spikes/work/stage4-e2e/inputs/04_complex.hwpx`의 메모 2건(작성자 `mattc`, 본문 `메모 테스트용.`·`댓글이 달린다.`, 둘째 메모는 첫째에 대한 답글)으로 실제 동작을 확인했습니다. 그룹형 `hp:memo`는 공개 코퍼스와 로컬 입력에 없어 **합성 문서로만** 확인했습니다.
 
 ## 0.3 구역 용지·여백·쪽 번호·표시 설정
 

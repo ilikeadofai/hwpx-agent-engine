@@ -639,3 +639,65 @@ fn one_shot_run_accepts_cli_aliases_as_canonical_names() {
         json!("SESSION_REQUIRED")
     );
 }
+
+#[test]
+fn annotation_query_cli_aliases_resolve_and_preserve_export_bytes() {
+    let t = TempDir::new("annotations");
+    let original =
+        include_bytes!("../../../tests/fixtures/corpus/research-school-plan-reference.hwpx");
+    let input = t.path().join("input.hwpx");
+    let before = t.path().join("before.hwpx");
+    let after = t.path().join("after.hwpx");
+    fs::write(&input, original).unwrap();
+    let steps = json!([
+        {"command":"document.open","params":{"path":input}},
+        {"command":"document.export","params":{"path":before}},
+        {"command":"bookmark-list","params":{"limit":5}},
+        {"command":"memo-list","params":{"limit":5}},
+        {"command":"document.export","params":{"path":after}}
+    ]);
+    let script = t.path().join("annotations.json");
+    fs::write(&script, serde_json::to_vec(&steps).unwrap()).unwrap();
+    let run = hae()
+        .arg("script")
+        .arg("--input-root")
+        .arg(t.path())
+        .arg("--output-root")
+        .arg(t.path())
+        .arg(script)
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let replies: Vec<Value> = serde_json::from_slice(&run.stdout).unwrap();
+    assert!(replies.iter().all(|r| r["ok"] == true), "{replies:?}");
+    // The CLI alias reaches the registry name, and the corpus carries neither
+    // bookmarks nor memo controls.
+    assert_eq!(replies[2]["command"], "bookmark.list");
+    assert_eq!(replies[2]["result"]["total"], json!(0));
+    assert_eq!(replies[3]["command"], "memo.list");
+    assert_eq!(replies[3]["result"]["total"], json!(0));
+    assert_eq!(fs::read(&before).unwrap(), original);
+    assert_eq!(fs::read(&after).unwrap(), original);
+
+    // One-shot `run` resolves the same aliases without an open document.
+    for (alias, canonical) in [
+        ("bookmark-list", "bookmark.list"),
+        ("memo-list", "memo.list"),
+    ] {
+        let output = hae()
+            .args(["run", "--command", alias])
+            .output()
+            .expect("run hae");
+        assert!(!output.status.success(), "{alias} needs a document");
+        let response: Value = serde_json::from_slice(&output.stdout).expect("one JSON envelope");
+        assert_eq!(response["command"], json!(canonical));
+        assert_eq!(
+            response["diagnostics"][0]["code"],
+            json!("SESSION_REQUIRED")
+        );
+    }
+}
