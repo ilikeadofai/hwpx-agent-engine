@@ -146,6 +146,55 @@ pub struct TextRangeParam {
     pub end: usize,
 }
 
+/// Header resources; count actual XML reference occurrences, not characters.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StyleListParams {
+    pub kind: Option<hae_model::resource_query::ResourceKind>,
+    #[schemars(range(min = 1, max = 500))]
+    pub limit: Option<usize>,
+    pub cursor: Option<String>,
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TableGetParams {
+    /// Section or paragraph nodeId.
+    pub scope: Option<String>,
+    /// One table nodeId; if scope is given it must contain this table.
+    pub table: Option<String>,
+    #[schemars(range(min = 1, max = 500))]
+    pub limit: Option<usize>,
+    pub cursor: Option<String>,
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PictureListParams {
+    /// Section or paragraph nodeId; duplicate-media references remain document-wide.
+    pub scope: Option<String>,
+    #[schemars(range(min = 1, max = 500))]
+    pub limit: Option<usize>,
+    pub cursor: Option<String>,
+}
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PagedQueryResult<T> {
+    pub document_id: String,
+    pub revision: u64,
+    pub items: Vec<T>,
+    pub total: usize,
+    pub next_cursor: Option<String>,
+}
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct StyleListResult {
+    #[serde(flatten)]
+    pub page: PagedQueryResult<hae_model::resource_query::StyleResource>,
+    pub unresolved_reference_count: usize,
+    pub unresolved_body_reference_count: usize,
+    pub unresolved_examples: Vec<hae_model::resource_query::UnresolvedReference>,
+    pub unresolved_examples_truncated: bool,
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Controls {
@@ -710,6 +759,9 @@ pub enum ParsedCommand {
     SectionSetPage(SectionSetPageParams),
     SectionSetPageNumbering(SectionSetPageNumberingParams),
     SectionSetVisibility(SectionSetVisibilityParams),
+    StyleList(StyleListParams),
+    TableGet(TableGetParams),
+    PictureList(PictureListParams),
     TextFormat(TextFormatParams),
     TextReplace(TextReplaceParams),
     TextReplaceAll(TextReplaceAllParams),
@@ -847,6 +899,9 @@ mod schema_tests {
             ("equation_set_properties", [false, true, false, false]),
             ("link_list", [true, false, true, false]),
             ("trackchange_list", [true, false, true, false]),
+            ("style_list", [true, false, true, false]),
+            ("table_get", [true, false, true, false]),
+            ("picture_list", [true, false, true, false]),
             ("text_replace", [false, true, false, false]),
             ("text_format", [false, true, false, false]),
             ("table_set_column_widths", [false, true, false, false]),
@@ -1218,6 +1273,30 @@ define_commands! {
         mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
         stage1: true, reason: None,
         params: SectionSetVisibilityParams, output: MutationResultShape,
+    },
+    StyleList {
+        name: "style.list", cli: "style-list", mcp: "style_list",
+        summary: "List header styles, character/paragraph properties and border fills with literal XML usage counts and unresolved-reference totals/examples; optional kind, limit and cursor",
+        category: Query,
+        mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
+        stage1: true, reason: None,
+        params: StyleListParams, output: StyleListResult,
+    },
+    TableGet {
+        name: "table.get", cli: "table-get", mcp: "table_get",
+        summary: "Read table geometry, explicit cells, merged coverage, paragraph previews and border/margin references; optional section/paragraph scope or one table nodeId, limit and cursor",
+        category: Query,
+        mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
+        stage1: true, reason: None,
+        params: TableGetParams, output: PagedQueryResult<hae_model::resource_query::TableView>,
+    },
+    PictureList {
+        name: "picture.list", cli: "picture-list", mcp: "picture_list",
+        summary: "List picture frames, original/current sizes, payload SHA-256, captions, crop/effect/flip flags, external status and document-wide duplicate media references; optional scope, limit and cursor",
+        category: Query,
+        mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
+        stage1: true, reason: None,
+        params: PictureListParams, output: PagedQueryResult<hae_model::resource_query::PictureView>,
     },
     TextFormat {
         name: "text.format", cli: "text-format", mcp: "text_format",

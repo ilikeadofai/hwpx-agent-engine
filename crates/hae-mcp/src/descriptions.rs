@@ -60,6 +60,16 @@ fn section_set_visibility() -> &'static str {
     "Change only the first-page visibility flags you name in existing section target (`scope` nodeId of the `secPr` paragraph, or `sectionIndex` 0-based default 0): `hideFirstHeader`, `hideFirstFooter`, `hideFirstPageNum`, `hideFirstEmptyLine`, `showLineNumber` (booleans) and `border`/`fill` (`SHOW_ALL`/`HIDE_ALL`/`SHOW_FIRST`/`HIDE_FIRST`). Attributes outside this list (for example `hideFirstMasterPage`) and other sections keep their original bytes. A request naming no flag is refused, as is an unlisted enum value. Requires `expectedVersion` (`VERSION_CONFLICT` if stale -> re-query). Removes the changed section's `linesegarray` caches only; body text and `PrvText` are untouched. Supported in `command_batch`; `dryRun: true` previews without committing."
 }
 
+fn style_list() -> &'static str {
+    "Read header resources with kind=style/charPr/paraPr/borderFill (optional), limit=1..500 and cursor from nextCursor. Returns items with ID, XML properties, resolved font faces and literal reference counts (body versus other XML), plus document-wide unresolvedReferenceCount/unresolvedBodyReferenceCount and up to 20 unresolvedExamples; counts are not character counts. Read-only; requires an open document, no expectedVersion; cursors bind to document/revision/filter."
+}
+fn table_get() -> &'static str {
+    "Read tables in the document or scope (section/paragraph nodeId), or one table nodeId in table; optional limit=1..500/cursor. Returns items with rows/cols, explicit cell addresses/spans, HWPUNIT sizes/margins, paragraph counts/previews, border references, spacing and outer margins; coveredCells comes only from complete explicit spans and identifies overlapping actual cells without guessing. Missing XML values are null; read-only, no expectedVersion; oversized single tables fail RESOURCE_LIMIT."
+}
+fn picture_list() -> &'static str {
+    "Read picture items, optionally within scope (section/paragraph nodeId), with limit=1..500/cursor. Reports containing paragraph, frame position/size, orgSz/curSz, media reference/payload SHA-256, caption, crop comparison, effects/shadow/flip/reverse, literal isEmbeded and external status; otherPictureNodeIds lists document-wide references to the same media. Missing values stay null and external resources are never fetched; read-only, no expectedVersion."
+}
+
 fn text_replace() -> &'static str {
     "Replace a paragraph grapheme range [start,end), or insert non-empty text at [p,p). No tabs/newlines in text. Check edits[\"text.replace\"].modes (replace/insert) and apply requires arguments (e.g. controls=preserve); default controls=reject requires a subrange/position in textSpans. Empty paragraphs advertise {start:0,end:0}; insertion uses the following character run, then preceding run, then the empty paragraph first run. controls=preserve changes only text fragments and keeps objects/tabs/line breaks/fields in original XML order; leading objects stay before the first text fragment. Existing empty hp:t may be reused; no text fragment means UNSUPPORTED_CONTENT_IN_RANGE. CONTROLS_PRESERVED reports count and new grapheme offsets. Unsupported markup/attributes still fail. Requires expectedVersion; VERSION_CONFLICT means re-query. FORMAT_COLLAPSED warns about character shapes. dryRun=true verifies without committing."
 }
@@ -194,6 +204,9 @@ pub const TABLE: &[(&str, Describe)] = &[
     ("section.setPage", section_set_page),
     ("section.setPageNumbering", section_set_page_numbering),
     ("section.setVisibility", section_set_visibility),
+    ("style.list", style_list),
+    ("table.get", table_get),
+    ("picture.list", picture_list),
     ("text.format", text_format),
     ("equation.list", equation_list),
     ("equation.get", equation_get),

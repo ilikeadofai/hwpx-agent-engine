@@ -1,0 +1,53 @@
+   Compiling hae-package v0.2.0 (/tmp/opencode/wt-queries2/crates/hae-package)
+   Compiling unicode-vo v0.1.0
+   Compiling base64 v0.22.1
+   Compiling hae-model v0.2.0 (/tmp/opencode/wt-queries2/crates/hae-model)
+   Compiling data-url v0.3.2
+   Compiling color_quant v1.1.0
+   Compiling pico-args v0.5.0
+   Compiling quick-error v2.0.1
+   Compiling byteorder-lite v0.1.0
+   Compiling linux-raw-sys v0.12.1
+   Compiling roxmltree v0.20.0
+   Compiling xmlwriter v0.1.0
+   Compiling imagesize v0.13.0
+   Compiling zune-core v0.4.12
+   Compiling unicode-bidi v0.3.18
+   Compiling usvg v0.45.1
+   Compiling zune-jpeg v0.4.21
+   Compiling rustix v1.1.4
+   Compiling image-webp v0.2.4
+   Compiling gif v0.13.3
+   Compiling tiny-skia v0.11.4
+   Compiling rgb v0.8.53
+   Compiling zune-core v0.5.3
+   Compiling zune-jpeg v0.5.15
+   Compiling hae-verify v0.2.0 (/tmp/opencode/wt-queries2/crates/hae-verify)
+   Compiling resvg v0.45.1
+   Compiling png v0.18.1
+   Compiling hae-project v0.2.0 (/tmp/opencode/wt-queries2/crates/hae-project)
+   Compiling hae-edit v0.2.0 (/tmp/opencode/wt-queries2/crates/hae-edit)
+   Compiling hae-render-rhwp v0.2.0 (/tmp/opencode/wt-queries2/crates/hae-render-rhwp)
+   Compiling hae-exec v0.2.0 (/tmp/opencode/wt-queries2/crates/hae-exec)
+    Finished `test` profile [unoptimized] target(s) in 29.70s
+     Running unittests src/lib.rs (target/debug/deps/hae_exec-4851361e54eca8fd)
+
+running 15 tests
+test preview::tests::base64_matches_rfc4648_vectors ... ok
+test preview::contract_tests::png_only_failure_is_not_reported_as_rendered ... ok
+test registry::schema_tests::generated_integer_schemas_express_rust_bounds_with_standard_keywords ... ok
+test preview::contract_tests::snapshot_budget_is_checked_before_starting_a_renderer ... ok
+test preview::contract_tests::escaped_svg_is_sized_as_json_before_being_inlined ... ok
+test registry::schema_tests::all_tool_annotations_match_behavior_audit ... ok
+test tests::query_result_schemas_describe_real_outlines_and_capabilities ... ok
+test tests::default_inspect_page_with_many_spans_stays_under_response_budget ... ok
+test preview::contract_tests::oversized_svg_is_delivered_as_an_exact_output_root_artifact ... ok
+test tests::envelope_writer_sequence_replay_conflict_and_ordering_rules ... ok
+test registry::char_format_tests::text_format_dry_run_undo_redo_and_batch_use_the_session_gate ... ok
+test tests::full_scenario_batch_dry_run_undo_redo_frozen_image_and_project_roundtrip ... ok
+test tests::retained_verification_logs_are_counted_in_the_session_budget ... ok
+test tests::registry_lists_all_commands_and_rejects_unknown_commands_or_fields ... ok
+test tests::history_100_unit_eviction_clear_and_snapshot_release_and_memory_budget ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.42s
+

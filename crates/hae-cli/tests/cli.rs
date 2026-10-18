@@ -107,11 +107,7 @@ fn one_shot_introspection_commands_return_json() {
     let commands = list["result"]["commands"]
         .as_array()
         .expect("commands array");
-    assert!(
-        commands.len() >= 20,
-        "expected the full registry, got {}",
-        commands.len()
-    );
+    assert_eq!(commands.len(), hae_exec::command_list().len());
 
     let described = hae()
         .args([
@@ -581,4 +577,65 @@ fn build_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
     put_u32(&mut out, central_offset);
     put_u16(&mut out, 0);
     out
+}
+
+#[test]
+fn resource_query_cli_aliases_preserve_export_bytes() {
+    let t = TempDir::new("queries2");
+    let original = include_bytes!("../../../tests/fixtures/editing/split_runs.hwpx");
+    let input = t.path().join("input.hwpx");
+    let before = t.path().join("before.hwpx");
+    let after = t.path().join("after.hwpx");
+    fs::write(&input, original).unwrap();
+    let steps = json!([
+        {"command":"document.open","params":{"path":input}},
+        {"command":"document.export","params":{"path":before}},
+        {"command":"style-list","params":{"kind":"charPr"}},
+        {"command":"table-get","params":{}},
+        {"command":"picture-list","params":{}},
+        {"command":"document.export","params":{"path":after}}
+    ]);
+    let script = t.path().join("queries.json");
+    fs::write(&script, serde_json::to_vec(&steps).unwrap()).unwrap();
+    let run = hae()
+        .arg("script")
+        .arg("--input-root")
+        .arg(t.path())
+        .arg("--output-root")
+        .arg(t.path())
+        .arg(script)
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let replies: Vec<Value> = serde_json::from_slice(&run.stdout).unwrap();
+    assert_eq!(replies.len(), steps.as_array().unwrap().len());
+    assert!(replies.iter().all(|r| r["ok"] == true));
+    assert_eq!(replies[2]["command"], "style.list");
+    assert!(replies[2]["result"]["total"].as_u64().unwrap() > 0);
+    assert_eq!(replies[3]["command"], "table.get");
+    assert_eq!(replies[4]["command"], "picture.list");
+    assert_eq!(fs::read(before).unwrap(), original);
+    assert_eq!(fs::read(after).unwrap(), original);
+}
+
+#[test]
+fn one_shot_run_accepts_cli_aliases_as_canonical_names() {
+    // One-shot `run` resolves the CLI alias exactly like `script` does. No
+    // document is open, but the envelope must already carry the registry name.
+    let output = hae()
+        .args(["run", "--command", "style-list"])
+        .output()
+        .expect("run hae");
+    assert!(!output.status.success(), "no document is open");
+    let response: Value = serde_json::from_slice(&output.stdout).expect("one JSON envelope");
+    assert_eq!(response["command"], json!("style.list"));
+    assert_eq!(response["ok"], json!(false));
+    assert_eq!(
+        response["diagnostics"][0]["code"],
+        json!("SESSION_REQUIRED")
+    );
 }

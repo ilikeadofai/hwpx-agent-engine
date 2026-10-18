@@ -415,6 +415,16 @@ fn add_doc_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, doc: &Docu
 }
 
 impl SessionExecutor {
+    // MCP also carries serialized result JSON in a string. Leave room for
+    // worst-case escaping, request echo and both protocol envelopes.
+    fn query_budget(limits: &Limits) -> usize {
+        (limits
+            .max_response_bytes
+            .min(4 * 1024 * 1024)
+            .saturating_sub(limits.max_request_bytes.min(limits.max_response_bytes / 4) + 4096)
+            / 3) as usize
+    }
+
     pub fn new(
         input_root: impl AsRef<Path>,
         output_root: impl AsRef<Path>,
@@ -1145,6 +1155,87 @@ impl SessionExecutor {
                     params: serde_json::to_value(p).unwrap(),
                 }],
             ),
+            ParsedCommand::StyleList(p) => {
+                let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+                let doc = &s.current.doc;
+                let inventory = doc.style_inventory(p.kind);
+                let extra = json!({
+                    "unresolvedReferenceCount": inventory.unresolved_reference_count,
+                    "unresolvedBodyReferenceCount": inventory.unresolved_body_reference_count,
+                    "unresolvedExamples": inventory.unresolved_examples,
+                    "unresolvedExamplesTruncated": inventory.unresolved_examples_truncated,
+                });
+                let result = crate::queries::page(
+                    doc,
+                    crate::queries::PageRequest {
+                        revision: s.revision,
+                        selector: json!(["style.list", p.kind]),
+                        cursor: p.cursor.as_deref(),
+                        limit: p.limit,
+                        budget: Self::query_budget(&self.limits),
+                    },
+                    inventory.items.len(),
+                    inventory.items.into_iter().map(Ok),
+                    extra,
+                )?;
+                Ok((result, Vec::new()))
+            }
+            ParsedCommand::TableGet(p) => {
+                let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+                let doc = &s.current.doc;
+                doc.structure_scope(p.scope.as_deref())?;
+                let nodes = if let Some(table) = &p.table {
+                    let n = doc.require(table, Some(Kind::Table))?;
+                    if p.scope
+                        .as_deref()
+                        .is_some_and(|scope| !doc.is_descendant(n, scope))
+                    {
+                        return Err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Query,
+                            "table is outside scope",
+                        ));
+                    }
+                    vec![n]
+                } else {
+                    doc.structure_nodes(Kind::Table, p.scope.as_deref())
+                };
+                let budget = Self::query_budget(&self.limits);
+                let result = crate::queries::page(
+                    doc,
+                    crate::queries::PageRequest {
+                        revision: s.revision,
+                        selector: json!(["table.get", p.scope, p.table]),
+                        cursor: p.cursor.as_deref(),
+                        limit: p.limit,
+                        budget,
+                    },
+                    nodes.len(),
+                    nodes.into_iter().map(|n| doc.table_view(n, budget)),
+                    json!({}),
+                )?;
+                Ok((result, Vec::new()))
+            }
+            ParsedCommand::PictureList(p) => {
+                let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+                let doc = &s.current.doc;
+                doc.structure_scope(p.scope.as_deref())?;
+                let nodes = doc.structure_nodes(Kind::Picture, p.scope.as_deref());
+                let result = crate::queries::page(
+                    doc,
+                    crate::queries::PageRequest {
+                        revision: s.revision,
+                        selector: json!(["picture.list", p.scope]),
+                        cursor: p.cursor.as_deref(),
+                        limit: p.limit,
+                        budget: Self::query_budget(&self.limits),
+                    },
+                    nodes.len(),
+                    nodes.into_iter().map(|n| Ok(doc.picture_view(n))),
+                    json!({}),
+                )?;
+                Ok((result, Vec::new()))
+            }
             ParsedCommand::TextFormat(p) => self.handle_edit_steps(
                 req,
                 &[BatchStepParam {

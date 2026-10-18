@@ -10,6 +10,7 @@ pub mod equation;
 pub mod links;
 pub mod para;
 pub mod query;
+pub mod resource_query;
 pub mod trackchange;
 
 use hae_diag::{Code, EngineError, Limits, Result, Stage};

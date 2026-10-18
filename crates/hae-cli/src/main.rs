@@ -20,7 +20,7 @@ use hae_exec::{
 };
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::Read;
 use std::path::PathBuf;
 
@@ -152,18 +152,26 @@ fn run_script(args: ScriptArgs) -> i32 {
         }
     };
     // Reject unregistered command strings up front (spec §6 / plan 1-17) so a
-    // typo cannot leave partial sessions, files or locks behind.
-    let registered: HashSet<&str> = command_list().iter().map(|c| c.name).collect();
-    if let Some((index, step)) = steps
+    // typo cannot leave partial sessions, files or locks behind. CLI aliases
+    // (`cliName` in command.list, e.g. style-list) are accepted and rewritten
+    // to the registry name so every envelope, log line and variable capture
+    // stays canonical.
+    let mut steps = steps;
+    let aliases: HashMap<&str, &'static str> = command_list()
         .iter()
-        .enumerate()
-        .find(|(_, step)| !registered.contains(step.command.as_str()))
-    {
-        eprintln!(
-            "hae: step {index}: unknown command '{}' (see `hae run --command command.list`)",
-            step.command
-        );
-        return EXIT_USAGE;
+        .flat_map(|c| [(c.name, c.name), (c.cli_name, c.name)])
+        .collect();
+    for (index, step) in steps.iter_mut().enumerate() {
+        match aliases.get(step.command.as_str()) {
+            Some(name) => step.command = (*name).to_owned(),
+            None => {
+                eprintln!(
+                    "hae: step {index}: unknown command '{}' (see `hae run --command command.list`)",
+                    step.command
+                );
+                return EXIT_USAGE;
+            }
+        }
     }
 
     let mut executor =
@@ -234,6 +242,12 @@ fn run_once(args: RunArgs) -> i32 {
         expected_version,
         dry_run,
     } = args;
+
+    // Accept CLI aliases (`cliName` in command.list) exactly like `hae script`.
+    let command = command_list()
+        .into_iter()
+        .find(|c| c.name == command || c.cli_name == command)
+        .map_or(command, |c| c.name.to_owned());
 
     // Undo/Redo need the in-memory session; a one-shot process has none.
     if command_describe(&command).is_ok_and(|d| d.category == CommandCategory::History) {
