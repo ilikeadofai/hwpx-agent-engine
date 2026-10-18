@@ -131,6 +131,10 @@ pub struct SessionExecutor {
     open_doc: Option<OpenDocSession>,
     /// rhwp preview adapter; `None` keeps `document.preview` at RENDERER_UNAVAILABLE.
     renderer: Option<Arc<RhwpAdapter>>,
+    /// Why the last `configure_renderer_from_env` left the adapter unset: the
+    /// `RENDERER_UNAVAILABLE(renderer_not_configured)` that `document.preview`
+    /// returns, carrying the searched paths and the fix.
+    renderer_unavailable: Option<EngineError>,
 }
 
 /// Attach per-step `text.replaceAll` reports to a mutation result.
@@ -557,12 +561,14 @@ impl SessionExecutor {
             writers,
             open_doc: None,
             renderer: None,
+            renderer_unavailable: None,
         })
     }
 
     /// Enable `document.preview` with the given adapter.
     pub fn set_renderer(&mut self, adapter: Arc<RhwpAdapter>) {
         self.renderer = Some(adapter);
+        self.renderer_unavailable = None;
     }
 
     fn configured_descriptor(&self, mut descriptor: CommandDescriptor) -> CommandDescriptor {
@@ -577,17 +583,40 @@ impl SessionExecutor {
         descriptor
     }
 
-    /// Enable `document.preview` from `HAE_RHWP` (+ `HAE_BWRAP`, `HAE_FONT_DIR`).
-    /// Returns whether an adapter was configured; unset means unconfigured.
+    /// Enable `document.preview` from `HAE_RHWP` (+ `HAE_BWRAP`, `HAE_FONT_DIR`,
+    /// `HAE_RASTER`), falling back to the documented search order for whatever
+    /// is unset. Returns whether an adapter was configured; `false` keeps the
+    /// preview unavailable and remembers why ([`Self::renderer_configuration_note`]).
     pub fn configure_renderer_from_env(&mut self) -> bool {
-        match AdapterConfig::from_env() {
-            Some(mut cfg) => {
+        match AdapterConfig::from_env_detailed() {
+            Ok(mut cfg) => {
                 cfg.limits = self.limits;
                 self.renderer = Some(Arc::new(RhwpAdapter::new(cfg)));
+                self.renderer_unavailable = None;
                 true
             }
-            None => false,
+            Err(failure) => {
+                self.renderer_unavailable = Some(failure.to_error());
+                false
+            }
         }
+    }
+
+    /// One line explaining why the preview renderer is not configured: which
+    /// candidates were searched and what fixes it. `None` when it is.
+    pub fn renderer_configuration_note(&self) -> Option<String> {
+        match (&self.renderer, &self.renderer_unavailable) {
+            (None, Some(e)) => Some(e.to_string()),
+            _ => None,
+        }
+    }
+
+    /// Why previews will be refused on this platform even though the adapter
+    /// is configured (non-Unix without the Windows opt-in).
+    pub fn renderer_platform_note(&self) -> Option<String> {
+        self.renderer
+            .as_ref()
+            .and_then(|a| a.config().platform_isolation_note())
     }
 
     pub fn session_id(&self) -> &str {
@@ -1590,12 +1619,15 @@ impl SessionExecutor {
             }
         }
         let Some(adapter) = self.renderer.clone() else {
-            return Err(EngineError::new(
-                Code::RendererUnavailable,
-                Stage::Render,
-                "no rhwp preview adapter is configured",
-            )
-            .with_reason("renderer_not_configured"));
+            return Err(self.renderer_unavailable.clone().unwrap_or_else(|| {
+                EngineError::new(
+                    Code::RendererUnavailable,
+                    Stage::Render,
+                    "no rhwp preview adapter is configured: set HAE_RHWP to the rhwp renderer \
+                     executable, or enable discovery and place it beside this application or on PATH",
+                )
+                .with_reason("renderer_not_configured")
+            }));
         };
         let mut preview_limits = self.limits;
         preview_limits.max_session_memory = self

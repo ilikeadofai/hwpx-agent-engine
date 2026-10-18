@@ -23,13 +23,8 @@ struct Cli {
 }
 
 /// Extra help line printed with `--help`: how `document.preview` gets its
-/// sandboxed renderer.
-const RENDERER_HELP: &str = "\
-Preview environment (used by document.preview):
-  HAE_RHWP      Path to the sandboxed rhwp renderer executable (enables preview)
-  HAE_BWRAP     Path to bubblewrap (default /usr/bin/bwrap)
-  HAE_FONT_DIR  Font directory mounted for rendering (default /usr/share/fonts)
-  HAE_RASTER    PNG worker executable (default hae-raster next to this application)";
+/// sandboxed renderer. The text lives with the discovery rules.
+const RENDERER_HELP: &str = hae_exec::RENDERER_ENV_HELP;
 
 fn main() {
     let cli = Cli::parse();
@@ -41,17 +36,19 @@ fn main() {
                 std::process::exit(2);
             }
         };
-    // Enable document.preview when HAE_RHWP is set. On failure log once to
-    // stderr (never stdout) and keep serving with preview unavailable.
-    if std::env::var_os("HAE_RHWP")
-        .filter(|v| !v.is_empty())
-        .is_some()
-        && !executor.configure_renderer_from_env()
-    {
-        eprintln!(
-            "hae-jsonl: preview renderer not configured (HAE_RHWP/HAE_BWRAP/HAE_FONT_DIR); \
-             document.preview will return RENDERER_UNAVAILABLE"
-        );
+    // Enable document.preview: explicit HAE_* values first, then the
+    // documented search order. On failure log once to stderr (never stdout)
+    // and keep serving with preview unavailable.
+    if !executor.configure_renderer_from_env() {
+        match executor.renderer_configuration_note() {
+            Some(note) => eprintln!("hae-jsonl: preview renderer not configured: {note}"),
+            None => eprintln!(
+                "hae-jsonl: preview renderer not configured (HAE_RHWP/HAE_BWRAP/HAE_FONT_DIR); \
+                 document.preview will return RENDERER_UNAVAILABLE"
+            ),
+        }
+    } else if let Some(note) = executor.renderer_platform_note() {
+        eprintln!("hae-jsonl: preview is unavailable on this platform: {note}");
     }
     eprintln!("hae-jsonl: session {} ready", executor.session_id());
     let stdin = std::io::stdin();

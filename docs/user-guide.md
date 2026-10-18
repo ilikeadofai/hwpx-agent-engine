@@ -28,7 +28,7 @@
 ### 하지 않는 것 및 한계 (0.3 기준 제외 범위)
 - **전체 HWP/HWPX 기능 지원 아님**: 새 문서와 새 문단은 만들 수 없고, 문단 추가·삭제·합치기·나누기, 셀 병합·분할, 병합 셀을 가르는 행·열 삽입과 병합 셀이 걸린 행·열 삭제, 표 자체의 생성·삭제, 수식 새로 만들기, 도형 편집은 지원하지 않습니다. 새로 만들 수 있는 노드는 0.3의 표 행·열 명령이 기존 표 안에 만드는 빈 셀·문단뿐입니다. 구형 `.hwp`(HWP5 바이너리)는 읽기 전용 조회(`hwp5.inspect`)만 지원하며 편집·쓰기·HWPX 변환은 지원하지 않습니다.
 - **읽기 전용 문서**: 암호화된 문서는 열지 않으며, 전자서명이나 변경 추적(Track Changes)이 들어 있는 문서는 열어서 내용을 조회하거나 무편집 상태로 내보내는 것만 허용하고 편집은 거절합니다. 변경 추적 표시와 작성자는 `trackchange_list`로 확인합니다.
-- **외부 렌더러 별도 준비 필요**: 이 엔진에는 미리보기 렌더러가 내장되어 있지 않습니다. `document_preview`를 사용하려면 별도의 `rhwp` 실행 파일, `bubblewrap`(`bwrap`) 샌드박스 도구, 읽을 수 있는 글꼴 폴더를 환경 변수(`HAE_RHWP`, `HAE_BWRAP`, `HAE_FONT_DIR`)로 직접 지정해야 합니다.
+- **외부 렌더러 별도 준비 필요**: 이 엔진에는 미리보기 렌더러가 내장되어 있지 않습니다. `document_preview`는 별도의 `rhwp` 실행 파일과 `bubblewrap`(`bwrap`) 샌드박스 도구, 읽을 수 있는 글꼴 폴더가 필요합니다. 환경 변수(`HAE_RHWP`, `HAE_BWRAP`, `HAE_FONT_DIR`, `HAE_RASTER`)를 지정하면 **항상 그 값을 쓰고**, 지정하지 않으면 실행 파일 옆·`../bin`·저장소의 개발 트리·`PATH` 순서로 스스로 찾습니다. 찾지 못하면 실행하지 않고 `RENDERER_UNAVAILABLE`로 거절하며 해결 방법을 함께 알려 줍니다(WSL이 아닌 Windows는 기본적으로 거절입니다: [플랫폼별 격리 보장](decisions/renderer-isolation-platforms.md)).
 - **엔진 구현 완료 범위와 Windows 한컴오피스 실기 호환성(단계 4 예정)의 구분**: 현재 엔진의 파일 편집·보존 검증·격리 미리보기 기능은 구현되어 있으나, 수정된 문서를 실제 Windows 한컴오피스(한글)에서 열었을 때의 실기 호환성 및 조판 대조 검증(단계 4)은 별도 확인 대상입니다. `document_preview`가 만드는 SVG/PNG 이미지와 쪽 번호는 외부 렌더러(`rhwp`)가 어림잡아 계산한 **추정치**이므로 실제 Windows 한컴오피스의 줄바꿈·쪽 나눔·표현 범위와 100% 일치한다고 보장하지 않습니다.
 
 ### 할 수 있는 것 (0.3 추가, 읽기 전용 조회)
@@ -79,10 +79,14 @@ Options:
   -V, --version                    Print version
 
 Preview environment (used by document.preview):
-  HAE_RHWP      Path to the sandboxed rhwp renderer executable (enables preview)
-  HAE_BWRAP     Path to bubblewrap (default /usr/bin/bwrap)
-  HAE_FONT_DIR  Font directory mounted for rendering (default /usr/share/fonts)
+  HAE_RHWP      Path to the sandboxed rhwp renderer executable. When unset it is
+                looked up beside this application, in ../bin, in an in-tree
+                spikes/vendor/rhwp-src/target/{release,debug} build, then on PATH
+  HAE_BWRAP     Path to bubblewrap (default /usr/bin/bwrap, then PATH)
+  HAE_FONT_DIR  Font directory mounted for rendering (default /usr/share/fonts,
+                then other system and per-user font directories)
   HAE_RASTER    PNG worker executable (default hae-raster next to this application)
+  HAE_RENDERER_DISCOVERY=0  Disable the search; only the variables above are used
 ```
 
 ### 명령줄 옵션
@@ -92,11 +96,24 @@ Preview environment (used by document.preview):
 - `-V, --version`: 버전을 출력합니다.
 
 ### 미리보기(`document_preview`)용 환경 변수 준비
-엔진 바이너리 안에는 렌더러가 묶여(번들) 있지 않으며, 시스템 `PATH`도 자동으로 검색하지 않습니다. 문서 조회·편집·내보내기는 아래 환경 변수 없이도 모두 작동하지만, **`document_preview`를 쓰려면 다음 세 가지를 준비해 명시적으로 지정**해야 합니다.
+엔진 바이너리 안에는 렌더러가 묶여(번들) 있지 않습니다. 문서 조회·편집·내보내기는 아래 환경 변수 없이도 모두 작동합니다. **`document_preview`는 ① `HAE_RHWP`가 있으면 그 값을 그대로 쓰고, ② 없으면 아래 순서로 스스로 찾습니다. 찾지 못하면 실행하지 않고 `RENDERER_UNAVAILABLE`(`renderer_not_configured`)로 거절하며, 진단 메시지에 "무엇을 어디에 두면 되는지"와 실제로 살펴본 경로 목록이 함께 나옵니다.** 탐색을 끄려면 `HAE_RENDERER_DISCOVERY=0`을 설정하세요(이때는 환경 변수만 사용합니다).
 
-1. **`HAE_RHWP`** *(미리보기 사용 시 필수)*: 별도로 준비한 `rhwp` 렌더러 실행 파일의 **절대 경로**입니다. 이 변수를 설정하지 않으면 미리보기 호출 시 `RENDERER_UNAVAILABLE`(`renderer_not_configured`) 오류가 반환됩니다.
-2. **`HAE_BWRAP`** *(기본값: `/usr/bin/bwrap`)*: 렌더러를 네트워크·파일시스템으로부터 격리해 실행하는 `bubblewrap`(`bwrap`) 실행 파일의 **절대 경로**입니다. 엔진은 첫 미리보기 실행 전에 격리 자가 점검(self-test)을 수행하며, `bwrap`이 없거나 격리가 확인되지 않으면 렌더러를 실행하지 않고 거절합니다.
+**탐색 순서 (`rhwp`, `hae-raster`)**
+1. 환경 변수 `HAE_RHWP` / `HAE_RASTER` — **항상 최우선**이며 값은 그대로 씁니다(존재 여부를 검사해 다른 파일로 바꾸지 않습니다).
+2. **실행 파일과 같은 폴더** (예: `hae-mcp` 옆의 `rhwp`, `hae-raster`)
+3. **그 상위 폴더의 `bin/`** (설치 접두어 배치)
+4. **개발 트리**: 작업 디렉터리와 실행 파일 위치에서 위로 올라가며 `spikes/vendor/rhwp-src/target/release/rhwp`, 그다음 `.../target/debug/rhwp`
+5. **`PATH`** (`rhwp`, `bwrap` 전용)
+
+`HAE_BWRAP`은 `HAE_BWRAP` → `/usr/bin/bwrap` → `/bin/bwrap` → `/usr/local/bin/bwrap` → `PATH` 순서이고, 글꼴 폴더(`HAE_FONT_DIR`)는 `HAE_FONT_DIR` → `/usr/share/fonts` → `/usr/local/share/fonts` → `/usr/share/fonts/truetype` → 홈 디렉터리의 사용자 글꼴 폴더 순서입니다.
+
+1. **`HAE_RHWP`** *(선택)*: 별도로 준비한 `rhwp` 렌더러 실행 파일의 **절대 경로**입니다. 지정하지 않으면 위 탐색 순서를 따릅니다.
+2. **`HAE_BWRAP`** *(기본값: `/usr/bin/bwrap`)*: 렌더러를 네트워크·파일시스템으로부터 격리해 실행하는 `bubblewrap`(`bwrap`) 실행 파일의 **절대 경로**입니다. 엔진은 첫 미리보기 실행 전에 격리 자가 점검(self-test)을 수행하며, `bwrap`이 없거나 격리가 확인되지 않으면 렌더러를 실행하지 않고 거절합니다. **Linux에서는 이 계약이 그대로이며, 어떤 설정으로도 우회할 수 없습니다.**
 3. **`HAE_FONT_DIR`** *(기본값: `/usr/share/fonts`)*: 렌더링과 PNG 변환에 사용할 글꼴(`.ttf`, `.otf`, `.ttc`, `.otc`, 대소문자 구분 없음)이 들어 있는 **읽기 가능한 폴더의 절대 경로**입니다. **한국어 글꼴 몇 개만 모은 작은 폴더**(예: `/home/user/hwpx-fonts`)를 권장합니다. 기본 시스템 폴더 전체는 상한을 넘겨 미리보기에 실패할 수 있습니다. 제한은 **글꼴 파일 4,096개, 총 64 MiB, 파일당 32 MiB**이며 메타데이터 작업 공간에도 상한을 적용합니다. 재귀 깊이는 8, 방문 항목은 8,192개로 제한하고 심볼릭 링크는 건너뜁니다. 세션의 남은 메모리에 따라 더 일찍 거절할 수 있습니다. 문서에 필요한 한국어 글꼴을 포함하고 `hae-mcp doctor`로 먼저 점검하세요.
+4. **`HAE_RASTER`** *(선택)*: PNG를 만드는 `hae-raster` 작업 파일의 경로입니다. 지정하지 않으면 실행 파일 옆에서 찾습니다. PATH는 검색하지 않습니다.
+
+**Windows에서는 미리보기가 기본적으로 거절됩니다.** bubblewrap과 `prlimit`에 해당하는 격리가 없기 때문입니다. 격리 없이 실행하려면 `HAE_ALLOW_UNSANDBOXED_PREVIEW=1`을 **명시적으로** 설정해야 하며, 이때도 결과에 `SANDBOX_UNVERIFIED` 경고와 `metadata.sandbox.verified: false`가 붙고 PNG는 나오지 않습니다(`PNG_UNAVAILABLE`, `status: partial`). 무엇이 강제되고 무엇이 강제되지 않는지는 [플랫폼별 격리 보장 표](decisions/renderer-isolation-platforms.md)를 확인하세요. Linux에서는 이 변수가 무시됩니다.
+
 
 ### MCP 설정 JSON 예시 (`hae-mcp`)
 
@@ -140,7 +157,16 @@ HAE_RHWP=/opt/rhwp/bin/rhwp hae-mcp doctor \
   --output-root /home/user/Documents/hwpx-outputs
 ```
 
-`doctor`는 실행 파일·폴더·입출력 권한과 미리보기와 동일한 제한 스캔의 글꼴 파일 수·용량을 JSON으로 보고합니다. 상한 초과는 fonts의 `ok:false`와 해결 안내로 표시하며, `measurementsComplete:false`이면 표시된 수치가 전체 합계의 하한입니다. 한국어 글꼴이 없을 가능성은 `warning`으로 알립니다. 비용이 작은 파일명 휴리스틱(Noto Sans/Serif KR·CJK KR, Nanum, Malgun, Batang, Gulim, Dotum 및 한글 이름)을 사용하며 cmap이나 글꼴 유효성은 검사하지 않습니다. 따라서 경고 유무는 실제 한글 지원을 보장하지 않고, 빈 폴더도 상한 점검은 통과하되 경고가 나옵니다. 모두 정상이면 종료 0, 빠진 항목이 있으면 1입니다. 렌더러가 없어도 조회·편집·내보내기는 쓸 수 있습니다. doctor는 렌더러나 한컴을 실행하지 않으므로 sandbox·한글 글꼴·실제 조판은 미리보기와 화면 확인으로 검증합니다.
+`doctor`는 실행 파일·폴더·입출력 권한과 미리보기와 동일한 제한 스캔의 글꼴 파일 수·용량을 JSON으로 보고합니다. 상한 초과는 fonts의 `ok:false`와 해결 안내로 표시하며, `measurementsComplete:false`이면 표시된 수치가 전체 하한입니다. 한국어 글꼴이 없을 가능성은 `warning`으로 알립니다. 비용이 작은 파일명 휴리스틱(Noto Sans/Serif KR·CJK KR, Nanum, Malgun, Batang, Gulim, Dotum 및 한글 이름)을 사용하며 cmap이나 글꼴 유효성은 검사하지 않습니다. 따라서 경고 유무는 실제 한글 지원을 보장하지 않고, 빈 폴더도 상한 점검은 통과하되 경고가 나옵니다. 모두 정상이면 종료 0, 빠진 항목이 있으면 1입니다. 렌더러가 없어도 조회·편집·내보내기는 쓸 수 있습니다. doctor는 렌더러나 한컴을 실행하지 않으므로 sandbox·한글 글꼴·실제 조판은 미리보기와 화면 확인으로 검증합니다.
+
+`doctor`는 미리보기 도구를 **어댑터와 같은 규칙으로** 해석해 다음을 함께 보고합니다.
+
+- `checks.rhwp|raster|bwrap|fonts`: 받아들인 `path`, 그것을 고른 `source` 규칙(`env`, `exeDir`, `exeParentBin`, `devTreeRelease`, `devTreeDebug`, `default`, `path`, `systemFontDir`, `userFontDir`, `platformFontDir`), 실제로 살펴본 후보 목록 `searched`(`path`·`origin`·`verdict`), 실패 시 `guidance` 한 줄.
+- `checks.discovery`: 탐색 사용 여부(`enabled`)와 중지 변수 이름, 그리고 탐색 순서 요약.
+- `checks.platformIsolation`: 이 플랫폼에서 렌더러를 어떻게 실행하는지, `unsandboxedOptIn`(`HAE_ALLOW_UNSANDBOXED_PREVIEW`)이 설정되었는지·이 플랫폼에서 존중되는지(`honoredOnThisPlatform`), 그리고 강제되는 것/강제되지 않는 것 목록(`enforcement`).
+- `checks.rhwp.ok:false`의 `message`·`guidance`는 "무엇을 어디에 두면 되는지"를 한 줄로 알려줍니다.
+
+Windows·기타 플랫폼에서 무엇이 보장되고 무엇이 보장되지 않는지는 [플랫폼별 격리 보장](decisions/renderer-isolation-platforms.md)에 정리했습니다.
 
 ### Claude Code·Codex·opencode·Inspector 연결
 
@@ -501,7 +527,7 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
     - `"rendered"`: 요청한 쪽들이 빠짐없이 정상적으로 렌더링되어 응답에 모두 담겼다는 뜻입니다.
     - `"partial"`: 일부 쪽만 담겼거나 제한이 적용된 상태입니다. 문서 전체가 100쪽을 넘어 앞 100쪽까지만 처리된 경우(`PREVIEW_PAGE_LIMIT`), 문서 쪽수를 벗어난 쪽 번호를 함께 요청한 경우(`PAGE_NOT_RENDERED`), 안전하지 않은 SVG가 제외된 경우(`SVG_UNSAFE`), 또는 일부 쪽의 PNG를 생성하지 못한 경우에 `"partial"`이 됩니다. 전달할 쪽이 전혀 없으면 `"failed"`입니다.
     - `"failed"`: 렌더러 실행은 끝났으나 요청한 쪽 가운데 실제로 돌려줄 수 있는 유효한 쪽이 하나도 없는 상태입니다(예: 요청한 쪽 번호가 모두 전체 쪽수를 벗어났거나 안전 검사에서 모두 제외된 경우). 참고로 렌더러나 `bwrap` 자체가 준비되지 않았거나 실행 시간 초과 등이 발생하면 `status` 대신 `RENDERER_UNAVAILABLE` 오류가 반환됩니다.
-  - `coverage: "unknown"`: 렌더러가 문서 안의 모든 HWPX 서식·개체를 빠짐없이 지원해 그렸는지 엔진이 자동으로 판별할 수 없다는 뜻입니다(항상 `"unknown"`으로 표시됩니다).
+  - `coverage: "unknown"`: 렌더러가 문서 안의 모든 HWPX 서식·개체를 빠짐없이 지원해 그렸는지 엔진이 자동으로 판별할 수 없다는 뜻입니다(항상 `"unknown"`으로 표시됩니다). **왜 확정할 수 없나**: 렌더러(`rhwp`)의 `export-svg` JSON은 `format`·`pageCount`·`renderedCount`·`pages[].path/bytes`·`untrustedContent`(신뢰 플래그)·`overflowCellLines`만 보고하며, **그리지 못한 요소의 개수나 종류를 알려 주지 않습니다**. `render-tree` JSON은 실제로 배치된 결과이므로 "무엇을 빠뜨렸는지"를 거기서 역산할 수 없고, 엔진이 쪽별 SVG를 다시 해석해 원본 개체 수와 대조하는 것도 검증된 방법이 아닙니다. 따라서 미지원 요소 검출 수단이 생기기 전까지 `unknown`을 유지합니다(추측값으로 바꾸지 않습니다).
   - `metadata.nativeComparison: "not_checked"`: 이 미리보기 결과를 실제 Windows 한컴오피스(한글) 화면과 대조해 검증하지 않았다는 뜻입니다(항상 `"not_checked"`로 표시됩니다).
 
 ### ⑦ 프로젝트 저장 (`project_save`) 및 새 HWPX 내보내기 (`document_export`)
@@ -611,7 +637,7 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 | `MATCHES_SKIPPED` *(경고)* | **일부 일치를 건너뜀**: `text_replace_all`이 개체를 가로지르거나 자소 경계가 맞지 않는 등 안전하게 바꿀 수 없는 일치를 건드리지 않았습니다. `detail.reasons`의 사유별 개수와 위치(`nodeId`, `range`)를 확인해 필요하면 `text_replace`·`controls: "preserve"`로 따로 고치세요. |
 | `FORM_FILL_SKIPPED` *(경고)* | **일부 라벨을 건너뜀**: `form_fill`을 `strict: false`로 실행했을 때 채우지 못한 라벨이 있습니다. 결과 `skipped`의 라벨별 `reason`(`label_not_found`, `ambiguous_label`, `target_not_empty`, `no_target_cell`, `ambiguous_target`, `conflicting_target`, 셀 사유 등)을 확인하세요. |
 | `FORMAT_COLLAPSED` *(경고)* | **글자 모양 통합 경고**: 서로 다른 글자 모양(글꼴·크기·색상 등)이 적용된 여러 구간을 한 번에 교체하여, 새 글자가 첫 글자의 모양으로 통일되었음을 알려주는 경고입니다. |
-| `RENDERER_UNAVAILABLE` | **미리보기 렌더러 사용 불가**: `document_preview`를 호출했으나 외부 렌더러(`HAE_RHWP`)가 설정되지 않았거나(`renderer_not_configured`), 실행 파일이 없거나(`renderer_missing`), `bubblewrap`(`HAE_BWRAP`) 격리 자가 점검에 실패했거나(`sandbox_unverified`), 글꼴 폴더(`HAE_FONT_DIR`)를 읽을 수 없거나(`font_dir_unreadable`), 렌더링 제한 시간(60초)을 넘겼을 때(`timeout`) 발생합니다. 미리보기만 실패할 뿐 문서 내용은 전혀 바뀌지 않습니다. |
+| `RENDERER_UNAVAILABLE` | **미리보기 렌더러 사용 불가**: `document_preview`를 호출했으나 외부 렌더러를 찾지 못했거나(`renderer_not_configured`, 메시지에 살펴본 경로와 `HAE_RHWP` 안내 포함), 지정·탐색한 실행 파일이 없거나(`renderer_missing`), `bubblewrap`(`HAE_BWRAP`) 격리 자가 점검에 실패했거나(`sandbox_unverified`, Windows에서 opt-in이 꺼져 있을 때 포함), PNG 작업 파일이 없거나(`raster_worker_missing`·`raster_worker_not_configured`), 렌더링 제한 시간(60초)을 넘겼을 때(`timeout`) 발생합니다. 미리보기만 실패할 뿐 문서 내용은 전혀 바뀌지 않습니다. |
 | `PREVIEW_PAGE_LIMIT` *(경고)* | **미리보기 100쪽 제한 경고**: 문서 전체가 100쪽을 넘어 앞의 100쪽까지만 렌더링했습니다(결과 `status`는 `"partial"`이 됩니다). |
 | `INVALID_REQUEST` / `UNKNOWN_COMMAND` | **잘못된 요청 형식 / 알 수 없는 명령**: 명령 이름이 틀렸거나, 필수 인자가 빠졌거나, 줄간격 백분율(`1`~`1000`)·미리보기 쪽 번호(`1`~`100`개, 1 이상) 범위를 벗어났거나, 새 텍스트에 줄바꿈·탭 문자를 넣었을 때 발생합니다. |
 | `PATH_NOT_ALLOWED` | **허용되지 않은 파일 경로**: `--input-root` 또는 `--output-root` 바깥의 경로에 접근하려 했거나, 심볼릭 링크를 거치거나, 원본 파일 덮어쓰기를 시도했을 때 거부합니다. |
@@ -637,7 +663,7 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 
 ### PNG 작업 파일 배치
 
-PNG 변환에는 같은 빌드의 `hae-raster`가 필요합니다. 저장소 루트에서 `cargo build --workspace --release`로 함께 빌드하고 `hae`·`hae-jsonl`·`hae-mcp`와 같은 폴더에 배치하세요. 다른 위치라면 `HAE_RASTER`에 절대 경로를 지정합니다. PATH는 검색하지 않습니다. 작업 파일이 없거나 실패했을 때 엔진 프로세스 안에서 PNG 변환을 대신 실행하지 않습니다.
+PNG 변환에는 같은 빌드의 `hae-raster`가 필요합니다. 저장소 루트에서 `cargo build --workspace --release`로 함께 빌드하고 `hae`·`hae-jsonl`·`hae-mcp`와 같은 폴더에 배치하세요. 다른 위치에 두었다면 `HAE_RASTER`에 절대 경로를 지정하거나 실행 파일과 같은 폴더(또는 그 상위의 `bin/`)에 두세요. PATH는 검색하지 않습니다. 작업 파일이 없거나 실패했을 때 엔진 프로세스 안에서 PNG 변환을 대신 실행하지 않습니다.
 
 작업 파일은 읽기 전용 SVG·폰트 스냅샷을 받아 네트워크가 차단된 격리 안에서 실행하며, 프로세스별 주소 공간·시간·출력 상한을 적용합니다. 이 한도와 일반 엔진 메모리 회계값을 전체 시스템 RSS나 디스크 하드 quota로 해석하지 마세요. 실제 지원·실패 범위는 `docs/decisions/resumption-review/raster-worker.md`의 검증 기록을 따릅니다.
 

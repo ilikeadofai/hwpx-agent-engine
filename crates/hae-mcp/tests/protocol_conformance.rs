@@ -414,6 +414,10 @@ fn doctor_checks_dependencies_and_roots_without_starting_stdio() {
             "doctor",
         ])
         .env_remove("HAE_RHWP")
+        // Discovery off: with a development-tree renderer built next to the
+        // repository, an unset HAE_RHWP would otherwise be found and this
+        // "missing renderer" assertion would depend on the checkout.
+        .env("HAE_RENDERER_DISCOVERY", "0")
         .output()
         .unwrap();
     let report: Value = serde_json::from_slice(&r.stdout).unwrap();
@@ -467,6 +471,134 @@ fn doctor_reports_healthy_paths_and_invalid_roots() {
             .to_string_lossy()
             .starts_with(".hae-doctor-")));
     }
+}
+
+/// `doctor` must report the rule that produced each preview path, the
+/// candidates examined before it, and what to do when nothing was found.
+#[cfg(unix)]
+#[test]
+fn doctor_reports_where_each_preview_tool_came_from() {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    let t = TempDir::new("doctor-discovery");
+    let fonts = t.path().join("fonts");
+    fs::create_dir_all(&fonts).unwrap();
+    let fake = t.path().join("rhwp");
+    fs::write(&fake, b"#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+
+    // Discovery off, nothing configured for the renderer: the report says what
+    // is missing, what to do, and which switch turned the search off.
+    let r = Command::new(HAE_MCP)
+        .args([
+            "doctor",
+            "--input-root",
+            t.path().to_str().unwrap(),
+            "--output-root",
+            t.path().to_str().unwrap(),
+        ])
+        .env_remove("HAE_RHWP")
+        .env("HAE_RENDERER_DISCOVERY", "0")
+        .env("HAE_RASTER", "/bin/true")
+        .env("HAE_BWRAP", "/bin/true")
+        .env("HAE_FONT_DIR", &fonts)
+        .output()
+        .unwrap();
+    let report: Value = serde_json::from_slice(&r.stdout).unwrap();
+    assert_eq!(r.status.code(), Some(1), "{report}");
+    assert_eq!(report["checks"]["discovery"]["enabled"], false, "{report}");
+    assert_eq!(
+        report["checks"]["discovery"]["variable"],
+        "HAE_RENDERER_DISCOVERY"
+    );
+    assert_eq!(report["checks"]["rhwp"]["ok"], false, "{report}");
+    assert_eq!(report["checks"]["rhwp"]["source"], "unset", "{report}");
+    assert_eq!(
+        report["checks"]["rhwp"]["searched"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    let message = report["checks"]["rhwp"]["message"].as_str().unwrap();
+    assert!(message.contains("HAE_RHWP"), "{message}");
+    assert!(report["checks"]["rhwp"]["guidance"]
+        .as_str()
+        .unwrap()
+        .contains("HAE_RHWP"));
+    // The Windows opt-in is reported everywhere, and is not honoured here.
+    assert_eq!(
+        report["checks"]["platformIsolation"]["unsandboxedOptIn"],
+        "HAE_ALLOW_UNSANDBOXED_PREVIEW"
+    );
+    assert_eq!(
+        report["checks"]["platformIsolation"]["honoredOnThisPlatform"],
+        json!(cfg!(windows))
+    );
+    let enforcement = report["checks"]["platformIsolation"]["enforcement"]
+        .as_array()
+        .unwrap();
+    let memory = enforcement
+        .iter()
+        .find(|e| e["item"] == "memoryLimit")
+        .expect("memoryLimit entry");
+    assert_eq!(memory["enforced"], false, "{memory}");
+    assert!(memory["limit"].as_str().unwrap().contains("RLIMIT_AS"));
+
+    // An explicit renderer is used as given and reported with its rule.
+    let r = Command::new(HAE_MCP)
+        .args([
+            "doctor",
+            "--input-root",
+            t.path().to_str().unwrap(),
+            "--output-root",
+            t.path().to_str().unwrap(),
+        ])
+        .env("HAE_RHWP", &fake)
+        .env_remove("HAE_RENDERER_DISCOVERY")
+        .env("HAE_RASTER", "/bin/true")
+        .env("HAE_BWRAP", "/bin/true")
+        .env("HAE_FONT_DIR", &fonts)
+        .output()
+        .unwrap();
+    let report: Value = serde_json::from_slice(&r.stdout).unwrap();
+    assert_eq!(report["ok"], true, "{report}");
+    assert_eq!(r.status.code(), Some(0), "{report}");
+    assert_eq!(report["checks"]["rhwp"]["ok"], true, "{report}");
+    assert_eq!(report["checks"]["rhwp"]["source"], "env", "{report}");
+    assert_eq!(report["checks"]["rhwp"]["path"], json!(fake), "{report}");
+
+    // Discovery on: the report lists the search order, starting beside the
+    // executable, even when the search succeeds or fails later.
+    let r = Command::new(HAE_MCP)
+        .args([
+            "doctor",
+            "--input-root",
+            t.path().to_str().unwrap(),
+            "--output-root",
+            t.path().to_str().unwrap(),
+        ])
+        .env_remove("HAE_RHWP")
+        .env_remove("HAE_RENDERER_DISCOVERY")
+        .env("HAE_RASTER", "/bin/true")
+        .env("HAE_BWRAP", "/bin/true")
+        .env("HAE_FONT_DIR", &fonts)
+        .output()
+        .unwrap();
+    let report: Value = serde_json::from_slice(&r.stdout).unwrap();
+    let searched = report["checks"]["rhwp"]["searched"].as_array().unwrap();
+    assert!(!searched.is_empty(), "{report}");
+    assert_eq!(searched[0]["origin"], "exeDir", "{report}");
+    assert!(
+        searched[0]["path"].as_str().unwrap().ends_with("rhwp"),
+        "{report}"
+    );
+    let fonts_searched = report["checks"]["fonts"]["searched"].as_array().unwrap();
+    assert!(!fonts_searched.is_empty(), "{report}");
+    assert!(
+        fonts_searched.iter().any(|e| e["verdict"] == "found"),
+        "{report}"
+    );
 }
 
 #[test]

@@ -64,7 +64,9 @@ AI 에이전트와 사람이 같은 명령으로 기존 `.hwpx` 문서를 안전
 - **미리보기 외부 실행 파일 및 글꼴 폴더 제약**:
   엔진에 렌더러가 내장되어 있지 않습니다.
   미리보기에는 별도의 `rhwp` 실행 파일, `bubblewrap`(`bwrap`), `hae-raster`, 그리고 **작은 글꼴 폴더(`HAE_FONT_DIR`)**가 필요합니다.
+  환경 변수(`HAE_RHWP`·`HAE_BWRAP`·`HAE_FONT_DIR`·`HAE_RASTER`)를 지정하면 그 값을 그대로 쓰고, 없으면 실행 파일 옆·`../bin`·개발 트리·`PATH` 순서로 스스로 찾습니다([사용 안내서 §3](docs/user-guide.md), [플랫폼별 격리 보장](docs/decisions/renderer-isolation-platforms.md)).
   글꼴 스캔 상한은 **파일 4,096개·총 64 MiB·파일당 32 MiB**이므로 `/usr/share/fonts` 전체를 지정하면 `RENDERER_UNAVAILABLE`(`memory_limit`)로 거절됩니다.
+  WSL이 아닌 Windows는 bubblewrap이 없어 기본적으로 미리보기를 거절하며, `HAE_ALLOW_UNSANDBOXED_PREVIEW=1`을 명시한 경우에만 격리 없이 실행하고 결과에 `SANDBOX_UNVERIFIED`를 남깁니다(PNG 없음).
 
 ## 4. 빠른 시작
 

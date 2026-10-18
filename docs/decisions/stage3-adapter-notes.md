@@ -49,3 +49,12 @@ OS 메모리 제한은 렌더러 자식의 프로세스별 `RLIMIT_AS`다. 호�
 이전 단락의 호스트 resvg 격리 과제는 `resumption-review/raster-worker.md`의 별도 작업 프로세스로 구현했다. 제품 프리뷰는 호스트에서 PNG 변환이나 폰트 DB 구축을 하지 않는다. 같은 빌드의 `hae-raster`를 읽기 전용으로 복사해 bwrap와 `prlimit` 아래 실행하고, 실제로 사용한 폰트 바이트를 숫자 파일명 스냅샷으로 전달한다. 부모는 결과 파일 목록·크기·PNG 기본 구조·픽셀 수·해시와 SVG/폰트 해시 대응을 대조한다. 누락·잘못된 출력·비정상 종료는 명시 실패이고 호스트 대체 실행은 없다.
 
 어댑터는 요청한 PNG가 빠지면 SVG를 보존한 `partial`을 반환한다. 실행기는 PNG만 요청했는데 아무 내용도 전달할 수 없으면 `failed`로 표시한다. 메타데이터에 작업 파일 SHA-256과 폰트 스냅샷 해시, 작업 프로세스 `RLIMIT_AS` 범위를 기록한다. 이 한도는 프로세스별 가상 주소 공간이며 전체 엔진·자손·tmpfs·커널 메모리의 합산 RSS 한도가 아니다. 직접 라이브러리 API의 호스트 호출 가능성과 제품 프리뷰 경로의 필수 격리를 구분한다.
+
+
+## 2026-10-19 도구 탐색·진단·Windows opt-in (0.4 기능 3호)
+
+- **경로 결정**: `HAE_RHWP`·`HAE_BWRAP`·`HAE_FONT_DIR`·`HAE_RASTER`가 있으면 항상 그 값을 그대로 쓴다(존재를 검사해 다른 파일로 바꾸지 않는다). 없으면 `discovery.rs`가 실행 파일 옆 → `../bin` → 개발 트리(`spikes/vendor/rhwp-src/target/{release,debug}`, 작업 디렉터리와 실행 파일 위치에서 최대 4단계 위) → `PATH` 순서로 찾고, 받아들인 후보의 규칙(`source`)과 살펴본 후보 목록(`searched`)을 남긴다. `HAE_RENDERER_DISCOVERY=0`이면 탐색을 끄고 환경 변수만 쓴다.
+- **격리 계약 불변**: bwrap·`prlimit`·자기 점검이 실패하면 여전히 실행하지 않는다. 탐색은 *어떤 경로를 쓸지*만 정한다. Linux에서 `HAE_ALLOW_UNSANDBOXED_PREVIEW`는 무시된다.
+- **Windows opt-in**: 기본은 거절(`sandbox_unverified`)이다. `HAE_ALLOW_UNSANDBOXED_PREVIEW=1`일 때만 격리 없이 실행하고, 결과에 `SANDBOX_UNVERIFIED` 경고와 `metadata.sandbox{verified:false, enforcement[], jobObject{applied:false}}`를 남긴다. PNG는 제공하지 않는다(`PNG_UNAVAILABLE`, `partial`). 적용한 것/못 한 것과 그 이유는 [renderer-isolation-platforms.md](renderer-isolation-platforms.md)에 있다.
+- **coverage는 계속 `unknown`**이다. rhwp `export-svg` JSON은 `format`·`pageCount`·`renderedCount`·`pages[].path/bytes`·`untrustedContent`(신뢰 플래그)·`overflowCellLines`만 보고하며 그리지 못한 요소의 개수·종류를 알려 주지 않는다. `render-tree` JSON은 배치된 결과이므로 누락을 역산할 수 없고, SVG를 다시 해석해 원본과 대조하는 방법은 검증된 적이 없다. 추측값으로 채우지 않고, 렌더러가 미지원 요소를 보고하기 전까지 `unknown`을 유지한다.
+- **바뀐 시험**: `crates/hae-cli|crates/hae-mcp|crates/hae-jsonl/tests/renderer_env.rs`의 "렌더러 미설정" 시험은 이제 `HAE_RENDERER_DISCOVERY=0`을 명시해 결정적으로 만든다(저장소에 개발 트리 렌더러가 빌드되어 있으면 미설정 상태가 아니게 되므로). 진단 코드 목록의 새 문자열 코드는 `diagnostic-codes.md`를 따른다.

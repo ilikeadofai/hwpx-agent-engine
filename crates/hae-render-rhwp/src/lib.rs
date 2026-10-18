@@ -11,19 +11,33 @@
 //! already hashed fonts. Failure is explicit (`RENDERER_UNAVAILABLE` with a
 //! machine-readable reason) and never touches document state.
 //!
+//! Every tool path is explicit or discovered in a documented order
+//! ([`discovery`]): `HAE_RHWP`, `HAE_BWRAP`, `HAE_FONT_DIR` and `HAE_RASTER`
+//! always win unchanged, and an unset variable makes the adapter look beside
+//! the running executable, in a development tree and on `PATH`. Discovery
+//! chooses paths only; it never relaxes the sandbox contract.
+//!
+//! Windows has no bubblewrap, so previews are refused there by default. An
+//! explicit `HAE_ALLOW_UNSANDBOXED_PREVIEW` opt-in runs the renderer without
+//! equivalent isolation and marks every result `SANDBOX_UNVERIFIED`
+//! ([`unsandboxed`]).
+//!
 //! Pinned `export-render-tree` has no manifest protocol. The trusted adapter
 //! inventories its finished output directory, accepts exactly the bounded
 //! `render_tree_NNN.json` set determined by dump-pages, rejects extra entries,
 //! and records exact file lengths before any tree read. This exception applies
 //! only to that command; SVG paths must always come from rhwp's manifest.
 
+pub mod discovery;
 pub mod fonts;
 pub mod pages;
 pub mod png;
 pub mod sandbox;
 pub mod svg_safety;
+pub mod unsandboxed;
 pub mod worker;
 
+use discovery::{DiscoveryFailure, ProbeOutcome, ResolvedTools, SearchPaths};
 use fonts::{referenced_families, FontFile, FontSet};
 use hae_diag::{Code, Diagnostic, EngineError, Limits, Result, Stage};
 use hae_model::Document;
@@ -43,27 +57,32 @@ use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use unsandboxed::Policy;
 use worker::{PageJob, RasterOutcome, RasterStage};
 
 /// rhwp commit this engine pins (spec §9).
 pub const PINNED_COMMIT: &str = "1a76570e833917d15817415a53c09ad61ab3203f";
-/// Default bubblewrap location (explicit; PATH is never searched).
+/// Default bubblewrap location, used when `HAE_BWRAP` is unset and discovery
+/// finds nothing earlier (the first, documented candidate).
 pub const DEFAULT_BWRAP: &str = "/usr/bin/bwrap";
+/// Default font directory when `HAE_FONT_DIR` is unset and discovery finds no
+/// font directory at all (the first, documented candidate).
+pub const DEFAULT_FONT_DIR: &str = "/usr/share/fonts";
 
 const INPUT_NAME: &str = "doc.hwpx";
 const MAX_RENDER_TREE_PAGES: usize = 2000;
 const MAX_OUT_FILE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_NOTES: usize = 200;
 
-/// Adapter configuration. Every path is explicit.
+/// Adapter configuration. Every path is explicit or discovered.
 #[derive(Debug, Clone)]
 pub struct AdapterConfig {
     pub rhwp_path: PathBuf,
     pub bwrap_path: PathBuf,
     pub font_dir: PathBuf,
-    /// `hae-raster` worker executable used for every PNG. Explicit; PATH is
-    /// never searched. Defaults to `hae-raster` beside the running
-    /// executable ([`worker::default_worker_path`]); `HAE_RASTER` overrides it.
+    /// `hae-raster` worker executable used for every PNG. Defaults to
+    /// `hae-raster` beside the running executable
+    /// ([`worker::default_worker_path`]); `HAE_RASTER` overrides it.
     pub raster_path: PathBuf,
     /// Parent of the per-run temporary directories.
     pub work_dir: PathBuf,
@@ -74,15 +93,28 @@ pub struct AdapterConfig {
     pub stdout_cap: usize,
     pub stderr_cap: usize,
     pub out_cap_bytes: u64,
+    /// Provenance of every path above: which rule produced it and which
+    /// candidates were examined first. Recorded by `doctor` and by failure
+    /// diagnostics so a missing tool says what to do.
+    pub tools: ResolvedTools,
+    /// Windows opt-in for running the renderer without verified isolation
+    /// ([`unsandboxed`]). Always `Off` unless the environment asks for it.
+    pub unsandboxed_preview: Policy,
 }
 
 impl AdapterConfig {
     pub fn new(rhwp_path: impl Into<PathBuf>, font_dir: impl Into<PathBuf>) -> Self {
+        let rhwp_path = rhwp_path.into();
+        let font_dir = font_dir.into();
+        let bwrap_path = PathBuf::from(DEFAULT_BWRAP);
+        let raster_path = worker::default_worker_path();
         AdapterConfig {
-            rhwp_path: rhwp_path.into(),
-            bwrap_path: PathBuf::from(DEFAULT_BWRAP),
-            font_dir: font_dir.into(),
-            raster_path: worker::default_worker_path(),
+            tools: ResolvedTools::all_explicit(&rhwp_path, &bwrap_path, &font_dir, &raster_path),
+            unsandboxed_preview: Policy::Off,
+            rhwp_path,
+            bwrap_path,
+            font_dir,
+            raster_path,
             work_dir: std::env::temp_dir(),
             renderer_commit: Some(PINNED_COMMIT.to_string()),
             limits: Limits::default(),
@@ -92,22 +124,102 @@ impl AdapterConfig {
         }
     }
 
-    /// Read `HAE_RHWP` (required), `HAE_BWRAP`, `HAE_FONT_DIR` and
-    /// `HAE_RASTER` (the `hae-raster` worker). `None` when
-    /// `HAE_RHWP` is unset, i.e. the preview adapter is not configured.
+    /// Read `HAE_RHWP`, `HAE_BWRAP`, `HAE_FONT_DIR` and `HAE_RASTER`, and fall
+    /// back to the documented search order for whatever is unset
+    /// ([`discovery`]). `None` when no renderer could be found or configured,
+    /// i.e. the preview adapter is not configured.
     pub fn from_env() -> Option<Self> {
-        let rhwp = std::env::var_os("HAE_RHWP").filter(|v| !v.is_empty())?;
-        let font_dir = std::env::var_os("HAE_FONT_DIR")
-            .filter(|v| !v.is_empty())
-            .unwrap_or_else(|| "/usr/share/fonts".into());
-        let mut c = AdapterConfig::new(rhwp, font_dir);
-        if let Some(b) = std::env::var_os("HAE_BWRAP").filter(|v| !v.is_empty()) {
-            c.bwrap_path = b.into();
+        Self::from_env_detailed().ok()
+    }
+
+    /// [`Self::from_env`] with the reason a renderer was not found: which
+    /// candidates were examined and what fixes it.
+    pub fn from_env_detailed() -> std::result::Result<Self, DiscoveryFailure> {
+        let env = preview_environment();
+        let Some(rhwp) = env.tools.rhwp.path.clone() else {
+            return Err(env
+                .tools
+                .rhwp_failure()
+                .unwrap_or_else(|| DiscoveryFailure {
+                    tool: "rhwp",
+                    message: format!(
+                        "rhwp renderer executable not found: set HAE_RHWP to its path, or place \
+                         it beside this application (or on PATH) (see {})",
+                        discovery::DISCOVERY_ENV
+                    ),
+                    searched: Vec::new(),
+                }));
+        };
+        let mut c = AdapterConfig::new(
+            rhwp,
+            env.tools
+                .font_dir
+                .path
+                .clone()
+                .map_or_else(|| PathBuf::from(DEFAULT_FONT_DIR), PathBuf::from),
+        );
+        c.bwrap_path = env
+            .tools
+            .bwrap
+            .path
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_BWRAP));
+        c.raster_path = env
+            .tools
+            .raster
+            .path
+            .clone()
+            .unwrap_or_else(worker::default_worker_path);
+        c.tools = env.tools;
+        c.unsandboxed_preview = env.unsandboxed_policy;
+        Ok(c)
+    }
+
+    /// Where the current `rhwp_path` came from: the recorded rule, or
+    /// `explicit` when a caller replaced the path after construction.
+    pub fn rhwp_source(&self) -> &'static str {
+        source_of(&self.tools.rhwp, &self.rhwp_path)
+    }
+
+    /// Where the current `bwrap_path` came from.
+    pub fn bwrap_source(&self) -> &'static str {
+        source_of(&self.tools.bwrap, &self.bwrap_path)
+    }
+
+    /// Where the current `font_dir` came from.
+    pub fn font_source(&self) -> &'static str {
+        source_of(&self.tools.font_dir, &self.font_dir)
+    }
+
+    /// Where the current `raster_path` came from.
+    pub fn raster_source(&self) -> &'static str {
+        source_of(&self.tools.raster, &self.raster_path)
+    }
+
+    /// Why previews will still be refused on this platform even though a
+    /// renderer was configured: non-Unix has no verified isolation, and the
+    /// Windows opt-in is off. `None` when previews can run.
+    pub fn platform_isolation_note(&self) -> Option<String> {
+        if cfg!(unix) || (cfg!(windows) && self.unsandboxed_preview.is_on()) {
+            return None;
         }
-        if let Some(r) = std::env::var_os("HAE_RASTER").filter(|v| !v.is_empty()) {
-            c.raster_path = r.into();
+        Some(unsandboxed::refusal_message())
+    }
+
+    /// `RENDERER_UNAVAILABLE(renderer_not_configured)` for an adapter with no
+    /// renderer path, carrying the discovery result and the fix.
+    fn unconfigured_error(&self) -> EngineError {
+        match self.tools.rhwp_failure() {
+            Some(f) => f.to_error(),
+            None => unavailable(
+                "renderer_not_configured",
+                format!(
+                    "no rhwp renderer is configured: set HAE_RHWP to the rhwp executable path, or \
+                     enable discovery ({}=1) and place it beside this application or on PATH",
+                    discovery::DISCOVERY_ENV
+                ),
+            ),
         }
-        Some(c)
     }
 
     fn run_limits(&self) -> RunLimits {
@@ -116,6 +228,38 @@ impl AdapterConfig {
         l.stderr_cap = self.stderr_cap;
         l.out_cap_bytes = self.out_cap_bytes;
         l
+    }
+}
+
+/// Provenance of a configured path: the recorded discovery rule, or
+/// `explicit` when the path no longer matches what discovery produced.
+fn source_of(probe: &ProbeOutcome, path: &Path) -> &'static str {
+    if probe.path.as_deref() == Some(path) {
+        probe.source_str()
+    } else {
+        "explicit"
+    }
+}
+
+/// Everything the preview adapter would use, without building an adapter and
+/// without running anything: resolved tool paths with provenance, the Windows
+/// opt-in policy and what that policy can and cannot enforce.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewEnvironment {
+    pub tools: ResolvedTools,
+    pub unsandboxed_policy: Policy,
+    pub enforcement: Vec<unsandboxed::Enforcement>,
+}
+
+/// Resolve the preview environment from the real process environment.
+pub fn preview_environment() -> PreviewEnvironment {
+    let paths = SearchPaths::from_process();
+    let overrides = discovery::Overrides::from_process();
+    PreviewEnvironment {
+        tools: ResolvedTools::resolve(&overrides, &paths),
+        unsandboxed_policy: Policy::from_process(),
+        enforcement: unsandboxed::enforcement(),
     }
 }
 
@@ -143,7 +287,13 @@ fn set_renderer_executable(path: &Path) -> std::io::Result<()> {
     {
         fs::set_permissions(path, fs::Permissions::from_mode(0o755))
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        // Windows has no execute bit; the staged copy is the renderer.
+        let _ = path;
+        Ok(())
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = path;
         Err(std::io::Error::new(
@@ -277,6 +427,49 @@ pub struct RhwpAdapter {
     state: Mutex<State>,
 }
 
+/// Process runner for every renderer command: the verified bubblewrap sandbox
+/// on Unix, or the explicitly opted-in unsandboxed runner on Windows.
+enum Runner {
+    #[cfg_attr(not(unix), allow(dead_code))]
+    Sandbox(Sandbox),
+    #[cfg(windows)]
+    Unsandboxed(unsandboxed::Runner),
+}
+
+impl Runner {
+    /// Run `argv` with `limits`. `memory_bytes` is the `RLIMIT_AS` value of the
+    /// supervised process on Unix; the unsandboxed Windows path cannot apply an
+    /// equivalent and records `applied: false` in the result metadata.
+    fn run_with_memory(
+        &self,
+        in_dir: &Path,
+        out_dir: &Path,
+        argv: &[&str],
+        limits: &RunLimits,
+        cancel: Option<&CancelToken>,
+        memory_bytes: Option<u64>,
+    ) -> std::result::Result<ProcOutput, RunError> {
+        match self {
+            Runner::Sandbox(sb) => {
+                sb.run_with_memory(in_dir, out_dir, argv, limits, cancel, memory_bytes)
+            }
+            #[cfg(windows)]
+            Runner::Unsandboxed(r) => {
+                r.run_with_memory(in_dir, out_dir, argv, limits, cancel, memory_bytes)
+            }
+        }
+    }
+
+    /// True only for the verified Linux bubblewrap sandbox.
+    fn is_verified_sandbox(&self) -> bool {
+        match self {
+            Runner::Sandbox(_) => true,
+            #[cfg(windows)]
+            Runner::Unsandboxed(_) => false,
+        }
+    }
+}
+
 struct Staged {
     _td: TempDir,
     in_dir: PathBuf,
@@ -330,10 +523,13 @@ impl RhwpAdapter {
         Ok(f)
     }
 
-    /// Verify the sandbox once (isolation self-test). Any failure — missing
-    /// bwrap, failed probe, unusable fonts mount — means `sandbox_unverified`.
+    /// Verify isolation once and return the process runner.
+    ///
+    /// Unix: a missing bwrap, a failed isolation self-test or an unusable font
+    /// mount means `sandbox_unverified` and the renderer is never started.
+    /// Windows: refused unless the explicit unsandboxed opt-in is set.
     #[cfg(unix)]
-    fn sandbox(&self) -> Result<Sandbox> {
+    fn runner(&self) -> Result<Runner> {
         let sb = Sandbox::new(&self.cfg.bwrap_path, &self.cfg.font_dir);
         let mut st = self.state.lock().unwrap();
         if !st.sandbox_verified {
@@ -341,24 +537,66 @@ impl RhwpAdapter {
                 return Err(unavailable(
                     "sandbox_unverified",
                     format!(
-                        "font directory {} is not a directory",
-                        self.cfg.font_dir.display()
+                        "font directory {} is not a directory [{}]: set HAE_FONT_DIR to a readable \
+                         directory of fonts; searched: {}",
+                        self.cfg.font_dir.display(),
+                        self.cfg.font_source(),
+                        self.cfg.tools.font_dir.searched_str(8)
                     ),
                 ));
             }
             sb.self_test(&self.cfg.work_dir).map_err(|m| {
                 unavailable(
                     "sandbox_unverified",
-                    format!("sandbox isolation could not be verified: {m}"),
+                    format!(
+                        "sandbox isolation could not be verified: {m}; {}",
+                        self.sandbox_hint()
+                    ),
                 )
             })?;
             st.sandbox_verified = true;
         }
-        Ok(sb)
+        Ok(Runner::Sandbox(sb))
     }
 
-    #[cfg(not(unix))]
-    fn sandbox(&self) -> Result<Sandbox> {
+    /// One line naming the bubblewrap that was used, what to install instead,
+    /// and the fact that the Linux path never accepts an unsandboxed opt-in.
+    #[cfg(unix)]
+    fn sandbox_hint(&self) -> String {
+        let mut s = format!(
+            "bwrap {} [{}]",
+            self.cfg.bwrap_path.display(),
+            self.cfg.bwrap_source()
+        );
+        if !self.cfg.tools.bwrap.searched.is_empty() {
+            s.push_str(&format!(
+                "; searched: {}",
+                self.cfg.tools.bwrap.searched_str(8)
+            ));
+        }
+        s.push_str("; set HAE_BWRAP to a working bubblewrap or install it at /usr/bin/bwrap");
+        if self.cfg.unsandboxed_preview.is_on() {
+            s.push_str(
+                "; HAE_ALLOW_UNSANDBOXED_PREVIEW is only honored on Windows, so Linux previews still \
+                 require verified bubblewrap isolation",
+            );
+        }
+        s
+    }
+
+    #[cfg(windows)]
+    fn runner(&self) -> Result<Runner> {
+        if !self.cfg.unsandboxed_preview.is_on() {
+            return Err(unavailable(
+                "sandbox_unverified",
+                unsandboxed::refusal_message(),
+            ));
+        }
+        Ok(Runner::Unsandboxed(unsandboxed::Runner::new()))
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    fn runner(&self) -> Result<Runner> {
         Err(unavailable(
             "sandbox_unverified",
             sandbox::unsupported_platform_message(),
@@ -369,7 +607,12 @@ impl RhwpAdapter {
         let mut rhwp = fs::File::open(&self.cfg.rhwp_path).map_err(|e| {
             unavailable(
                 "renderer_missing",
-                format!("rhwp binary {}: {e}", self.cfg.rhwp_path.display()),
+                format!(
+                    "rhwp binary {} [{}]: {e}; set HAE_RHWP to an existing, executable rhwp or \
+                     place it beside this application",
+                    self.cfg.rhwp_path.display(),
+                    self.cfg.rhwp_source()
+                ),
             )
         })?;
         let io = |what: &str, e: std::io::Error| {
@@ -410,7 +653,7 @@ impl RhwpAdapter {
 
     fn preview_run(
         &self,
-        sb: &Sandbox,
+        runner: &Runner,
         st: &Staged,
         argv: &[&str],
         cancel: Option<&CancelToken>,
@@ -425,7 +668,7 @@ impl RhwpAdapter {
         // Pipe capacities are reserved by subdivision before readers allocate.
         limits.stdout_cap = limits.stdout_cap.min((budget.remaining / 32) as usize);
         limits.stderr_cap = limits.stderr_cap.min((budget.remaining / 128) as usize);
-        let out = sb
+        let out = runner
             .run_with_memory(
                 &st.in_dir,
                 &st.out_dir,
@@ -471,14 +714,10 @@ impl RhwpAdapter {
         memory_budget: u64,
     ) -> Result<PreviewOutput> {
         let started = Instant::now();
-        #[cfg(unix)]
         if self.cfg.rhwp_path.as_os_str().is_empty() {
-            return Err(unavailable(
-                "renderer_not_configured",
-                "no rhwp binary configured",
-            ));
+            return Err(self.cfg.unconfigured_error());
         }
-        let sb = self.sandbox()?;
+        let runner = self.runner()?;
         let deadline = Instant::now() + Duration::from_secs(self.cfg.limits.renderer_timeout_secs);
         let mut budget = MemoryBudget {
             remaining: memory_budget.min(self.cfg.limits.max_session_memory),
@@ -497,9 +736,11 @@ impl RhwpAdapter {
         budget.reserve(request_charge)?;
         let fonts = self.fonts_with_budget(&mut budget)?;
         let st = self.stage(req.hwpx)?;
-        // PNGs are made only by the supervised worker. Stage it (and fail on a
-        // missing worker) before any renderer work; there is no host fallback.
-        let mut raster = if req.want_png {
+        // PNGs are made only by the supervised worker, which needs the same
+        // verified sandbox. An unsandboxed run keeps the SVG and reports the
+        // missing PNG instead of rasterising on the host.
+        let sandboxed = runner.is_verified_sandbox();
+        let mut raster = if req.want_png && sandboxed {
             Some(RasterStage::prepare(
                 &self.cfg.raster_path,
                 &self.cfg.bwrap_path,
@@ -512,7 +753,7 @@ impl RhwpAdapter {
         let mut raster_families: Option<BTreeSet<String>> = None;
         let mut raster_address_space = 0u64;
         let version_out = self.preview_run(
-            &sb,
+            &runner,
             &st,
             &["/in/rhwp", "--version"],
             cancel,
@@ -530,7 +771,7 @@ impl RhwpAdapter {
         }
         drop(version_out);
         let dump_out = self.preview_run(
-            &sb,
+            &runner,
             &st,
             &["/in/rhwp", "dump-pages", "/in/doc.hwpx", "--json"],
             cancel,
@@ -551,6 +792,30 @@ impl RhwpAdapter {
         let rendered_count = total.min(max_pages);
         let mut notes = Vec::new();
         let mut diagnostics = Vec::new();
+        if !sandboxed {
+            if notes.len() < MAX_NOTES {
+                notes.push(note(
+                    "SANDBOX_UNVERIFIED",
+                    "warning",
+                    None,
+                    format!(
+                        "the renderer ran without verified isolation ({}): this is not equivalent \
+                         to Linux bubblewrap isolation and none of its filesystem, network or memory \
+                         guarantees apply",
+                        unsandboxed::ALLOW_ENV
+                    ),
+                ));
+            }
+            if req.want_png && notes.len() < MAX_NOTES {
+                notes.push(note(
+                    "PNG_UNAVAILABLE",
+                    "warning",
+                    None,
+                    "PNG rasterisation needs the isolated hae-raster worker, which is Linux-only; \
+                     SVG pages are returned instead",
+                ));
+            }
+        }
         if limit_hit {
             diagnostics.push(
                 Diagnostic::error(
@@ -605,7 +870,7 @@ impl RhwpAdapter {
             // Pinned rhwp supports one zero-based --page per invocation, not a
             // range. Its pageCount remains the document total for a subset.
             let out = self.preview_run(
-                &sb,
+                &runner,
                 &st,
                 &[
                     "/in/rhwp",
@@ -823,11 +1088,28 @@ impl RhwpAdapter {
                 .as_bytes()
             )[..16]
         );
-        let bwrap_version =
-            bwrap_version(&self.cfg.bwrap_path, &st.out_dir, deadline, cancel, &budget);
+        let bwrap_version = if sandboxed {
+            bwrap_version(&self.cfg.bwrap_path, &st.out_dir, deadline, cancel, &budget)
+        } else {
+            None
+        };
         if cancel.is_some_and(CancelToken::is_cancelled) {
             return Err(run_error(RunError::Cancelled));
         }
+        // The Linux contract is reported exactly as before. The unsandboxed
+        // path says what it enforces and what it does not; it never claims
+        // `selfTest: passed`.
+        let sandbox_meta = if sandboxed {
+            json!({ "tool": "bubblewrap", "version": bwrap_version, "selfTest": "passed",
+                "memoryLimit": {"tool":"/usr/bin/prlimit", "resource":"RLIMIT_AS", "scope":"per-process virtual address space; inherited by descendants", "bytesAtMost":memory_budget.min(self.cfg.limits.max_session_memory)},
+                "rasterMemoryLimit": raster.as_ref().map(|_| json!({"tool":"/usr/bin/prlimit", "resource":"RLIMIT_AS", "scope":"raster worker process only: virtual address space after parent PNG/result reservations; not RSS, not an aggregate with the parent, tmpfs or kernel memory", "bytesAtMost":raster_address_space})),
+            })
+        } else {
+            unsandboxed::describe(
+                memory_budget.min(self.cfg.limits.max_session_memory),
+                Duration::from_secs(self.cfg.limits.renderer_timeout_secs),
+            )
+        };
         let metadata = PreviewMetadata {
             document_id: req.document_id.to_string(),
             content_revision: req.content_revision,
@@ -846,10 +1128,7 @@ impl RhwpAdapter {
                     "fontSnapshot": {"hash": r.fonts_hash, "files": r.font_files},
                 })),
             }),
-            sandbox: json!({ "tool": "bubblewrap", "version": bwrap_version, "selfTest": "passed",
-                "memoryLimit": {"tool":"/usr/bin/prlimit", "resource":"RLIMIT_AS", "scope":"per-process virtual address space; inherited by descendants", "bytesAtMost":memory_budget.min(self.cfg.limits.max_session_memory)},
-                "rasterMemoryLimit": raster.as_ref().map(|_| json!({"tool":"/usr/bin/prlimit", "resource":"RLIMIT_AS", "scope":"raster worker process only: virtual address space after parent PNG/result reservations; not RSS, not an aggregate with the parent, tmpfs or kernel memory", "bytesAtMost":raster_address_space})),
-            }),
+            sandbox: sandbox_meta,
             fonts: json!({
                 "hash": fonts.hash,
                 "files": fonts.files.iter().map(|f: &FontFile| json!({"path": f.path, "bytes": f.bytes, "sha256": f.sha256})).collect::<Vec<_>>(),
@@ -877,7 +1156,7 @@ impl RhwpAdapter {
     /// Page numbers for the document's nodes (spec §7), computed from the
     /// document's current snapshot. Pages are `renderer-estimated`.
     pub fn page_info(&self, doc: &Document, cancel: Option<&CancelToken>) -> Result<PageInfo> {
-        let sb = self.sandbox()?;
+        let runner = self.runner()?;
         let deadline = Instant::now() + Duration::from_secs(self.cfg.limits.renderer_timeout_secs);
         let mut budget = MemoryBudget {
             remaining: self.cfg.limits.max_session_memory,
@@ -886,7 +1165,7 @@ impl RhwpAdapter {
         let hwpx = doc.to_hwpx()?;
         let st = self.stage(&hwpx)?;
         let dump_out = self.preview_run(
-            &sb,
+            &runner,
             &st,
             &["/in/rhwp", "dump-pages", "/in/doc.hwpx", "--json"],
             cancel,
@@ -905,7 +1184,7 @@ impl RhwpAdapter {
                 format!("document has {n} pages; page information is limited to {MAX_RENDER_TREE_PAGES}")));
         }
         self.preview_run(
-            &sb,
+            &runner,
             &st,
             &[
                 "/in/rhwp",

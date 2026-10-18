@@ -19,5 +19,9 @@ pub use registry::{
 };
 pub use session::{RequestEnvelope, ResponseEnvelope, SessionExecutor};
 
+/// `--help` text describing how `document.preview` finds its renderer, shared
+/// with the discovery rules in `hae-render-rhwp` so the two cannot drift.
+pub use hae_render_rhwp::discovery::RENDERER_ENV_HELP;
+
 #[cfg(test)]
 mod tests;

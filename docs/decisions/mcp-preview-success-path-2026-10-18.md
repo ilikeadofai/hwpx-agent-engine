@@ -65,3 +65,12 @@ stateless 산출물은 같은 해시다(`stateless-*`). PNG 두 장은 시각 �
 - 폰트가 1개뿐이라 다른 글꼴은 대체 렌더링된다. 조판 수치는 추정이다.
 - `doctor`는 폰트 폴더의 읽기 가능 여부만 본다. 폰트 스캔 상한 초과는 실제 preview에서만 드러난다.
 - 시각 확인은 총괄이 별도로 맡는다.
+
+## 2026-10-19 후속 (0.4 기능 3호)
+
+위 "실패 경로(`HAE_RHWP` 없는 경로)" 기록은 그 시점의 동작이다. 이제 `HAE_RHWP`가 없어도 어댑터가
+문서화된 순서(실행 파일 옆 → `../bin` → 개발 트리 → `PATH`)로 렌더러를 찾고, 찾으면 미리보기가
+성공한다. 찾지 못하면 종전처럼 `RENDERER_UNAVAILABLE(renderer_not_configured)`이며 메시지와
+`detail.searched`가 살펴본 후보를 알려 준다. 이 문서의 해시·수치는 당시 실행의 기록이므로 바꾸지
+않는다. 새 동작의 근거는 [renderer-isolation-platforms.md](renderer-isolation-platforms.md)와
+`docs/decisions/stage3-adapter-notes.md`의 2026-10-19 절이다.

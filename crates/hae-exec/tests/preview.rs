@@ -1,4 +1,9 @@
+#![cfg(unix)]
+
 //! Task 3-5: document.preview through the executor.
+//!
+//! Every test here runs a renderer through bubblewrap or asserts the platform
+//! refusal, so the file builds only on Unix.
 
 use hae_diag::{Code, Limits};
 use hae_exec::{ResponseEnvelope, SessionExecutor};

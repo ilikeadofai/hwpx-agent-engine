@@ -1,5 +1,8 @@
-//! Renderer wiring through the `hae-mcp` server: `HAE_RHWP` enables the
-//! `document_preview` tool, and without it the preview fails with
+#![cfg(unix)]
+
+//! Renderer wiring through the `hae-mcp` server: discovery (or `HAE_RHWP`)
+//! enables the `document_preview` tool, and with discovery disabled and no
+//! renderer the preview fails with
 //! `RENDERER_UNAVAILABLE(renderer_not_configured)`.
 //!
 //! The rendering test needs the rhwp renderer and bubblewrap; when either is
@@ -63,6 +66,12 @@ struct Client {
 
 impl Client {
     fn start(dir: &Path, rhwp: Option<&Path>) -> Client {
+        Client::start_with(dir, rhwp, None)
+    }
+
+    /// `discovery` sets `HAE_RENDERER_DISCOVERY` for the server process, so a
+    /// test can pin the search off and keep the unconfigured path deterministic.
+    fn start_with(dir: &Path, rhwp: Option<&Path>, discovery: Option<&str>) -> Client {
         let fonts = dir.join("test-fonts");
         fs::create_dir_all(&fonts).unwrap();
         let mut cmd = Command::new(HAE_MCP);
@@ -80,6 +89,14 @@ impl Client {
             }
             None => {
                 cmd.env_remove("HAE_RHWP");
+            }
+        }
+        match discovery {
+            Some(v) => {
+                cmd.env("HAE_RENDERER_DISCOVERY", v);
+            }
+            None => {
+                cmd.env_remove("HAE_RENDERER_DISCOVERY");
             }
         }
         let mut child = cmd.spawn().expect("spawn hae-mcp");
@@ -254,7 +271,8 @@ fn preview_without_hae_rhwp_reports_renderer_not_configured() {
     let temp = TempDir::new("unconfigured");
     let target = temp.path().join(CORPUS);
     fs::copy(corpus_file(CORPUS), &target).expect("copy corpus doc");
-    let mut client = Client::start(temp.path(), None);
+    // Discovery off keeps this deterministic: only explicit variables count.
+    let mut client = Client::start_with(temp.path(), None, Some("0"));
 
     let (open, _) = client.call_tool("document_open", json!({ "path": target }));
     assert_eq!(open["ok"], json!(true), "open: {open}");
@@ -273,5 +291,8 @@ fn preview_without_hae_rhwp_reports_renderer_not_configured() {
         json!("renderer_not_configured"),
         "{preview}"
     );
+    let message = diag["message"].as_str().unwrap_or_default();
+    assert!(message.contains("HAE_RHWP"), "{message}");
+    assert!(message.contains("HAE_RENDERER_DISCOVERY"), "{message}");
     assert_eq!(client.finish().0, 0);
 }

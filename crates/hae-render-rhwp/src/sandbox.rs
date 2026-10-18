@@ -13,26 +13,22 @@
 
 use std::ffi::OsString;
 use std::fs;
-#[cfg(unix)]
 use std::io::Read;
 #[cfg(unix)]
 use std::os::unix::fs::DirBuilderExt;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(unix)]
 use std::sync::mpsc;
 use std::sync::Arc;
-#[cfg(unix)]
 use std::thread;
-use std::time::Duration;
-#[cfg(unix)]
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-#[cfg(not(unix))]
-pub(crate) fn unsupported_platform_message() -> String {
+/// Why no sandbox can be built here. Used by the platform gate on every
+/// non-Unix build, and by the Windows opt-in refusal text.
+pub fn unsupported_platform_message() -> String {
     format!(
         "renderer isolation is unavailable on {}: this adapter requires Linux bubblewrap with unprivileged user/mount/PID/network namespaces and prlimit RLIMIT_AS; no equivalent isolation is implemented or verified, so the renderer was not started",
         std::env::consts::OS
@@ -417,7 +413,8 @@ impl Sandbox {
     }
 }
 
-#[cfg(unix)]
+/// Byte-capped pipe reader. Portable: the supervisor runs on Windows too when
+/// the renderer is started through the explicit unsandboxed opt-in.
 fn spawn_reader<R: Read + Send + 'static>(
     mut r: R,
     cap: usize,
@@ -476,8 +473,34 @@ pub fn dir_usage(dir: &Path, cap_bytes: u64, cap_entries: usize) -> Result<(u64,
     Ok((bytes, entries))
 }
 
-/// Spawn `cmd` (already configured with piped stdout/stderr) and supervise it.
+/// Kill everything the supervised command may have started.
+///
+/// Unix: SIGKILL to the child's process group; bwrap's pid namespace init dies
+/// with it (`--die-with-parent`), and a host metadata wrapper's descendants die
+/// too. The direct child is killed separately by the caller.
+///
+/// Windows (unsandboxed opt-in only): there is no process group or job object
+/// here, so `taskkill /T` is a best-effort tree kill and a descendant that
+/// escapes it can survive.
 #[cfg(unix)]
+fn kill_descendants(child: &Child) {
+    if let Some(pid) = rustix::process::Pid::from_raw(child.id() as i32) {
+        let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+    }
+}
+
+#[cfg(not(unix))]
+fn kill_descendants(child: &Child) {
+    let pid = child.id().to_string();
+    let _ = Command::new("taskkill")
+        .args(["/PID", &pid, "/T", "/F"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+/// Spawn `cmd` (already configured with piped stdout/stderr) and supervise it.
 pub fn run_limited(
     mut cmd: Command,
     out_dir: &Path,
@@ -489,6 +512,7 @@ pub fn run_limited(
         return Err(RunError::Cancelled);
     }
     // Safe std API; no pre_exec. Also covers host metadata wrappers that fork.
+    #[cfg(unix)]
     cmd.process_group(0);
     let mut child = cmd.spawn().map_err(RunError::Spawn)?;
     let out_over = Arc::new(AtomicBool::new(false));
@@ -534,17 +558,13 @@ pub fn run_limited(
 
     if let Some(err) = failure {
         // SIGKILL to bwrap; its pid namespace init dies with it (--die-with-parent).
-        if let Some(pid) = rustix::process::Pid::from_raw(child.id() as i32) {
-            let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
-        }
+        kill_descendants(&child);
         let _ = child.kill();
         let _ = child.wait();
         return Err(err);
     }
     // Clean up a metadata wrapper's descendants even if the wrapper exited.
-    if let Some(pid) = rustix::process::Pid::from_raw(child.id() as i32) {
-        let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
-    }
+    kill_descendants(&child);
     let status = child.wait().map_err(RunError::Wait)?;
     let grace = limits
         .timeout
@@ -567,19 +587,6 @@ pub fn run_limited(
         stderr,
         elapsed: started.elapsed(),
     })
-}
-
-#[cfg(not(unix))]
-pub fn run_limited(
-    _cmd: Command,
-    _out_dir: &Path,
-    _limits: &RunLimits,
-    _cancel: Option<&CancelToken>,
-) -> Result<ProcOutput, RunError> {
-    Err(RunError::Spawn(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "renderer process supervision is unavailable on this platform",
-    )))
 }
 
 #[cfg(all(test, target_os = "linux"))]
