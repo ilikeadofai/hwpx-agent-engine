@@ -49,7 +49,7 @@ fn paragraph_format() -> &'static str {
 }
 
 fn cell_set_text() -> &'static str {
-    "Replace text in existing cell target (nodeId); merged anchor cells are supported. Supply exactly one of text (one paragraph only) or paragraphs (string array matching the exact existing paragraph count). No new paragraphs are created. Wrong count returns INVALID_ARGUMENT with detail.paragraphCount; multi-paragraph cells with text return UNSUPPORTED and a paragraphs hint. controls=reject is default; controls=preserve keeps inline objects/tabs/line breaks/fields and reports CONTROLS_PRESERVED. Empty paragraphs use the first run; no run, nested tables/cells, unsupported markup/attributes or read-only documents still fail. Check edits[\"cell.setText\"].available and apply its requires arguments (e.g. controls=preserve). Requires expectedVersion; on VERSION_CONFLICT re-query. dryRun=true verifies without changing document or history."
+    "Replace text in existing cell target (nodeId); merged anchor cells are supported. Supply exactly one of text (one paragraph only) or paragraphs (string array matching the exact existing paragraph count). No new paragraphs are created. Wrong count returns INVALID_ARGUMENT with detail.paragraphCount; multi-paragraph cells with text return UNSUPPORTED and a paragraphs hint. controls=reject is default; controls=preserve keeps inline objects/tabs/line breaks/fields and reports CONTROLS_PRESERVED. Empty paragraphs use the first run; no run, nested tables/cells, unsupported markup/attributes or read-only documents still fail. Check edits[\"cell.setText\"].available and apply its requires guidance: requires.paragraphs=N means supply a string array of exactly N paragraphs, not the number N; requires.controls=preserve means also supply controls=preserve. Requires expectedVersion; on VERSION_CONFLICT re-query. dryRun=true verifies without changing document or history."
 }
 
 fn image_replace() -> &'static str {
@@ -73,7 +73,7 @@ fn history_clear() -> &'static str {
 }
 
 fn document_snapshot() -> &'static str {
-    "Capture an explicit in-session snapshot of `documentId` at the current revision (with optional `label`) and return its `snapshotId` for later `document_diff` comparisons. Read-only; does not change document content or `revision`."
+    "Capture an explicit in-session snapshot of `documentId` at the current revision (with optional `label`) and return its `snapshotId` for later `document_diff` comparisons. Creates session state without changing document content or `revision`."
 }
 
 fn snapshot_release() -> &'static str {
@@ -89,7 +89,7 @@ fn document_preview() -> &'static str {
 }
 
 fn project_save() -> &'static str {
-    "Atomically verify and save the open document, original baseline, and stable `nodeId` map to a `.hwpwork` project file under `--output-root` (`path` is required on first save and optional thereafter). Does not change content `revision` or history, and returns `savedVersion`. Refuses if a first-save target already exists (`TARGET_EXISTS`), if the bound file on disk was modified externally (`EXTERNAL_MODIFICATION`), or if the path is outside `--output-root` (`PATH_NOT_ALLOWED`)."
+    "Atomically verify and save the open document, original baseline, and stable `nodeId` map to a `.hwpwork` project file under `--output-root` (`path` is required on first save and optional thereafter). Overwrites the bound project on subsequent saves. Does not change content `revision` or history, and returns `savedVersion`. Refuses if a first-save target already exists (`TARGET_EXISTS`), if the bound file on disk was modified externally (`EXTERNAL_MODIFICATION`), or if the path is outside `--output-root` (`PATH_NOT_ALLOWED`)."
 }
 
 fn document_export() -> &'static str {

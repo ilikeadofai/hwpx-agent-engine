@@ -286,7 +286,9 @@ impl McpServer {
                 return Err(RpcError {
                     code: -32022,
                     message: "Unsupported protocol version".into(),
-                    data: Some(json!({"supported":[MODERN_VERSION],"requested":requested})),
+                    data: Some(
+                        json!({"supported":SUPPORTED_PROTOCOL_VERSIONS,"requested":requested}),
+                    ),
                 });
             }
             if !metadata

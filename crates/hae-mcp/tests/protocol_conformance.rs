@@ -299,6 +299,7 @@ fn modern_requests_negotiate_per_request_and_require_explicit_document_handles()
     let r = c.rpc("server/discover", json!({"_meta":meta("2026-07-28")}));
     assert_eq!(r["result"]["resultType"], "complete");
     assert_eq!(r["result"]["supportedVersions"][0], "2026-07-28");
+    let supported = r["result"]["supportedVersions"].clone();
     let tools = c.rpc("tools/list", json!({"_meta":meta("2026-07-28")}));
     let inspect = tools["result"]["tools"]
         .as_array()
@@ -317,6 +318,7 @@ fn modern_requests_negotiate_per_request_and_require_explicit_document_handles()
     let r = c.rpc("tools/list", json!({"_meta":meta("1900-01-01")}));
     assert_eq!(r["error"]["code"], -32022);
     assert_eq!(r["error"]["data"]["requested"], "1900-01-01");
+    assert_eq!(r["error"]["data"]["supported"], supported);
     let r = c.rpc(
         "tools/list",
         json!({"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}),

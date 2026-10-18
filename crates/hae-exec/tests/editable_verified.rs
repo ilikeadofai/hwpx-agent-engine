@@ -457,6 +457,10 @@ fn v02_merged_multi_paragraph_cell_and_argument_guidance() {
     let mut exec = h.open(&synthetic(&body));
     let c = query(&mut exec, "element.query", json!({"kind":"cell"}))["matches"][0].clone();
     assert_eq!(c["edits"]["cell.setText"]["available"], true);
+    assert_eq!(
+        c["edits"]["cell.setText"]["requires"],
+        json!({"paragraphs":3})
+    );
     for params in [
         json!({"text":"one"}),
         json!({"paragraphs":["one"]}),
@@ -793,4 +797,26 @@ fn preserve_required_for_replace_mode_with_only_insertion_spans() {
         let r = exec.call("text.replace", json!({"target":item["nodeId"],"range":{"start":start,"end":end},"text":"T","controls":"preserve"}), Some(0), true);
         assert!(r.ok, "{:?}", r.diagnostics);
     }
+}
+
+#[test]
+fn multi_paragraph_cell_requires_composes_with_controls_and_dry_runs() {
+    let h = Harness::new();
+    let body = cell("<hp:t>one</hp:t><hp:equation/>").replace(
+        "</hp:subList>",
+        &format!("{}</hp:subList>", p("<hp:t>two</hp:t>")),
+    );
+    let mut exec = h.open(&synthetic(&body));
+    let c = query(&mut exec, "element.query", json!({"kind":"cell"}))["matches"][0].clone();
+    assert_eq!(
+        c["edits"]["cell.setText"]["requires"],
+        json!({"paragraphs":2,"controls":"preserve"})
+    );
+    let r = exec.call(
+        "cell.setText",
+        json!({"target":c["nodeId"],"paragraphs":["first","second"],"controls":"preserve"}),
+        Some(0),
+        true,
+    );
+    assert!(r.ok, "{:?}", r.diagnostics);
 }

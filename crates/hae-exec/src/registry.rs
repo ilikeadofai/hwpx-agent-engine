@@ -415,6 +415,55 @@ mod schema_tests {
     use serde_json::json;
 
     #[test]
+    fn all_tool_annotations_match_behavior_audit() {
+        // (readOnly, destructive, idempotent, openWorld), audited against
+        // session dispatch, snapshot lifetime, and file publication behavior.
+        let expected = [
+            ("command_list", [true, false, true, false]),
+            ("command_describe", [true, false, true, false]),
+            ("document_open", [false, true, false, false]),
+            ("document_inspect", [true, false, true, false]),
+            ("document_close", [false, true, false, false]),
+            ("element_query", [true, false, true, false]),
+            ("element_get", [true, false, true, false]),
+            ("text_replace", [false, true, false, false]),
+            ("text_replace_all", [false, true, false, false]),
+            ("paragraph_format", [false, true, false, false]),
+            ("cell_set_text", [false, true, false, false]),
+            ("image_replace", [false, true, false, false]),
+            ("command_batch", [false, true, false, false]),
+            ("history_undo", [false, true, false, false]),
+            ("history_redo", [false, true, false, false]),
+            ("history_clear", [false, true, false, false]),
+            ("document_snapshot", [false, false, false, false]),
+            ("snapshot_release", [false, true, false, false]),
+            ("document_diff", [true, false, true, false]),
+            ("document_preview", [false, false, false, false]),
+            ("project_save", [false, true, false, false]),
+            ("document_export", [false, false, false, false]),
+        ];
+        let commands = command_list();
+        assert_eq!(commands.len(), expected.len());
+        for (name, hints) in expected {
+            let a = &commands
+                .iter()
+                .find(|d| d.mcp_tool_name == name)
+                .unwrap()
+                .annotations;
+            assert_eq!(
+                [
+                    a.read_only_hint,
+                    a.destructive_hint,
+                    a.idempotent_hint,
+                    a.open_world_hint
+                ],
+                hints,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
     fn generated_integer_schemas_express_rust_bounds_with_standard_keywords() {
         for (schema, minimum, maximum) in [
             (schema_json::<usize>(), json!(0), json!(usize::MAX)),
@@ -479,10 +528,10 @@ macro_rules! define_commands {
                         category: CommandCategory::$cat,
                         mutates_content: $mutates,
                         annotations: {
-                            let read_only = matches!(CommandCategory::$cat, CommandCategory::Introspection | CommandCategory::Query);
+                            let read_only = matches!(CommandCategory::$cat, CommandCategory::Introspection | CommandCategory::Query) || $name == "document.diff";
                             ToolAnnotations {
                                 read_only_hint: read_only,
-                                destructive_hint: $mutates || matches!(CommandCategory::$cat, CommandCategory::History | CommandCategory::Lifecycle),
+                                destructive_hint: $mutates || matches!(CommandCategory::$cat, CommandCategory::History | CommandCategory::Lifecycle) || matches!($name, "project.save" | "snapshot.release"),
                                 idempotent_hint: read_only,
                                 open_world_hint: false,
                             }

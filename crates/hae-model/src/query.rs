@@ -63,7 +63,7 @@ pub struct EditAvailability {
     pub modes: Option<Vec<String>>,
     /// Additional arguments needed for the advertised edit path.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub requires: Option<BTreeMap<String, String>>,
+    pub requires: Option<BTreeMap<String, serde_json::Value>>,
 }
 
 impl EditAvailability {
@@ -407,7 +407,10 @@ impl Document {
                         !pt.text.is_empty() && pt.preserve_replaceable(self.doc_of(n))
                     })
                 {
-                    e.requires = Some(BTreeMap::from([("controls".into(), "preserve".into())]));
+                    e.requires = Some(BTreeMap::from([(
+                        "controls".into(),
+                        serde_json::json!("preserve"),
+                    )]));
                 }
                 e.modes = Some(if e.available {
                     let mut modes = Vec::new();
@@ -441,7 +444,21 @@ impl Document {
                             })
                         })
                 {
-                    e.requires = Some(BTreeMap::from([("controls".into(), "preserve".into())]));
+                    e.requires = Some(BTreeMap::from([(
+                        "controls".into(),
+                        serde_json::json!("preserve"),
+                    )]));
+                }
+                if e.available {
+                    let count = self
+                        .children(&n.id)
+                        .filter(|p| p.kind == Kind::Paragraph)
+                        .count();
+                    if count > 1 {
+                        e.requires
+                            .get_or_insert_with(BTreeMap::new)
+                            .insert("paragraphs".into(), serde_json::json!(count));
+                    }
                 }
             }
             Kind::Picture => add("image.replace", self.picture_block_reason(n)),
