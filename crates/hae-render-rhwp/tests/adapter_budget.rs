@@ -224,3 +224,24 @@ PYTHON
         RenderStatus::Rendered
     );
 }
+
+#[test]
+fn explicit_oversized_font_dir_fails_with_its_path_source_and_the_fix() {
+    // An explicit font directory is used exactly as given: it is never
+    // replaced by a smaller one, and the failure names it instead of
+    // reporting a generic memory error.
+    let big =
+        hae_render_rhwp::sandbox::TempDir::new_in(&std::env::temp_dir(), "hae-bigfonts-").unwrap();
+    fs::File::create(big.path().join("Huge.ttf"))
+        .unwrap()
+        .set_len(hae_render_rhwp::fonts::MAX_FONT_FILE_BYTES + 1)
+        .unwrap();
+    let dir = big.path().to_path_buf();
+    let (env, _d) = fake_env(ONE, |c| c.font_dir = dir);
+    let e = env.adapter.preview(&req(), None).unwrap_err();
+    assert_eq!(e.reason(), Some("font_dir_unusable"), "{e}");
+    let m = e.to_string();
+    assert!(m.contains(&big.path().display().to_string()), "{m}");
+    assert!(m.contains("per-file"), "{m}");
+    assert!(m.contains("HAE_FONT_DIR"), "{m}");
+}

@@ -28,8 +28,12 @@ Preview environment (used by document.preview):
                 looked up beside this application, in ../bin, in an in-tree
                 spikes/vendor/rhwp-src/target/{release,debug} build, then on PATH
   HAE_BWRAP     Path to bubblewrap (default /usr/bin/bwrap, then PATH)
-  HAE_FONT_DIR  Font directory mounted for rendering (default /usr/share/fonts,
-                then other system and per-user font directories)
+  HAE_FONT_DIR  Font directory mounted for rendering, used exactly as given (an
+                invalid or over-limit directory is an error, never replaced). When
+                unset: <app dir>/fonts, per-user font dirs, then the first system
+                font dir within the font limits (/usr/share/fonts,
+                /usr/local/share/fonts, ...); if none fits, one bounded
+                subdirectory of an oversized system dir, reported as such
   HAE_RASTER    PNG worker executable (default hae-raster next to this application)
   HAE_RENDERER_DISCOVERY=0  Disable the search; only the variables above are used";
 
@@ -65,8 +69,13 @@ pub enum Origin {
     Default,
     /// A `PATH` entry.
     Path,
+    /// A font directory shipped with the application (`<exe dir>/fonts`).
+    AppFontDir,
     /// A well-known system font directory.
     SystemFontDir,
+    /// An immediate subdirectory of a system font directory that is itself
+    /// too large to use whole (bounded fallback, see [`select_font_dir`]).
+    SystemFontSubdir,
     /// A per-user font directory below the home directory.
     UserFontDir,
     /// A platform font directory (`%WINDIR%\Fonts`, `%LOCALAPPDATA%\...`).
@@ -85,7 +94,9 @@ impl Origin {
             Origin::DevTreeDebug => "devTreeDebug",
             Origin::Default => "default",
             Origin::Path => "path",
+            Origin::AppFontDir => "appFontDir",
             Origin::SystemFontDir => "systemFontDir",
+            Origin::SystemFontSubdir => "systemFontSubdir",
             Origin::UserFontDir => "userFontDir",
             Origin::PlatformFontDir => "platformFontDir",
         }
@@ -126,6 +137,9 @@ pub enum Verdict {
     NotExecutable,
     /// Present but not a directory.
     NotDirectory,
+    /// A directory the preview cannot use as its font set: it exceeds the
+    /// font limits or holds no font files (the detail says which).
+    Unusable,
 }
 
 impl Verdict {
@@ -135,6 +149,7 @@ impl Verdict {
             Verdict::Missing => "missing",
             Verdict::NotExecutable => "notExecutable",
             Verdict::NotDirectory => "notDirectory",
+            Verdict::Unusable => "unusable",
         }
     }
 }
@@ -152,6 +167,9 @@ pub enum Expect {
     Executable,
     /// A directory.
     Directory,
+    /// A directory that also passes the bounded font preflight
+    /// ([`crate::fonts::inspect_font_dir`]) and holds at least one font file.
+    FontDirectory,
 }
 
 /// One examined candidate with the verdict, kept for diagnostics.
@@ -161,6 +179,10 @@ pub struct Examined {
     pub path: PathBuf,
     pub origin: Origin,
     pub verdict: Verdict,
+    /// Why the verdict is what it is, when the verdict alone is not enough
+    /// (font limits exceeded, font count and size of an accepted directory).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 impl std::fmt::Display for Examined {
@@ -171,7 +193,11 @@ impl std::fmt::Display for Examined {
             self.path.display(),
             self.origin,
             self.verdict
-        )
+        )?;
+        match &self.detail {
+            Some(d) => write!(f, " ({d})"),
+            None => Ok(()),
+        }
     }
 }
 
@@ -187,6 +213,10 @@ pub struct ProbeOutcome {
     pub source: Option<Origin>,
     /// Candidates examined in order, up to and including the accepted one.
     pub searched: Vec<Examined>,
+    /// A bounded-fallback choice the user must know about: what was selected
+    /// and what was left out (font directories only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 impl ProbeOutcome {
@@ -201,9 +231,11 @@ impl ProbeOutcome {
                 path: path.clone(),
                 origin: Origin::Env,
                 verdict: Verdict::Found,
+                detail: None,
             }],
             path: Some(path),
             source: Some(Origin::Env),
+            note: None,
         }
     }
 
@@ -422,11 +454,26 @@ pub fn raster_candidates(sp: &SearchPaths) -> Vec<Candidate> {
     dedup(v)
 }
 
-/// Font directory candidates: common system locations, then per-user ones,
-/// then platform ones. `/usr/share/fonts` stays first, which is the previous
-/// default on Unix.
+/// Font directory candidates in priority order: the application's own
+/// `fonts/` directory, per-user directories, the whole system directories
+/// (`/usr/share/fonts` first, the previous default), then platform ones.
+///
+/// Each candidate is used whole or not at all. A candidate that exceeds the
+/// font limits is skipped with its reason recorded; only when no whole
+/// directory is usable does [`select_font_dir`] fall back to a bounded
+/// subdirectory of an oversized system directory.
 pub fn font_dir_candidates(sp: &SearchPaths) -> Vec<Candidate> {
     let mut v = Vec::new();
+    if let Some(dir) = &sp.exe_dir {
+        v.push(Candidate::new(dir.join("fonts"), Origin::AppFontDir));
+    }
+    if let Some(home) = &sp.home {
+        v.push(Candidate::new(
+            home.join(".local").join("share").join("fonts"),
+            Origin::UserFontDir,
+        ));
+        v.push(Candidate::new(home.join(".fonts"), Origin::UserFontDir));
+    }
     #[cfg(unix)]
     {
         for d in [
@@ -437,17 +484,147 @@ pub fn font_dir_candidates(sp: &SearchPaths) -> Vec<Candidate> {
             v.push(Candidate::new(d, Origin::SystemFontDir));
         }
     }
-    if let Some(home) = &sp.home {
-        v.push(Candidate::new(
-            home.join(".local").join("share").join("fonts"),
-            Origin::UserFontDir,
-        ));
-        v.push(Candidate::new(home.join(".fonts"), Origin::UserFontDir));
-    }
     for d in &sp.platform_font_dirs {
         v.push(Candidate::new(d.clone(), Origin::PlatformFontDir));
     }
     dedup(v)
+}
+
+/// Most subdirectories of one oversized system font directory the fallback
+/// examines (sorted by name), so the search stays bounded.
+const MAX_FONT_SUBDIRS: usize = 64;
+/// Most omitted subdirectories named in the fallback note.
+const MAX_NOTED_OMITTED: usize = 8;
+
+/// Choose the font directory when `HAE_FONT_DIR` is unset.
+///
+/// 1. The first candidate that passes the bounded font preflight whole.
+/// 2. Otherwise, a deterministic bounded subset: the immediate subdirectories
+///    (sorted by name, at most [`MAX_FONT_SUBDIRS`] per directory) of every
+///    system font directory that was rejected for exceeding the limits. The
+///    first usable one with a Korean-named font wins, else the first usable
+///    one. The outcome's `note` records the selection and every omission, so
+///    the narrower font set is never presented as full coverage.
+///
+/// The limits are never relaxed.
+pub fn select_font_dir(cands: &[Candidate]) -> ProbeOutcome {
+    let mut out = probe(cands, Expect::FontDirectory);
+    if out.is_found() {
+        return out;
+    }
+    let oversized: Vec<PathBuf> = out
+        .searched
+        .iter()
+        .filter(|e| e.origin == Origin::SystemFontDir && e.verdict == Verdict::Unusable)
+        .filter(|e| {
+            e.detail
+                .as_deref()
+                .is_some_and(|d| !d.starts_with("no font files"))
+        })
+        .map(|e| e.path.clone())
+        .collect();
+    let mut usable: Vec<(Candidate, crate::fonts::FontScanReport)> = Vec::new();
+    let mut omitted: Vec<String> = Vec::new();
+    for root in &oversized {
+        for sub in font_subdirs(root) {
+            let report = crate::fonts::inspect_font_dir(&sub);
+            let (verdict, detail) = font_verdict(&report);
+            out.searched.push(Examined {
+                path: sub.clone(),
+                origin: Origin::SystemFontSubdir,
+                verdict,
+                detail: Some(detail),
+            });
+            if verdict == Verdict::Found {
+                usable.push((Candidate::new(sub, Origin::SystemFontSubdir), report));
+            } else {
+                omitted.push(sub.display().to_string());
+            }
+        }
+    }
+    let chosen = usable
+        .iter()
+        .position(|(_, r)| r.korean_filename_matches > 0)
+        .or(if usable.is_empty() { None } else { Some(0) });
+    let Some(i) = chosen else {
+        return out;
+    };
+    let (cand, report) = &usable[i];
+    let mut left: Vec<String> = usable
+        .iter()
+        .enumerate()
+        .filter(|(j, _)| *j != i)
+        .map(|(_, (c, _))| c.path.display().to_string())
+        .collect();
+    left.extend(omitted);
+    let shown: Vec<&str> = left
+        .iter()
+        .take(MAX_NOTED_OMITTED)
+        .map(String::as_str)
+        .collect();
+    out.note = Some(format!(
+        "no font directory is usable whole ({}); selected {} ({} fonts, {} bytes, {} Korean-named) \
+         as a bounded subset: {} other subdirectories were omitted{}{}. Set HAE_FONT_DIR to choose \
+         the fonts explicitly.",
+        out.searched
+            .iter()
+            .filter(|e| e.origin != Origin::SystemFontSubdir && e.verdict == Verdict::Unusable)
+            .map(|e| e.path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", "),
+        cand.path.display(),
+        report.file_count,
+        report.total_bytes,
+        report.korean_filename_matches,
+        left.len(),
+        if shown.is_empty() { "" } else { ": " },
+        shown.join(", "),
+    ));
+    out.path = Some(cand.path.clone());
+    out.source = Some(cand.origin);
+    out
+}
+
+/// Immediate, non-symlink subdirectories of `root`, sorted by name.
+fn font_subdirs(root: &Path) -> Vec<PathBuf> {
+    let Ok(rd) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut dirs: Vec<PathBuf> = rd
+        .filter_map(std::result::Result::ok)
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .map(|e| e.path())
+        .collect();
+    dirs.sort();
+    dirs.truncate(MAX_FONT_SUBDIRS);
+    dirs
+}
+
+/// Verdict and human-readable detail for a bounded font preflight.
+fn font_verdict(report: &crate::fonts::FontScanReport) -> (Verdict, String) {
+    match &report.error {
+        Some(e) => (
+            Verdict::Unusable,
+            format!(
+                "{e}; {} font files, {} bytes{}",
+                report.file_count,
+                report.total_bytes,
+                if report.measurements_complete {
+                    ""
+                } else {
+                    " (lower bounds)"
+                }
+            ),
+        ),
+        None if report.file_count == 0 => (Verdict::Unusable, "no font files".to_string()),
+        None => (
+            Verdict::Found,
+            format!(
+                "{} font files, {} bytes",
+                report.file_count, report.total_bytes
+            ),
+        ),
+    }
 }
 
 /// Drop repeated paths, keeping the first (highest priority) rule.
@@ -503,6 +680,7 @@ impl ResolvedTools {
             path: Some(p.to_path_buf()),
             source: Some(Origin::Explicit),
             searched: Vec::new(),
+            note: None,
         };
         ResolvedTools {
             rhwp: explicit(rhwp),
@@ -525,7 +703,11 @@ impl ResolvedTools {
         ResolvedTools {
             rhwp: pick(&ov.rhwp, rhwp_candidates(sp), Expect::Executable),
             bwrap: pick(&ov.bwrap, bwrap_candidates(sp), Expect::Executable),
-            font_dir: pick(&ov.font_dir, font_dir_candidates(sp), Expect::Directory),
+            font_dir: match &ov.font_dir {
+                Some(p) => ProbeOutcome::explicit(p.clone()),
+                None if ov.discovery => select_font_dir(&font_dir_candidates(sp)),
+                None => ProbeOutcome::default(),
+            },
             raster: pick(&ov.raster, raster_candidates(sp), Expect::Executable),
             discovery_disabled: !ov.discovery,
         }
@@ -574,14 +756,26 @@ impl ResolvedTools {
 
     /// Guidance for a `font_dir_unreadable`/`sandbox_unverified` font failure.
     pub fn font_note(&self) -> String {
-        format!(
+        let mut s = format!(
             "fonts {} [{}]",
             self.font_dir
                 .path
                 .as_ref()
                 .map_or_else(|| "<unset>".into(), |p| p.display().to_string()),
             self.font_dir.source_str()
-        )
+        );
+        if self.discovery_disabled && self.font_dir.path.is_none() {
+            s.push_str(&format!(
+                "; discovery is disabled by {DISCOVERY_ENV}, so only HAE_FONT_DIR is used"
+            ));
+        }
+        if !self.font_dir.searched.is_empty() {
+            s.push_str(&format!("; searched: {}", self.font_dir.searched_str(12)));
+        }
+        if let Some(n) = &self.font_dir.note {
+            s.push_str(&format!("; {n}"));
+        }
+        s
     }
 }
 
@@ -590,17 +784,19 @@ impl ResolvedTools {
 pub fn probe(candidates: &[Candidate], expect: Expect) -> ProbeOutcome {
     let mut searched = Vec::new();
     for c in candidates {
-        let verdict = classify(&c.path, expect);
+        let (verdict, detail) = classify(&c.path, expect);
         searched.push(Examined {
             path: c.path.clone(),
             origin: c.origin,
             verdict,
+            detail,
         });
         if verdict == Verdict::Found {
             return ProbeOutcome {
                 path: Some(c.path.clone()),
                 source: Some(c.origin),
                 searched,
+                note: None,
             };
         }
     }
@@ -608,11 +804,22 @@ pub fn probe(candidates: &[Candidate], expect: Expect) -> ProbeOutcome {
         path: None,
         source: None,
         searched,
+        note: None,
     }
 }
 
-fn classify(path: &Path, expect: Expect) -> Verdict {
-    match std::fs::metadata(path) {
+fn classify(path: &Path, expect: Expect) -> (Verdict, Option<String>) {
+    if expect == Expect::FontDirectory {
+        return match std::fs::metadata(path) {
+            Err(_) => (Verdict::Missing, None),
+            Ok(md) if !md.is_dir() => (Verdict::NotDirectory, None),
+            Ok(_) => {
+                let (v, d) = font_verdict(&crate::fonts::inspect_font_dir(path));
+                (v, Some(d))
+            }
+        };
+    }
+    let verdict = match std::fs::metadata(path) {
         Err(_) => Verdict::Missing,
         Ok(md) => match expect {
             Expect::Executable => {
@@ -624,7 +831,7 @@ fn classify(path: &Path, expect: Expect) -> Verdict {
                     Verdict::NotExecutable
                 }
             }
-            Expect::Directory => {
+            Expect::Directory | Expect::FontDirectory => {
                 if md.is_dir() {
                     Verdict::Found
                 } else {
@@ -632,7 +839,8 @@ fn classify(path: &Path, expect: Expect) -> Verdict {
                 }
             }
         },
-    }
+    };
+    (verdict, None)
 }
 
 fn is_executable(md: &std::fs::Metadata) -> bool {
@@ -955,18 +1163,179 @@ mod tests {
     }
 
     #[test]
-    fn font_candidates_start_with_the_previous_default_and_include_user_dirs() {
+    fn font_candidates_prefer_app_and_user_dirs_before_the_system_dirs() {
         let home = PathBuf::from("/home/someone");
+        let sp = SearchPaths {
+            exe_dir: Some(PathBuf::from("/opt/hae/bin")),
+            home: Some(home.clone()),
+            ..Default::default()
+        };
+        let cands = font_dir_candidates(&sp);
+        let got = paths(&cands);
+        assert_eq!(got[0], "/opt/hae/bin/fonts");
+        assert_eq!(
+            got[1],
+            home.join(".local/share/fonts").display().to_string()
+        );
+        assert_eq!(got[2], home.join(".fonts").display().to_string());
+        assert_eq!(
+            origins(&cands)[..3],
+            ["appFontDir", "userFontDir", "userFontDir"]
+        );
+        // `/usr/share/fonts` keeps its place as the first system directory.
+        let first_system = got.iter().position(|p| p == "/usr/share/fonts").unwrap();
+        assert_eq!(first_system, 3);
+    }
+
+    /// A directory over the per-file font limit, cheaply (sparse file).
+    fn oversized_fonts(dir: &Path) {
+        fs::create_dir_all(dir).unwrap();
+        let f = fs::File::create(dir.join("Huge.ttf")).unwrap();
+        f.set_len(crate::fonts::MAX_FONT_FILE_BYTES + 1).unwrap();
+    }
+
+    fn small_fonts(dir: &Path, names: &[&str]) {
+        fs::create_dir_all(dir).unwrap();
+        for n in names {
+            fs::write(dir.join(n), b"not a real font, scan only counts bytes").unwrap();
+        }
+    }
+
+    #[test]
+    fn an_oversized_first_candidate_is_skipped_for_the_next_usable_one() {
+        // Regression: the first existing directory used to win even when the
+        // font limits rejected it, so every preview failed later with a
+        // generic memory error although a usable directory was available.
+        let t = temp();
+        let home = t.path().join("home");
+        oversized_fonts(&home.join(".local/share/fonts"));
+        small_fonts(&home.join(".fonts"), &["NanumGothic.ttf"]);
         let sp = SearchPaths {
             home: Some(home.clone()),
             ..Default::default()
         };
-        let got = paths(&font_dir_candidates(&sp));
-        assert_eq!(got[0], "/usr/share/fonts");
-        assert!(got.contains(&home.join(".fonts").display().to_string()));
-        assert!(got
+        let r = ResolvedTools::resolve(
+            &Overrides {
+                discovery: true,
+                ..Default::default()
+            },
+            &sp,
+        );
+        assert_eq!(
+            r.font_dir.path,
+            Some(home.join(".fonts")),
+            "{:?}",
+            r.font_dir
+        );
+        assert_eq!(r.font_dir.source_str(), "userFontDir");
+        let skipped = &r.font_dir.searched[0];
+        assert_eq!(skipped.verdict, Verdict::Unusable);
+        assert!(
+            skipped.detail.as_deref().unwrap().contains("per-file"),
+            "{skipped}"
+        );
+        assert!(r.font_dir.note.is_none(), "a whole directory needs no note");
+    }
+
+    #[test]
+    fn an_empty_font_directory_is_not_selected() {
+        let t = temp();
+        let empty = t.path().join("empty");
+        let good = t.path().join("good");
+        fs::create_dir_all(&empty).unwrap();
+        small_fonts(&good, &["a.ttf"]);
+        let out = select_font_dir(&[
+            Candidate::new(&empty, Origin::AppFontDir),
+            Candidate::new(&good, Origin::UserFontDir),
+        ]);
+        assert_eq!(out.path, Some(good));
+        assert_eq!(out.searched[0].detail.as_deref(), Some("no font files"));
+    }
+
+    #[test]
+    fn an_explicit_font_dir_is_never_probed_or_replaced() {
+        let t = temp();
+        let home = t.path().join("home");
+        small_fonts(&home.join(".fonts"), &["a.ttf"]);
+        let bad = t.path().join("oversized");
+        oversized_fonts(&bad);
+        let sp = SearchPaths {
+            home: Some(home),
+            ..Default::default()
+        };
+        let r = ResolvedTools::resolve(
+            &Overrides {
+                font_dir: Some(bad.clone()),
+                discovery: true,
+                ..Default::default()
+            },
+            &sp,
+        );
+        assert_eq!(r.font_dir.path, Some(bad));
+        assert_eq!(r.font_dir.source_str(), "env");
+        assert!(r.font_dir.searched.len() == 1 && r.font_dir.note.is_none());
+    }
+
+    #[test]
+    fn oversized_system_dir_falls_back_to_a_reported_bounded_subset() {
+        let t = temp();
+        let root = t.path().join("fonts");
+        oversized_fonts(&root.join("big"));
+        small_fonts(&root.join("a-latin"), &["Latin.ttf"]);
+        small_fonts(
+            &root.join("b-korean"),
+            &["NanumGothic.ttf", "NanumGothicBold.ttf"],
+        );
+        small_fonts(&root.join("c-latin"), &["Other.otf"]);
+        fs::create_dir_all(root.join("d-empty")).unwrap();
+        // The root itself exceeds the limit, so no whole directory is usable.
+        oversized_fonts(&root);
+        let out = select_font_dir(&[Candidate::new(&root, Origin::SystemFontDir)]);
+        assert_eq!(out.path, Some(root.join("b-korean")), "{out:?}");
+        assert_eq!(out.source_str(), "systemFontSubdir");
+        let note = out.note.as_deref().expect("the narrowing is reported");
+        assert!(note.contains("b-korean"), "{note}");
+        assert!(note.contains("bounded subset"), "{note}");
+        for omitted in ["a-latin", "c-latin", "big", "d-empty"] {
+            assert!(note.contains(omitted), "{omitted} not named in: {note}");
+        }
+        let verdicts: Vec<_> = out
+            .searched
             .iter()
-            .any(|p| p.ends_with(".local/share/fonts") || p.ends_with(".local\\share\\fonts")));
+            .map(|e| {
+                (
+                    e.path.file_name().unwrap().to_str().unwrap().to_string(),
+                    e.verdict,
+                )
+            })
+            .collect();
+        assert!(
+            verdicts.contains(&("big".into(), Verdict::Unusable)),
+            "{verdicts:?}"
+        );
+        // Deterministic: the same inputs give the same choice.
+        let again = select_font_dir(&[Candidate::new(&root, Origin::SystemFontDir)]);
+        assert_eq!(again.path, out.path);
+        assert_eq!(again.note, out.note);
+        // Without a Korean-named font the first usable subdirectory wins.
+        fs::remove_dir_all(root.join("b-korean")).unwrap();
+        let out = select_font_dir(&[Candidate::new(&root, Origin::SystemFontDir)]);
+        assert_eq!(out.path, Some(root.join("a-latin")));
+    }
+
+    #[test]
+    fn nothing_usable_stays_unresolved_with_every_reason_recorded() {
+        let t = temp();
+        let bad = t.path().join("bad");
+        oversized_fonts(&bad);
+        let out = select_font_dir(&[
+            Candidate::new(t.path().join("missing"), Origin::AppFontDir),
+            Candidate::new(&bad, Origin::UserFontDir),
+        ]);
+        assert!(!out.is_found());
+        assert_eq!(out.searched.len(), 2);
+        assert_eq!(out.searched[0].verdict, Verdict::Missing);
+        assert_eq!(out.searched[1].verdict, Verdict::Unusable);
     }
 
     #[test]

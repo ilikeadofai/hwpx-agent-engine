@@ -289,3 +289,76 @@ fn discovery_finds_an_in_tree_renderer_without_hae_rhwp() {
         "discovery must have configured the renderer: {stderr}"
     );
 }
+
+/// Without `HAE_FONT_DIR`, an over-limit first font directory is skipped and
+/// the next usable one is used and reported in the preview metadata. (The
+/// per-user directories are injected through `HOME`, so the result does not
+/// depend on the fonts installed on the machine.)
+#[test]
+fn unset_font_dir_skips_an_oversized_candidate_and_reports_the_choice() {
+    if !Path::new(BWRAP).is_file() {
+        eprintln!("skipping unset_font_dir_skips_an_oversized_candidate: {BWRAP} missing");
+        return;
+    }
+    let (temp, input, output, script) = prepare("font-fallback");
+    fs::write(
+        &script,
+        serde_json::to_string(&json!([
+            {"command": "document.open", "params": {"path": input.join(CORPUS)}},
+            {"command": "document.preview",
+             "params": {"pages": [1], "includePng": false, "includeSvg": true}}
+        ]))
+        .expect("serialize script"),
+    )
+    .expect("write script");
+    let home = temp.path().join("home");
+    let big = home.join(".local/share/fonts");
+    fs::create_dir_all(&big).unwrap();
+    fs::File::create(big.join("Huge.ttf"))
+        .unwrap()
+        .set_len(33 * 1024 * 1024)
+        .unwrap();
+    let good = home.join(".fonts");
+    fs::create_dir_all(&good).unwrap();
+    fs::write(good.join("Small.ttf"), b"scan only counts bytes").unwrap();
+    let rhwp = temp.path().join("rhwp");
+    fs::write(
+        &rhwp,
+        "#!/usr/bin/sh\n\
+         if [ \"$1\" = \"--version\" ]; then echo 'rhwp vfontfallback'; exit 0; fi\n\
+         if [ \"$1\" = dump-pages ]; then echo '{\"pages\":[{}]}'; exit 0; fi\n\
+         printf '<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\"/>' > /out/p.svg\n\
+         N=$(wc -c < /out/p.svg)\n\
+         echo \"{\\\"format\\\":\\\"svg\\\",\\\"pageCount\\\":1,\\\"pages\\\":[{\\\"page\\\":0,\\\"path\\\":\\\"/out/p.svg\\\",\\\"bytes\\\":$N}]}\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(&rhwp, fs::Permissions::from_mode(0o755)).unwrap();
+    let out = Command::new(HAE)
+        .env("HOME", &home)
+        .env("HAE_RHWP", &rhwp)
+        .env("HAE_BWRAP", BWRAP)
+        .env_remove("HAE_FONT_DIR")
+        .env_remove("HAE_RENDERER_DISCOVERY")
+        .arg("script")
+        .arg("--input-root")
+        .arg(&input)
+        .arg("--output-root")
+        .arg(&output)
+        .arg(&script)
+        .output()
+        .expect("run hae script");
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    let responses: Vec<Value> =
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).expect("envelopes");
+    let preview = &responses[1];
+    assert_eq!(preview["ok"], json!(true), "preview: {preview}\n{stderr}");
+    let fonts = &preview["result"]["metadata"]["fonts"];
+    assert_eq!(fonts["directory"], json!(good), "{fonts}");
+    assert_eq!(fonts["source"], json!("userFontDir"), "{fonts}");
+    assert_eq!(
+        fonts["searched"][1]["verdict"],
+        json!("unusable"),
+        "{fonts}"
+    );
+    assert_eq!(fonts["hash"].as_str().map(str::len), Some(64), "{fonts}");
+}

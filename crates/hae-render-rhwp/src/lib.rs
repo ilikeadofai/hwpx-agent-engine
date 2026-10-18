@@ -188,6 +188,11 @@ impl AdapterConfig {
 
     /// Where the current `font_dir` came from.
     pub fn font_source(&self) -> &'static str {
+        // Nothing usable was found: the documented default is only a
+        // placeholder that the next scan will explain, not a chosen source.
+        if self.tools.font_dir.path.is_none() && self.font_dir == Path::new(DEFAULT_FONT_DIR) {
+            return "unresolvedDefault";
+        }
         source_of(&self.tools.font_dir, &self.font_dir)
     }
 
@@ -514,13 +519,41 @@ impl RhwpAdapter {
                 &self.cfg.font_dir,
                 allowance.saturating_sub(1024 * 1024) / 4,
             )
-            .map_err(|e| unavailable("memory_limit", format!("bounded font scan: {e}")))?,
+            .map_err(|e| self.font_scan_error(&e))?,
         );
         let charge = f.memory_reservation();
         budget.release(allowance);
         budget.reserve(charge)?;
         st.fonts = Some(f.clone());
         Ok(f)
+    }
+
+    /// The error for a font directory that could not be loaded. A directory
+    /// that fails the plain font limits (or cannot be read) is
+    /// `font_dir_unusable` and names the directory, where it came from and
+    /// how to fix it; only a directory that passes them but does not fit the
+    /// remaining session allowance is `memory_limit`.
+    fn font_scan_error(&self, e: &std::io::Error) -> EngineError {
+        let limits_error = fonts::inspect_font_dir(&self.cfg.font_dir).error;
+        let reason = if limits_error.is_some() {
+            "font_dir_unusable"
+        } else {
+            "memory_limit"
+        };
+        unavailable(
+            reason,
+            format!(
+                "font directory {} [{}] cannot be used: {e}; limits: at most {} files, {} bytes \
+                 in total, {} bytes per file. Set HAE_FONT_DIR to a directory of only the fonts \
+                 you need ({})",
+                self.cfg.font_dir.display(),
+                self.cfg.font_source(),
+                fonts::MAX_FONT_FILES,
+                fonts::MAX_FONT_BYTES,
+                fonts::MAX_FONT_FILE_BYTES,
+                self.cfg.tools.font_note()
+            ),
+        )
     }
 
     /// Verify isolation once and return the process runner.
@@ -538,10 +571,10 @@ impl RhwpAdapter {
                     "sandbox_unverified",
                     format!(
                         "font directory {} is not a directory [{}]: set HAE_FONT_DIR to a readable \
-                         directory of fonts; searched: {}",
+                         directory of fonts ({})",
                         self.cfg.font_dir.display(),
                         self.cfg.font_source(),
-                        self.cfg.tools.font_dir.searched_str(8)
+                        self.cfg.tools.font_note()
                     ),
                 ));
             }
@@ -1130,6 +1163,10 @@ impl RhwpAdapter {
             }),
             sandbox: sandbox_meta,
             fonts: json!({
+                "directory": self.cfg.font_dir,
+                "source": self.cfg.font_source(),
+                "selection": self.cfg.tools.font_dir.note,
+                "searched": self.cfg.tools.font_dir.searched,
                 "hash": fonts.hash,
                 "files": fonts.files.iter().map(|f: &FontFile| json!({"path": f.path, "bytes": f.bytes, "sha256": f.sha256})).collect::<Vec<_>>(),
             }),

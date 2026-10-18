@@ -85,8 +85,12 @@ Preview environment (used by document.preview):
                 looked up beside this application, in ../bin, in an in-tree
                 spikes/vendor/rhwp-src/target/{release,debug} build, then on PATH
   HAE_BWRAP     Path to bubblewrap (default /usr/bin/bwrap, then PATH)
-  HAE_FONT_DIR  Font directory mounted for rendering (default /usr/share/fonts,
-                then other system and per-user font directories)
+  HAE_FONT_DIR  Font directory mounted for rendering, used exactly as given (an
+                invalid or over-limit directory is an error, never replaced). When
+                unset: <app dir>/fonts, per-user font dirs, then the first system
+                font dir within the font limits (/usr/share/fonts,
+                /usr/local/share/fonts, ...); if none fits, one bounded
+                subdirectory of an oversized system dir, reported as such
   HAE_RASTER    PNG worker executable (default hae-raster next to this application)
   HAE_RENDERER_DISCOVERY=0  Disable the search; only the variables above are used
 ```
@@ -107,11 +111,11 @@ Preview environment (used by document.preview):
 4. **개발 트리**: 작업 디렉터리와 실행 파일 위치에서 위로 올라가며 `spikes/vendor/rhwp-src/target/release/rhwp`, 그다음 `.../target/debug/rhwp`
 5. **`PATH`** (`rhwp`, `bwrap` 전용)
 
-`HAE_BWRAP`은 `HAE_BWRAP` → `/usr/bin/bwrap` → `/bin/bwrap` → `/usr/local/bin/bwrap` → `PATH` 순서이고, 글꼴 폴더(`HAE_FONT_DIR`)는 `HAE_FONT_DIR` → `/usr/share/fonts` → `/usr/local/share/fonts` → `/usr/share/fonts/truetype` → 홈 디렉터리의 사용자 글꼴 폴더 순서입니다.
+`HAE_BWRAP`은 `HAE_BWRAP` → `/usr/bin/bwrap` → `/bin/bwrap` → `/usr/local/bin/bwrap` → `PATH` 순서이고, 글꼴 폴더(`HAE_FONT_DIR`)는 지정하면 그대로 쓰며(상한을 넘거나 잘못된 폴더는 대체하지 않고 폴더 경로와 해결 방법을 담아 `font_dir_unusable`로 거절), 지정하지 않으면 `<실행 파일 폴더>/fonts` → 홈 디렉터리의 사용자 글꼴 폴더 → `/usr/share/fonts` → `/usr/local/share/fonts` → `/usr/share/fonts/truetype` 순서로 **글꼴 한도 안에 드는 첫 폴더**를 씁니다. 상한을 넘거나 글꼴이 없는 폴더는 이유를 기록하고 건너뜁니다. 쓸 만한 폴더가 하나도 없을 때만 상한을 넘은 시스템 글꼴 폴더의 하위 폴더 하나(이름순, 한글 이름 글꼴이 있는 폴더 우선)를 **일부만 고른 것**으로 선택하며, 고른 폴더와 제외한 폴더를 `hae-mcp doctor`의 `fonts.selection`과 미리보기 메타데이터 `fonts.selection`·`fonts.searched`에 기록합니다. 한도를 늘리거나 전체 글꼴을 쓰는 것처럼 표시하지 않습니다.
 
 1. **`HAE_RHWP`** *(선택)*: 별도로 준비한 `rhwp` 렌더러 실행 파일의 **절대 경로**입니다. 지정하지 않으면 위 탐색 순서를 따릅니다.
 2. **`HAE_BWRAP`** *(기본값: `/usr/bin/bwrap`)*: 렌더러를 네트워크·파일시스템으로부터 격리해 실행하는 `bubblewrap`(`bwrap`) 실행 파일의 **절대 경로**입니다. 엔진은 첫 미리보기 실행 전에 격리 자가 점검(self-test)을 수행하며, `bwrap`이 없거나 격리가 확인되지 않으면 렌더러를 실행하지 않고 거절합니다. **Linux에서는 이 계약이 그대로이며, 어떤 설정으로도 우회할 수 없습니다.**
-3. **`HAE_FONT_DIR`** *(기본값: `/usr/share/fonts`)*: 렌더링과 PNG 변환에 사용할 글꼴(`.ttf`, `.otf`, `.ttc`, `.otc`, 대소문자 구분 없음)이 들어 있는 **읽기 가능한 폴더의 절대 경로**입니다. **한국어 글꼴 몇 개만 모은 작은 폴더**(예: `/home/user/hwpx-fonts`)를 권장합니다. 기본 시스템 폴더 전체는 상한을 넘겨 미리보기에 실패할 수 있습니다. 제한은 **글꼴 파일 4,096개, 총 64 MiB, 파일당 32 MiB**이며 메타데이터 작업 공간에도 상한을 적용합니다. 재귀 깊이는 8, 방문 항목은 8,192개로 제한하고 심볼릭 링크는 건너뜁니다. 세션의 남은 메모리에 따라 더 일찍 거절할 수 있습니다. 문서에 필요한 한국어 글꼴을 포함하고 `hae-mcp doctor`로 먼저 점검하세요.
+3. **`HAE_FONT_DIR`** *(기본값: `/usr/share/fonts`)*: 렌더링과 PNG 변환에 사용할 글꼴(`.ttf`, `.otf`, `.ttc`, `.otc`, 대소문자 구분 없음)이 들어 있는 **읽기 가능한 폴더의 절대 경로**입니다. **한국어 글꼴 몇 개만 모은 작은 폴더**(예: `/home/user/hwpx-fonts`)를 권장합니다. 지정하지 않으면 한도 안에 드는 폴더를 자동으로 고르지만, 쓸 만한 폴더가 없으면 실패할 수 있습니다. 제한은 **글꼴 파일 4,096개, 총 64 MiB, 파일당 32 MiB**이며 메타데이터 작업 공간에도 상한을 적용합니다. 재귀 깊이는 8, 방문 항목은 8,192개로 제한하고 심볼릭 링크는 건너뜁니다. 세션의 남은 메모리에 따라 더 일찍 거절할 수 있습니다. 문서에 필요한 한국어 글꼴을 포함하고 `hae-mcp doctor`로 먼저 점검하세요.
 4. **`HAE_RASTER`** *(선택)*: PNG를 만드는 `hae-raster` 작업 파일의 경로입니다. 지정하지 않으면 실행 파일 옆에서 찾습니다. PATH는 검색하지 않습니다.
 
 **Windows에서는 미리보기가 기본적으로 거절됩니다.** bubblewrap과 `prlimit`에 해당하는 격리가 없기 때문입니다. 격리 없이 실행하려면 `HAE_ALLOW_UNSANDBOXED_PREVIEW=1`을 **명시적으로** 설정해야 하며, 이때도 결과에 `SANDBOX_UNVERIFIED` 경고와 `metadata.sandbox.verified: false`가 붙고 PNG는 나오지 않습니다(`PNG_UNAVAILABLE`, `status: partial`). 무엇이 강제되고 무엇이 강제되지 않는지는 [플랫폼별 격리 보장 표](decisions/renderer-isolation-platforms.md)를 확인하세요. Linux에서는 이 변수가 무시됩니다.
@@ -516,7 +520,7 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 
 문서를 직접 바꾸지 않는 보조 명령들입니다. 명령 이름은 점 표기(`document.diff`), MCP 도구 이름은 밑줄 표기(`document_diff`)입니다.
 
-- **명령 목록 (`command.list` / `command_list`)**: 인자가 없습니다. 등록된 57개 명령 각각의 이름·MCP 도구 이름·분류·요약, `requiresDocument`·`requiresExpectedVersion`·`supportsDryRun`·`recordsHistory` 같은 정책, 입력·출력 JSON Schema, 설정상 사용 가능 여부(`available`)를 돌려줍니다. 각 항목의 `schemaVersion`은 레지스트리 계약 버전(`0.3.0`)이며 엔진 버전과 별개입니다. `available`은 렌더러 설정 같은 실행 환경에서의 가용성이고, 개별 문단·표에서 편집이 되는지는 `element_query`·`element_get`의 `edits[명령].available`이 알려 줍니다. CLI에서는 `hae run --command command.list --params '{}'`로 같은 목록을 얻습니다.
+- **명령 목록 (`command.list` / `command_list`)**: 인자가 없습니다. 현재 등록된 명령 각각의 이름·MCP 도구 이름·분류·요약, `requiresDocument`·`requiresExpectedVersion`·`supportsDryRun`·`recordsHistory` 같은 정책, 입력·출력 JSON Schema, 설정상 사용 가능 여부(`available`)를 돌려줍니다. 각 항목의 `schemaVersion`은 레지스트리 계약 버전(`0.3.0`)이며 엔진 버전과 별개입니다. `available`은 렌더러 설정 같은 실행 환경에서의 가용성이고, 개별 문단·표에서 편집이 되는지는 `element_query`·`element_get`의 `edits[명령].available`이 알려 줍니다. CLI에서는 `hae run --command command.list --params '{}'`로 같은 목록을 얻습니다.
 - **명령 하나 설명 (`command.describe` / `command_describe`)**: `{"command":"text.replace"}`처럼 이름을 주면 그 명령의 입력·출력 Schema와 `dryRun`·이력 정책을 돌려줍니다. 인자를 만들기 전에 확인하는 용도입니다.
 - **일괄 실행 (`command.batch` / `command_batch`)**: `{"documentId":"doc-1","expectedVersion":3,"steps":[{"command":"text.replace","params":{...}},{"command":"paragraph.format","params":{...}}]}`처럼 편집 단계를 순서대로 줍니다. 전체가 한 번의 `revision`·되돌리기 단위이고, 한 단계라도 실패하면 앞 단계까지 포함해 아무것도 바뀌지 않으며 오류의 `detail.failedStep`이 실패한 단계를 가리킵니다. `dryRun: true`로 먼저 시험할 수 있습니다. 단계 안의 `params`에는 문서 ID나 `expectedVersion`을 넣지 않습니다.
 - **스냅샷 만들기 (`document.snapshot` / `document_snapshot`)**: `{"documentId":"doc-1","label":"교체 전"}`(`label`은 선택). 현재 상태를 세션 안에 보관하고 `snapshotId`와 `revision`을 돌려줍니다. 문서와 이력은 바뀌지 않으며, 세션 메모리 한도를 넘으면 `RESOURCE_LIMIT`로 거절합니다. 스냅샷은 세션이 끝나면 사라지고 `.hwpwork`에 저장되지 않습니다.

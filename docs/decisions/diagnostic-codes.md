@@ -72,14 +72,15 @@ HWP5(`hwp5.inspect`)의 reason은 `malformed_compound_file`(MS-CFB 헤더·FAT·
 
 ## 0.4 렌더러 탐색과 플랫폼 게이트 (2026-10-19)
 
-새 엔진 코드(`hae-diag::Code`)는 추가하지 않는다. `RENDERER_UNAVAILABLE`의 reason 집합도 그대로다
+새 엔진 코드(`hae-diag::Code`)는 추가하지 않는다. 기존 `RENDERER_UNAVAILABLE`의 reason 집합
 (`renderer_not_configured`, `renderer_missing`, `sandbox_unverified`, `raster_worker_missing`,
 `raster_worker_not_configured`, `spawn_failed`, `timeout`, `cancelled`, `output_limit`,
-`render_failed`, `invalid_output`, `memory_limit`). 바뀐 것은 다음뿐이다.
+`render_failed`, `invalid_output`, `memory_limit`)에 `font_dir_unusable`(글꼴 폴더가 글꼴 한도를
+넘거나 읽을 수 없음: 폴더 경로·출처·한도·해결 방법을 메시지에 담는다)이 더해졌다. 바뀐 것은 다음뿐이다.
 
 - **탐색**: `HAE_RHWP`가 있으면 항상 그 값을 쓴다. 없으면 실행 파일 옆 → `../bin` → 개발 트리
   `spikes/vendor/rhwp-src/target/{release,debug}` → `PATH` 순서로 찾는다(`HAE_BWRAP`는
-  `/usr/bin/bwrap` 등 기본값 뒤 `PATH`, `HAE_FONT_DIR`는 시스템·사용자 글꼴 폴더,
+  `/usr/bin/bwrap` 등 기본값 뒤 `PATH`, `HAE_FONT_DIR`는 앱·사용자 글꼴 폴더 다음 한도 안에 드는 시스템 글꼴 폴더(없으면 보고되는 하위 폴더 일부),
   `HAE_RASTER`는 실행 파일 옆과 `../bin`). 탐색을 끄려면 `HAE_RENDERER_DISCOVERY=0`.
 - **reason별 해결 안내**: `renderer_not_configured`·`renderer_missing`·`sandbox_unverified`·
   `raster_worker_missing`·`raster_worker_not_configured` 메시지에 "무엇을 하면 되는지" 한 줄이

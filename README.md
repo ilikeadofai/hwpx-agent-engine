@@ -4,7 +4,7 @@ AI 에이전트와 사람이 같은 명령으로 기존 `.hwpx` 문서를 안전
 
 ## 1. 핵심 차별점
 
-새 문서를 처음부터 생성하는 대신, **기존 문서를 깨뜨리지 않고 지정한 부분만 고치는 것**에 집중합니다([경쟁 분석 §8](docs/research/competitive-gap-analysis.md#8-경쟁-프로젝트-대비-우위열위)).
+**기존 문서를 보존하면서 지정한 부분을 고치는 것**에 집중하며, 기본 새 문서와 문단 생성도 지원합니다([경쟁 분석 §8](docs/research/competitive-gap-analysis.md#8-경쟁-프로젝트-대비-우위열위)).
 
 - **원본 바이트 보존**:
   수정하지 않은 ZIP 항목은 재압축하지 않고 원시 압축 데이터와 로컬 헤더를 그대로 유지합니다.
@@ -39,7 +39,7 @@ AI 에이전트와 사람이 같은 명령으로 기존 `.hwpx` 문서를 안전
 - **그림 (3개)**:
   `picture.list`, `image.replace`(기존 프레임 유지 정적 PNG/JPEG 교체), `image.fit`(`contain`·`cover`·`stretch` 비율·자르기 맞춤)
 - **생성 (3개)**:
-  `document.create`(한컴이 여는 최소 HWPX를 처음부터 만들기), `paragraph.insert`(기준 문단 앞·뒤에 문단 추가 — 문단 모양·글자 모양 복제, 새 nodeId), `paragraph.delete`(표·개체·필드가 든 문단과 구역 속성 문단은 거절)
+  `document.create`(최소 HWPX를 처음부터 만들기), `paragraph.insert`(기준 문단 앞·뒤에 문단 추가 — 문단 모양·글자 모양 복제, 새 nodeId), `paragraph.delete`(표·개체·필드가 든 문단과 구역 속성 문단은 거절)
 - **내보내기·저장 (3개)**:
   `document.export`(새 `.hwpx` 저장), `document.exportText`(새 Markdown `.md`·HTML `.html` 파일로 읽기 전용 변환), `project.save`(nodeId·상태를 유지하는 `.hwpwork` 저장)
 - **미리보기 (1개)**:
@@ -71,6 +71,8 @@ AI 에이전트와 사람이 같은 명령으로 기존 `.hwpx` 문서를 안전
   WSL이 아닌 Windows는 bubblewrap이 없어 기본적으로 미리보기를 거절하며, `HAE_ALLOW_UNSANDBOXED_PREVIEW=1`을 명시한 경우에만 격리 없이 실행하고 결과에 `SANDBOX_UNVERIFIED`를 남깁니다(PNG 없음).
 
 ## 4. 빠른 시작
+
+이 호스트에서 다른 세션으로 실제 보고서 편집을 넘길 때는 [로컬 실행 경로와 인계문](docs/report-edit-handoff.md)을 따른다.
 
 저장소 루트(`rust-toolchain.toml`, Rust 1.93.1)에서 전체 실행 파일(`hae`, `hae-jsonl`, `hae-mcp`, `hae-raster`)을 빌드하거나 사용자 폴더에 설치한 뒤 `hae-mcp doctor`로 점검합니다([사용 안내서 §2·§3](docs/user-guide.md)).
 

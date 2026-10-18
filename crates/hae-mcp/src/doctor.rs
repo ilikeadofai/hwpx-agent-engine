@@ -24,7 +24,7 @@ fn fix_for(tool: &str) -> &'static str {
             "`HAE_RASTER=/path/to/hae-raster`를 지정하거나 실행 파일과 같은 폴더에 두세요. \
              PNG 미리보기에는 이 작업 파일이 필요합니다."
         }
-        "fonts" => "`HAE_FONT_DIR`를 읽을 수 있는 글꼴 폴더로 지정하세요.",
+        "fonts" => "`HAE_FONT_DIR`를 읽을 수 있고 글꼴 한도(파일 수·용량) 안에 드는 글꼴 폴더로 지정하세요.",
         _ => "경로를 명시적으로 지정하세요.",
     }
 }
@@ -57,7 +57,7 @@ fn tool_check(tool: &str, probe: &ProbeOutcome, expect: Expect, enabled: bool) -
         "source": probe.source_str(),
         "message": message,
         "searched": probe.searched.iter().map(|e| json!({
-            "path": e.path, "origin": e.origin, "verdict": e.verdict,
+            "path": e.path, "origin": e.origin, "verdict": e.verdict, "detail": e.detail,
         })).collect::<Vec<_>>(),
         "guidance": if ok { Value::Null } else { json!(fix_for(tool)) },
     })
@@ -68,7 +68,7 @@ fn tool_check(tool: &str, probe: &ProbeOutcome, expect: Expect, enabled: bool) -
 fn accepts(path: &Path, expect: Expect) -> bool {
     match expect {
         Expect::Executable => file_check(Some(path.to_path_buf()))["ok"] == true,
-        Expect::Directory => path.is_dir(),
+        Expect::Directory | Expect::FontDirectory => path.is_dir(),
     }
 }
 
@@ -126,30 +126,40 @@ fn root_check(path: &Path, write: bool) -> Value {
     }
 }
 
-fn font_check(path: &Path, probe: &ProbeOutcome, enabled: bool) -> Value {
+fn font_check(path: Option<&Path>, probe: &ProbeOutcome, enabled: bool) -> Value {
     use hae_render_rhwp::fonts::{
-        inspect_font_dir, MAX_FONT_BYTES, MAX_FONT_FILES, MAX_FONT_FILE_BYTES,
+        inspect_font_dir, FontSet, MAX_FONT_BYTES, MAX_FONT_FILES, MAX_FONT_FILE_BYTES,
     };
-    let scan = inspect_font_dir(path);
-    let warning = (scan.korean_filename_matches == 0).then_some(
+    let located = path.is_some();
+    let scan = path.map(inspect_font_dir);
+    let error = scan.as_ref().and_then(|s| s.error.clone());
+    let korean = scan.as_ref().map_or(0, |s| s.korean_filename_matches);
+    let warning = (located && korean == 0).then_some(
         "한국어 글꼴로 알려진 파일명이 없습니다. 파일명 휴리스틱이므로 실제 한글 지원 여부는 별도 확인하세요.");
-    let located = probe.is_found();
-    let ok = scan.error.is_none() && located;
+    let ok = located && error.is_none();
+    // The exact set a preview would use: its hash is the one recorded in the
+    // preview metadata. Only computed after the bounded preflight passed.
+    let set = path
+        .filter(|_| ok)
+        .and_then(|p| FontSet::scan(p).ok())
+        .map(|f| (f.hash.clone(), f.files.len()));
     json!({
         "ok": ok, "path": path,
         "source": probe.source_str(),
+        "selection": probe.note,
         "searched": probe.searched.iter().map(|e| json!({
-            "path": e.path, "origin": e.origin, "verdict": e.verdict,
+            "path": e.path, "origin": e.origin, "verdict": e.verdict, "detail": e.detail,
         })).collect::<Vec<_>>(),
         "message": if !located {
-            if enabled { format!("font directory not found; {}", fix_for("fonts")) }
+            if enabled { format!("no usable font directory found; {}", fix_for("fonts")) }
             else { format!("font directory not configured and discovery is disabled ({}); {}", hae_render_rhwp::discovery::DISCOVERY_ENV, fix_for("fonts")) }
-        } else { scan.error.clone().unwrap_or_else(|| "bounded font preflight passed".into()) },
-        "fileCount": scan.file_count, "totalBytes": scan.total_bytes,
-        "measurementsComplete": scan.measurements_complete,
+        } else { error.clone().unwrap_or_else(|| "bounded font preflight passed".into()) },
+        "fileCount": scan.as_ref().map(|s| s.file_count), "totalBytes": scan.as_ref().map(|s| s.total_bytes),
+        "measurementsComplete": scan.as_ref().map(|s| s.measurements_complete),
+        "fontSetSha256": set.as_ref().map(|s| s.0.clone()),
         "limits": {"fileCount":MAX_FONT_FILES, "totalBytes":MAX_FONT_BYTES, "perFileBytes":MAX_FONT_FILE_BYTES},
         "koreanDetection":"filename heuristic (no cmap parsing)",
-        "koreanFilenameMatches": scan.korean_filename_matches, "warning":warning,
+        "koreanFilenameMatches": korean, "warning":warning,
         "guidance":"한국어 글꼴 몇 개만 담은 작은 폴더를 만들어 HAE_FONT_DIR로 지정하세요. 불완전한 측정값은 하한이며, 글꼴 유효성·실제 렌더링과 세션의 남은 메모리는 별도 확인이 필요합니다."
     })
 }
@@ -159,17 +169,12 @@ fn font_check(path: &Path, probe: &ProbeOutcome, enabled: bool) -> Value {
 fn preview_checks() -> Value {
     let env = hae_render_rhwp::preview_environment();
     let enabled = !env.tools.discovery_disabled;
-    let fonts_path = env
-        .tools
-        .font_dir
-        .path
-        .clone()
-        .unwrap_or_else(|| PathBuf::from(hae_render_rhwp::DEFAULT_FONT_DIR));
+    let fonts_path = env.tools.font_dir.path.clone();
     json!({
         "rhwp": tool_check("rhwp", &env.tools.rhwp, Expect::Executable, enabled),
         "raster": tool_check("raster", &env.tools.raster, Expect::Executable, enabled),
         "bwrap": tool_check("bwrap", &env.tools.bwrap, Expect::Executable, enabled),
-        "fonts": font_check(&fonts_path, &env.tools.font_dir, enabled),
+        "fonts": font_check(fonts_path.as_deref(), &env.tools.font_dir, enabled),
         "discovery": {
             "enabled": enabled,
             "variable": hae_render_rhwp::discovery::DISCOVERY_ENV,
@@ -179,6 +184,7 @@ fn preview_checks() -> Value {
                 "parent directory bin/",
                 "spikes/vendor/rhwp-src/target/{release,debug} below the working directory and the executable",
                 "PATH (rhwp, bwrap only)",
+                "fonts: <exe dir>/fonts, then per-user dirs, then whole system dirs; a dir over the font limits is skipped with its reason, and only if none is usable a bounded subdirectory of an oversized system dir is selected and reported under fonts.selection",
             ],
         },
         "platformIsolation": {
