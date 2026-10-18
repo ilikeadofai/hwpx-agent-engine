@@ -7,7 +7,7 @@
 //! fails the final payload comparison.
 
 use crate::text::paragraph_text;
-use crate::{anchor, at, fail, hp, parse, stable_at, stable_path, unsupported, Anchors};
+use crate::{anchor, fail, hp, parse, unsupported, Anchors};
 use hae_diag::{Limits, Result};
 use hae_package::{PackageInfo, PackageState, XmlMap};
 use hae_xml::{Item, XmlDoc};
@@ -155,6 +155,7 @@ pub(crate) fn check(
     limits: &Limits,
     anchors: &mut Anchors,
     preview: &mut Vec<(String, String)>,
+    remaps: &crate::Remaps,
 ) -> Result<bool> {
     if values.is_empty() {
         return Err(unsupported("form.fill needs at least one label"));
@@ -184,10 +185,7 @@ pub(crate) fn check(
         let selected = match scope {
             None => tables(&doc),
             Some(s) => {
-                let source = xml
-                    .get(&s.entry)
-                    .ok_or_else(|| fail("missing source XML"))?;
-                let target = stable_at(&doc, &stable_path(source, at(source, &s.path)?))?;
+                let target = crate::resolve(xml, remaps, &s.entry, &doc, &s.path)?;
                 scope_tables(&doc, target)?
             }
         };

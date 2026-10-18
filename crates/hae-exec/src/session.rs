@@ -10,7 +10,8 @@ use crate::registry::{
     HeaderSetTextParams, ImageFitParams, ImageReplaceParams, LineSpacingParam, LinkListParams,
     ParagraphFormatParams, ParagraphSetStyleParams, ParsedCommand, ProjectSaveParams,
     SectionSetPageNumberingParams, SectionSetPageParams, SectionSetVisibilityParams,
-    SnapshotCreateParams, SnapshotReleaseParams, TableSetColumnWidthsParams,
+    SnapshotCreateParams, SnapshotReleaseParams, TableDeleteColumnParams, TableDeleteRowParams,
+    TableInsertColumnParams, TableInsertRowParams, TableSetColumnWidthsParams,
     TableSetRowHeightsParams, TextFormatParams, TextReplaceAllParams, TextReplaceParams,
     TrackChangeListParams,
 };
@@ -143,6 +144,29 @@ fn with_replace_all(mut result: Value, reports: &[hae_edit::ReplaceAllReport]) -
 fn with_form_fill(mut result: Value, reports: &[hae_edit::FormFillReport]) -> Value {
     if !reports.is_empty() {
         result["formFill"] = serde_json::to_value(reports).expect("reports serialize");
+    }
+    result
+}
+
+/// Attach table structure reports. A dryRun candidate is discarded, so the
+/// ids it generated are not reported (they would never exist).
+fn with_structure(
+    mut result: Value,
+    reports: &[hae_edit::StructureReport],
+    dry_run: bool,
+) -> Value {
+    if !reports.is_empty() {
+        let mut v = serde_json::to_value(reports).expect("reports serialize");
+        if dry_run {
+            for (step, report) in v.as_array_mut().into_iter().flatten().zip(reports) {
+                for created in step["created"].as_array_mut().into_iter().flatten() {
+                    created["nodeId"] = Value::Null;
+                }
+                step["shifted"] = json!([]);
+                step["shiftedCount"] = json!(report.shifted.len());
+            }
+        }
+        result["structure"] = v;
     }
     result
 }
@@ -356,7 +380,11 @@ fn add_op_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, op: &Verify
             add_slice_bytes(seen, total, entry.as_bytes());
             *total = total.saturating_add(heights.as_ref().map_or(0, |v| v.len() as u64 * 4));
         }
-        VerifyOperation::CellSetSize { entry, .. } => {
+        VerifyOperation::CellSetSize { entry, .. }
+        | VerifyOperation::TableInsertRow { entry, .. }
+        | VerifyOperation::TableDeleteRow { entry, .. }
+        | VerifyOperation::TableInsertColumn { entry, .. }
+        | VerifyOperation::TableDeleteColumn { entry, .. } => {
             add_slice_bytes(seen, total, entry.as_bytes())
         }
         VerifyOperation::CellSetFormat { entry, format, .. } => {
@@ -1030,6 +1058,34 @@ impl SessionExecutor {
                 req,
                 &[BatchStepParam {
                     command: "table.setRowHeights".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
+            ParsedCommand::TableInsertRow(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "table.insertRow".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
+            ParsedCommand::TableDeleteRow(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "table.deleteRow".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
+            ParsedCommand::TableInsertColumn(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "table.insertColumn".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
+            ParsedCommand::TableDeleteColumn(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "table.deleteColumn".into(),
                     params: serde_json::to_value(p).unwrap(),
                 }],
             ),
@@ -1810,6 +1866,97 @@ impl SessionExecutor {
                     },
                 ))
             }
+            "table.insertRow" | "table.deleteRow" | "table.insertColumn" | "table.deleteColumn" => {
+                let bad_params = |e: serde_json::Error| {
+                    wrap_err(EngineError::new(
+                        Code::InvalidRequest,
+                        Stage::Request,
+                        e.to_string(),
+                    ))
+                };
+                let (target, index, count) = match step.command.as_str() {
+                    "table.insertRow" => {
+                        let p: TableInsertRowParams =
+                            serde_json::from_value(step.params.clone()).map_err(bad_params)?;
+                        (p.target, p.index, p.count)
+                    }
+                    "table.deleteRow" => {
+                        let p: TableDeleteRowParams =
+                            serde_json::from_value(step.params.clone()).map_err(bad_params)?;
+                        (p.target, p.index, p.count)
+                    }
+                    "table.insertColumn" => {
+                        let p: TableInsertColumnParams =
+                            serde_json::from_value(step.params.clone()).map_err(bad_params)?;
+                        (p.target, p.index, p.count)
+                    }
+                    _ => {
+                        let p: TableDeleteColumnParams =
+                            serde_json::from_value(step.params.clone()).map_err(bad_params)?;
+                        (p.target, p.index, p.count)
+                    }
+                };
+                let (entry, path) = doc
+                    .node(&target)
+                    .map(|n| (n.entry.clone(), doc.doc_of(n).path(n.el)))
+                    .unwrap_or_default();
+                let n = count.unwrap_or(1);
+                let (eop, vop) = match step.command.as_str() {
+                    "table.insertRow" => (
+                        EditOp::TableInsertRow {
+                            target,
+                            index,
+                            count,
+                        },
+                        VerifyOperation::TableInsertRow {
+                            entry,
+                            path,
+                            index,
+                            count: n,
+                        },
+                    ),
+                    "table.deleteRow" => (
+                        EditOp::TableDeleteRow {
+                            target,
+                            index,
+                            count,
+                        },
+                        VerifyOperation::TableDeleteRow {
+                            entry,
+                            path,
+                            index,
+                            count: n,
+                        },
+                    ),
+                    "table.insertColumn" => (
+                        EditOp::TableInsertColumn {
+                            target,
+                            index,
+                            count,
+                        },
+                        VerifyOperation::TableInsertColumn {
+                            entry,
+                            path,
+                            index,
+                            count: n,
+                        },
+                    ),
+                    _ => (
+                        EditOp::TableDeleteColumn {
+                            target,
+                            index,
+                            count,
+                        },
+                        VerifyOperation::TableDeleteColumn {
+                            entry,
+                            path,
+                            index,
+                            count: n,
+                        },
+                    ),
+                };
+                Ok((eop, vop))
+            }
             "cell.setSize" => {
                 let p: CellSetSizeParams =
                     serde_json::from_value(step.params.clone()).map_err(|e| {
@@ -2506,24 +2653,28 @@ impl SessionExecutor {
         if req.dry_run {
             let outcome = if is_noop { "noop" } else { "applied" };
             return Ok((
-                with_form_fill(
-                    with_replace_all(
-                        json!({
-                            "outcome": outcome,
-                            "dryRun": true,
-                            "beforeVersion": before_version,
-                            "afterVersion": before_version,
-                            "predictedAfterVersion": if is_noop { before_version } else { before_version + 1 },
-                            "changedIds": applied.changed_ids,
-                            "resourceChanges": applied.resource_changes,
-                            "intents": applied.intents,
-                            "stale": applied.stale,
-                            "cacheRemovals": applied.cache_removals,
-                            "historyEvicted": false,
-                        }),
-                        &applied.replace_all,
+                with_structure(
+                    with_form_fill(
+                        with_replace_all(
+                            json!({
+                                "outcome": outcome,
+                                "dryRun": true,
+                                "beforeVersion": before_version,
+                                "afterVersion": before_version,
+                                "predictedAfterVersion": if is_noop { before_version } else { before_version + 1 },
+                                "changedIds": applied.changed_ids,
+                                "resourceChanges": applied.resource_changes,
+                                "intents": applied.intents,
+                                "stale": applied.stale,
+                                "cacheRemovals": applied.cache_removals,
+                                "historyEvicted": false,
+                            }),
+                            &applied.replace_all,
+                        ),
+                        &applied.form_fill,
                     ),
-                    &applied.form_fill,
+                    &applied.structure,
+                    true,
                 ),
                 diags,
             ));
@@ -2583,22 +2734,26 @@ impl SessionExecutor {
         s.revision += 1;
 
         Ok((
-            with_form_fill(
-                with_replace_all(
-                    json!({
-                        "outcome": "applied",
-                        "beforeVersion": before_version,
-                        "afterVersion": s.revision,
-                        "changedIds": applied.changed_ids,
-                        "resourceChanges": applied.resource_changes,
-                        "intents": applied.intents,
-                        "stale": applied.stale,
-                        "cacheRemovals": applied.cache_removals,
-                        "historyEvicted": history_evicted,
-                    }),
-                    &applied.replace_all,
+            with_structure(
+                with_form_fill(
+                    with_replace_all(
+                        json!({
+                            "outcome": "applied",
+                            "beforeVersion": before_version,
+                            "afterVersion": s.revision,
+                            "changedIds": applied.changed_ids,
+                            "resourceChanges": applied.resource_changes,
+                            "intents": applied.intents,
+                            "stale": applied.stale,
+                            "cacheRemovals": applied.cache_removals,
+                            "historyEvicted": history_evicted,
+                        }),
+                        &applied.replace_all,
+                    ),
+                    &applied.form_fill,
                 ),
-                &applied.form_fill,
+                &applied.structure,
+                false,
             ),
             diags,
         ))
@@ -2698,7 +2853,12 @@ impl SessionExecutor {
         };
 
         let mut changed_nodes = Vec::new();
-        for (a, b) in base_doc.nodes.iter().zip(&target_doc.nodes) {
+        let mut created_nodes = Vec::new();
+        for b in &target_doc.nodes {
+            let Some(a) = base_doc.node(&b.id) else {
+                created_nodes.push(json!({"nodeId": b.id, "kind": b.kind}));
+                continue;
+            };
             let oa = base_doc.outline(a);
             let ob = target_doc.outline(b);
             let ta = base_doc.node_text(a);
@@ -2714,6 +2874,12 @@ impl SessionExecutor {
                 }));
             }
         }
+        let removed_nodes: Vec<Value> = base_doc
+            .nodes
+            .iter()
+            .filter(|a| target_doc.node(&a.id).is_none())
+            .map(|a| json!({"nodeId": a.id, "kind": a.kind}))
+            .collect();
         let mut changed_entries = Vec::new();
         let mut media_changes = Vec::new();
         for e in &target_doc.state.entries {
@@ -2732,6 +2898,8 @@ impl SessionExecutor {
             json!({
                 "identical": identical,
                 "changedNodes": changed_nodes,
+                "createdNodes": created_nodes,
+                "removedNodes": removed_nodes,
                 "changedEntries": changed_entries,
                 "mediaChanges": media_changes,
                 "staleLayoutSections": target_doc.stale_layout,

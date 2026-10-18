@@ -15,10 +15,11 @@ mod narrow;
 mod replace_all;
 mod section;
 mod table;
+mod table_structure;
 mod text;
 
 use hae_diag::{Code, Diagnostic, EngineError, Result, Stage};
-use hae_model::{Document, Kind, Node};
+use hae_model::{Document, Kind, Node, StructureDelta, TableRemap};
 use hae_xml::{ParseOptions, XmlDoc};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -54,6 +55,28 @@ pub enum EditOp {
         target: String,
         heights: Option<Vec<u32>>,
         height: Option<u32>,
+    },
+    /// Insert `count` (default 1) empty rows so the first new row gets address `index`.
+    TableInsertRow {
+        target: String,
+        index: usize,
+        count: Option<usize>,
+    },
+    /// Delete `count` (default 1) rows starting at address `index`.
+    TableDeleteRow {
+        target: String,
+        index: usize,
+        count: Option<usize>,
+    },
+    TableInsertColumn {
+        target: String,
+        index: usize,
+        count: Option<usize>,
+    },
+    TableDeleteColumn {
+        target: String,
+        index: usize,
+        count: Option<usize>,
     },
     CellSetFormat {
         target: String,
@@ -159,6 +182,10 @@ impl EditOp {
             EditOp::HeaderSetText { scope, .. } => scope.as_deref().unwrap_or(""),
             EditOp::TableSetColumnWidths { target, .. }
             | EditOp::TableSetRowHeights { target, .. }
+            | EditOp::TableInsertRow { target, .. }
+            | EditOp::TableDeleteRow { target, .. }
+            | EditOp::TableInsertColumn { target, .. }
+            | EditOp::TableDeleteColumn { target, .. }
             | EditOp::CellSetFormat { target, .. }
             | EditOp::CellSetSize { target, .. }
             | EditOp::EquationSetScript { target, .. }
@@ -197,6 +224,14 @@ pub enum Intent {
         table_size: (u32, u32),
         #[serde(rename = "changedCells")]
         changed_cells: Vec<String>,
+    },
+    #[serde(rename = "table.structure")]
+    TableStructure {
+        command: String,
+        entry: String,
+        path: Vec<usize>,
+        index: usize,
+        count: usize,
     },
     #[serde(rename = "cell.setFormat")]
     CellFormat {
@@ -308,6 +343,34 @@ pub enum Intent {
     FormFill { fills: Vec<FormFillIntent> },
 }
 
+/// A node created by a table structure edit. Cells carry their new address.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatedNode {
+    pub node_id: String,
+    pub kind: &'static str,
+    pub row: Option<usize>,
+    pub col: Option<usize>,
+}
+
+/// What one table structure step created, removed and moved.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct StructureReport {
+    pub command: String,
+    pub table: String,
+    pub index: usize,
+    pub count: usize,
+    pub rows_before: usize,
+    pub rows_after: usize,
+    pub columns_before: usize,
+    pub columns_after: usize,
+    pub created: Vec<CreatedNode>,
+    pub removed: Vec<String>,
+    /// Surviving cells whose address moved.
+    pub shifted: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceChange {
@@ -339,6 +402,8 @@ pub struct Applied {
     pub replace_all: Vec<ReplaceAllReport>,
     /// One report per `form.fill` step, in step order.
     pub form_fill: Vec<FormFillReport>,
+    /// One report per table structure step, in step order.
+    pub structure: Vec<StructureReport>,
 }
 
 /// Work-in-progress state while applying a batch.
@@ -354,6 +419,9 @@ pub(crate) struct Draft {
     pub prv: Vec<(String, String)>,
     pub replace_all: Vec<ReplaceAllReport>,
     pub form_fill: Vec<FormFillReport>,
+    pub structure: Vec<StructureReport>,
+    /// Text vanished without a PrvText line to edit (deleted table cells).
+    pub prv_extra: bool,
 }
 
 impl Draft {
@@ -381,6 +449,29 @@ impl Draft {
         let stale = self.doc.stale_layout.clone();
         self.doc = self.doc.rebuild(st, stale)?;
         Ok(())
+    }
+
+    /// Splice one entry and run the structure-aware commit gate.
+    pub fn splice_structural(
+        &mut self,
+        entry: &str,
+        edits: Vec<(Range<usize>, Vec<u8>)>,
+        change: &TableRemap,
+    ) -> Result<StructureDelta> {
+        let doc = self.doc.xml.get(entry).ok_or_else(|| {
+            EngineError::new(
+                Code::StateInvariantError,
+                Stage::Apply,
+                format!("no parsed entry {entry}"),
+            )
+        })?;
+        let new = doc.splice(edits, self.opts())?;
+        let mut st = self.doc.state.clone();
+        st.set(entry, new.bytes().clone());
+        let stale = self.doc.stale_layout.clone();
+        let (doc, delta) = self.doc.rebuild_table_structure(st, stale, change)?;
+        self.doc = doc;
+        Ok(delta)
     }
 
     pub fn node(&self, id: &str, kind: Option<Kind>) -> Result<Node> {
@@ -442,6 +533,8 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
         prv: Vec::new(),
         replace_all: Vec::new(),
         form_fill: Vec::new(),
+        structure: Vec::new(),
+        prv_extra: false,
     };
     for (i, op) in ops.iter().enumerate() {
         let r = match op {
@@ -455,6 +548,58 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
                 heights,
                 height,
             } => table::tracks(&mut d, target, heights.as_deref(), *height, false),
+            EditOp::TableInsertRow {
+                target,
+                index,
+                count,
+            } => table_structure::structure(
+                &mut d,
+                "table.insertRow",
+                target,
+                table_structure::Axis::Row,
+                table_structure::Mode::Insert,
+                *index,
+                *count,
+            ),
+            EditOp::TableDeleteRow {
+                target,
+                index,
+                count,
+            } => table_structure::structure(
+                &mut d,
+                "table.deleteRow",
+                target,
+                table_structure::Axis::Row,
+                table_structure::Mode::Delete,
+                *index,
+                *count,
+            ),
+            EditOp::TableInsertColumn {
+                target,
+                index,
+                count,
+            } => table_structure::structure(
+                &mut d,
+                "table.insertColumn",
+                target,
+                table_structure::Axis::Column,
+                table_structure::Mode::Insert,
+                *index,
+                *count,
+            ),
+            EditOp::TableDeleteColumn {
+                target,
+                index,
+                count,
+            } => table_structure::structure(
+                &mut d,
+                "table.deleteColumn",
+                target,
+                table_structure::Axis::Column,
+                table_structure::Mode::Delete,
+                *index,
+                *count,
+            ),
             EditOp::CellSetFormat { target, format } => table::cell_format(&mut d, target, format),
             EditOp::CellSetSize {
                 target,
@@ -563,10 +708,15 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
             cache_removals: BTreeMap::new(),
             replace_all: d.replace_all,
             form_fill: d.form_fill,
+            structure: Vec::new(),
         });
     }
+    let prv_extra = d.prv_extra;
     let cache_removals = clear_caches(&mut d)?;
-    let stale = update_previews(&mut d, &cache_removals)?;
+    let mut stale = update_previews(&mut d, &cache_removals)?;
+    if prv_extra && d.doc.info.prv_text.is_some() {
+        stale.prv_text = true;
+    }
     let mut changed = d.changed.clone();
     changed.dedup();
     Ok(Applied {
@@ -579,6 +729,7 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
         cache_removals,
         replace_all: d.replace_all,
         form_fill: d.form_fill,
+        structure: d.structure,
     })
 }
 

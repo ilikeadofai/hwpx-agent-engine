@@ -139,3 +139,17 @@ python3 -m unittest discover -s tests/oracle
 ### 필드 텍스트 (`field.setText`, 0.3)
 
 검증기는 요청의 문단 경로·name·fieldid·occurrence로 원본 XML의 필드를 독립 선택하고, beginIDRef와 같은 문단 흐름의 시작/끝 마커를 짝지어 값 영역을 재도출합니다. `CLICK_HERE`(실제 한컴 표기)/`CLICKHERE`(합성 픽스처 표기)/`HYPERLINK`의 일반 텍스트만 허용하며 중복·다문단·중첩·개체·탭·CDATA·주석·PI·불투명 값은 거절합니다. 첫 기존 텍스트 carrier에 새 글을 넣고 나머지를 비우는 기대 바이트와 캐시·PrvText 정책을 재계산합니다. 안전한 기존 run이 있는 빈 필드는 hp:t carrier를 추가할 수 있으나 모델 노드는 추가하지 않습니다. 후보의 마커·이름·Command·다른 필드 값·요청 없는 header 변경, 미편집 항목 재인코딩은 거절합니다. 구현은 `crates/hae-verify/src/fields.rs`; hae-edit·hae-model 의존은 없습니다. 근거는 합성 CLICKHERE/HYPERLINK 픽스처와 공개 기안문 서식(`tests/fixtures/corpus/gani-gian.hwpx`·`ilban-gian.hwpx`, 실제 `type="CLICK_HERE"`)이며, 두 실물 서식 후보로 수용·거절 시험을 추가했습니다. 사용자 개인 공문서와 Windows 한컴 실기 검증은 미수행입니다.
+
+
+## 0.3 표 행·열 추가·삭제 (`table.insertRow`·`deleteRow`·`insertColumn`·`deleteColumn`) 독립 검증
+
+`hae-verify/src/table_structure.rs`는 노드를 만들고 지우는 첫 명령군을 검증하며 `hae-edit`/`hae-model` 의존이 없습니다. 입력은 요청 원문(`entry`, 표 경로, `index`, `count`)과 앞 단계까지의 기대 패키지뿐이고, 편집기가 만든 ID·`TableRemap`·계획은 받지 않습니다.
+
+1. 원본 표 격자를 다시 구성(격자 완전성·겹침 없음, `cellSpacing=0`, `ABSOLUTE` 크기, 중첩 표·`cellzoneList` 없음, 셀의 `rowAddr`=`tr` 순번, 행 안 `colAddr` 증가)하고 요청의 적법성(범위·1024 한도·병합·삭제 내용 허용 목록)을 판정합니다. 적법하지 않으면 후보 바이트와 무관하게 거절합니다(예: 병합 셀을 지운 후보를 정확히 잘라 와도 거절).
+2. 기대 바이트를 원본 XML에 대한 splice로 도출합니다: 새 `tr`/`tc` 원문(템플릿 셀 복제 + `name` 비움 + 행 삽입이면 `header="0"` + 새 `cellAddr` + 빈 문단 하나), 밀리는 셀의 `rowAddr`/`colAddr`, `rowCnt`/`colCnt`, `tbl/sz`(행은 차분 `±높이`, 열은 열 폭 제약 전파로 결정한 폭), 삭제할 `tr`/`tc`.
+3. 캐시 규칙: 표를 담은 최상위 문단부터 구역 끝까지의 최상위 `linesegarray`와 표 안의 모든 문단 캐시를 제거합니다. 앞 단계가 기록한 같은 표 아래 문단 앵커는 버리고 구조 변경 뒤 문서에서 다시 앵커합니다.
+4. `PrvText`는 건드리지 않습니다. 지운 셀에 글이 있었으면 `prv_text_stale`, 썸네일은 항상 낡음.
+5. 같은 요청 목록의 뒷 단계가 앞 단계로 밀린 기존 셀을 가리키면 검증기가 스스로 도출한 경로 사상(`Remap`)으로 원본 주소를 따라가고, 앞 단계가 지운 요소를 가리키면 거절합니다.
+6. 마지막에 기대 패키지와 후보를 항목 바이트 단위로 대조하는 것은 기존과 같습니다(미편집 항목은 원시 압축 바이트까지).
+
+시험: `crates/hae-verify/tests/table_structure.rs`가 편집기 없이 후보 4종(행/열 삽입·삭제)을 바이트 계약대로 손으로 만들어 수용을 확인하고, `rowCnt`·`colCnt`·표 크기·새 셀 주소·밀린 셀 주소 미갱신, 새 셀의 글·테두리·`header`·`name` 오류, 잘못된 위치·행 수, 캐시 미삭제/과삭제, 다른 표 변경, 엉뚱한 행/열 삭제, 병합 셀 삭제·분할 삽입 요청 등 30건 가까운 변조를 거절하는지 봅니다. 한컴 열기 게이트는 [표 구조 편집 한컴 게이트](table-structure-hancom-gate-2026-10-18.md)에 있습니다.

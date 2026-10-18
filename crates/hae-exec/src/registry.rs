@@ -290,6 +290,25 @@ pub struct TableSetRowHeightsParams {
     pub heights: Option<Vec<u32>>,
     pub height: Option<u32>,
 }
+macro_rules! structure_params {
+    ($($name:ident),*) => {$(
+        /// `index` is the 0-based address the first new line gets (insert) or
+        /// the first line removed (delete); `count` defaults to 1.
+        #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        pub struct $name {
+            pub target: String,
+            pub index: usize,
+            pub count: Option<usize>,
+        }
+    )*};
+}
+structure_params!(
+    TableInsertRowParams,
+    TableDeleteRowParams,
+    TableInsertColumnParams,
+    TableDeleteColumnParams
+);
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CellSetSizeParams {
@@ -329,14 +348,12 @@ pub struct CellSetFormatParams {
 }
 
 pub(crate) fn reject_structure_change(name: &str) -> Result<()> {
+    // `table.insertRow`/`deleteRow`/`insertColumn`/`deleteColumn` exist (0.3);
+    // these spellings and the plural/bulk forms do not.
     if matches!(
         name,
         "table.addRow"
-            | "table.deleteRow"
             | "table.addColumn"
-            | "table.deleteColumn"
-            | "table.insertRow"
-            | "table.insertColumn"
             | "table.insertRows"
             | "table.deleteRows"
             | "table.insertColumns"
@@ -351,7 +368,7 @@ pub(crate) fn reject_structure_change(name: &str) -> Result<()> {
         return Err(EngineError::new(
             Code::Unsupported,
             Stage::Validate,
-            "row/column creation or deletion requires a separate identity/history contract",
+            "no such table structure command; use table.insertRow, table.deleteRow, table.insertColumn or table.deleteColumn with index and count",
         )
         .with_reason("structure_change_unsupported"));
     }
@@ -639,6 +656,23 @@ pub struct MutationResultShape {
     pub history_evicted: bool,
 }
 
+/// Result of the four table structure commands (batch results carry the same
+/// objects per step in `structure`). In `dryRun` the created `nodeId`s are
+/// null because the candidate is discarded.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TableStructureResultShape {
+    pub outcome: String,
+    pub before_version: u64,
+    pub after_version: u64,
+    pub changed_ids: Vec<String>,
+    pub history_evicted: bool,
+    /// Per step: `command`, `table`, `index`, `count`, `rowsBefore/After`,
+    /// `columnsBefore/After`, `created` [{nodeId, kind, row, col}], `removed`
+    /// [nodeId], `shifted` [nodeId of surviving cells whose address moved].
+    pub structure: Vec<Value>,
+}
+
 /// Result of `text.replaceAll` (batch results carry the same object per step in
 /// `replaceAll`). Ranges are grapheme ranges of the paragraph before the command.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -820,6 +854,10 @@ pub enum ParsedCommand {
     TableSetRowHeights(TableSetRowHeightsParams),
     CellSetFormat(CellSetFormatParams),
     CellSetSize(CellSetSizeParams),
+    TableInsertRow(TableInsertRowParams),
+    TableDeleteRow(TableDeleteRowParams),
+    TableInsertColumn(TableInsertColumnParams),
+    TableDeleteColumn(TableDeleteColumnParams),
     LinkList(LinkListParams),
     TrackChangeList(TrackChangeListParams),
     SectionGetPage(SectionGetPageParams),
@@ -927,6 +965,20 @@ fn schema_json<T: JsonSchema>() -> Value {
         schema["properties"][one] =
             serde_json::json!({"type":"integer","minimum":1,"maximum":2147483647});
     }
+    if matches!(
+        schema["title"].as_str(),
+        Some(
+            "TableInsertRowParams"
+                | "TableDeleteRowParams"
+                | "TableInsertColumnParams"
+                | "TableDeleteColumnParams"
+        )
+    ) {
+        schema["properties"]["index"] =
+            serde_json::json!({"type":"integer","minimum":0,"maximum":1024});
+        schema["properties"]["count"] =
+            serde_json::json!({"type":"integer","minimum":1,"maximum":1024,"default":1});
+    }
     if schema["title"] == "CellSetSizeParams" {
         schema["anyOf"] = serde_json::json!([{"required":["width"]},{"required":["height"]}]);
         for side in ["width", "height"] {
@@ -980,6 +1032,10 @@ mod schema_tests {
             ("table_set_row_heights", [false, true, false, false]),
             ("cell_set_format", [false, true, false, false]),
             ("cell_set_size", [false, true, false, false]),
+            ("table_insert_row", [false, true, false, false]),
+            ("table_delete_row", [false, true, false, false]),
+            ("table_insert_column", [false, true, false, false]),
+            ("table_delete_column", [false, true, false, false]),
             ("section_get_page", [true, false, true, false]),
             ("section_set_page", [false, true, false, false]),
             ("section_set_page_numbering", [false, true, false, false]),
@@ -1300,6 +1356,30 @@ define_commands! {
         summary: "Resize a nonmerged cell by changing its whole column/row tracks and table total; report affected cells; merged anchors explicitly unsupported", category: Mutation,
         mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
         stage1: true, reason: None, params: CellSetSizeParams, output: MutationResultShape,
+    },
+    TableInsertRow {
+        name: "table.insertRow", cli: "table-insert-row", mcp: "table_insert_row",
+        summary: "Insert `count` (default 1) empty rows into a table so the first new row gets 0-based address `index` (0..=rowCnt); new cells clone a neighbouring row's attributes and borders with empty text; creates new cell/paragraph nodes with new nodeIds; refuses boundaries that split merged cells", category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None, params: TableInsertRowParams, output: TableStructureResultShape,
+    },
+    TableDeleteRow {
+        name: "table.deleteRow", cli: "table-delete-row", mcp: "table_delete_row",
+        summary: "Delete `count` (default 1) rows starting at 0-based address `index`; removes their cell/paragraph nodes (Undo restores the same nodeIds); refuses merged cells in the range, cells holding objects or fields, and deleting every row", category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None, params: TableDeleteRowParams, output: TableStructureResultShape,
+    },
+    TableInsertColumn {
+        name: "table.insertColumn", cli: "table-insert-column", mcp: "table_insert_column",
+        summary: "Insert `count` (default 1) empty columns so the first new column gets 0-based address `index` (0..=colCnt); the table widens by the cloned neighbour column's width; refuses boundaries that split merged cells", category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None, params: TableInsertColumnParams, output: TableStructureResultShape,
+    },
+    TableDeleteColumn {
+        name: "table.deleteColumn", cli: "table-delete-column", mcp: "table_delete_column",
+        summary: "Delete `count` (default 1) columns starting at 0-based address `index`; the table narrows by their widths; refuses merged cells in the range, cells holding objects or fields, and deleting every column", category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None, params: TableDeleteColumnParams, output: TableStructureResultShape,
     },
     LinkList {
         name: "link.list",

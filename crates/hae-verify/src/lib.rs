@@ -42,6 +42,7 @@ mod image;
 mod narrow;
 mod section;
 mod table;
+mod table_structure;
 mod text;
 
 pub use contract::{
@@ -102,6 +103,29 @@ fn stable_at(doc: &XmlDoc, path: &[usize]) -> Result<usize> {
     })
 }
 type Anchors = BTreeMap<String, (usize, BTreeSet<Vec<usize>>)>;
+/// Path remappings made by earlier table-structure steps of this request list.
+pub(crate) type Remaps = Vec<(String, table_structure::Remap)>;
+/// Find the element a request addresses in the current expected `doc`: the
+/// address names the pre-request element, which earlier structure steps may
+/// have moved (or removed).
+pub(crate) fn resolve(
+    xml: &XmlMap,
+    remaps: &Remaps,
+    entry: &str,
+    doc: &XmlDoc,
+    path: &[usize],
+) -> Result<usize> {
+    let source = xml.get(entry).ok_or_else(|| fail("missing source XML"))?;
+    let mut stable = stable_path(source, at(source, path)?);
+    for (e, remap) in remaps {
+        if e == entry {
+            stable = remap
+                .map(&stable)
+                .ok_or_else(|| fail("target was removed by an earlier structure change"))?;
+        }
+    }
+    stable_at(doc, &stable)
+}
 
 pub(crate) fn fail(message: impl Into<String>) -> EngineError {
     EngineError::new(Code::VerifyFailed, Stage::Save, message)
@@ -256,6 +280,8 @@ fn verify_inner(
     let mut preview = Vec::new();
     let mut material = false;
     let mut seen_images = BTreeSet::new();
+    let mut remaps = Remaps::new();
+    let mut deleted_text = false;
     for op in requests {
         if let VerifyOperation::ParagraphSetStyle { targets, style_id } = op {
             if targets.is_empty() {
@@ -266,8 +292,7 @@ fn verify_inner(
                     return Err(fail("style target not in a section"));
                 }
                 let doc = parse(&expected, &t.entry, limits)?;
-                let source = at(&xml[&t.entry], &t.path)?;
-                let p = stable_at(&doc, &stable_path(&xml[&t.entry], source))?;
+                let p = resolve(&xml, &remaps, &t.entry, &doc, &t.path)?;
                 check_opaque_refs(&xml, &t.entry, &doc, p)?;
                 if narrow::style(&mut expected, &info, &t.entry, &doc, p, *style_id, limits)? {
                     anchor(&mut anchors, &t.entry, &doc, p)?;
@@ -297,13 +322,7 @@ fn verify_inner(
                 }
                 let doc = parse(&expected, &entry, limits)?;
                 let scope_el = match scope {
-                    Some(s) => {
-                        let original_target = at(&xml[&entry], &s.path)?;
-                        Some(stable_at(
-                            &doc,
-                            &stable_path(&xml[&entry], original_target),
-                        )?)
-                    }
+                    Some(s) => Some(resolve(&xml, &remaps, &entry, &doc, &s.path)?),
                     None => None,
                 };
                 for (para, old, new) in text::replace_all(
@@ -342,6 +361,7 @@ fn verify_inner(
                 limits,
                 &mut anchors,
                 &mut preview,
+                &remaps,
             )? {
                 material = true;
             }
@@ -352,8 +372,7 @@ fn verify_inner(
             return Err(unsupported("targets must belong to a spine section"));
         }
         let doc = parse(&expected, entry, limits)?;
-        let original_target = at(&xml[entry], path)?;
-        let target = stable_at(&doc, &stable_path(&xml[entry], original_target))?;
+        let target = resolve(&xml, &remaps, entry, &doc, path)?;
         // Header requests name a section for lookup, not as the edited subtree.
         // Check only the independently selected paragraph below.
         if !matches!(op, VerifyOperation::HeaderSetText { .. }) {
@@ -377,6 +396,35 @@ fn verify_inner(
                         .ok_or_else(|| unsupported("table has no paragraph carrier"))?;
                     anchor(&mut anchors, entry, &doc, carrier)?;
                 }
+            }
+            VerifyOperation::TableInsertRow { .. }
+            | VerifyOperation::TableDeleteRow { .. }
+            | VerifyOperation::TableInsertColumn { .. }
+            | VerifyOperation::TableDeleteColumn { .. } => {
+                let outcome = table_structure::check(&mut expected, entry, &doc, target, op)?;
+                // Paragraph paths below the table are void after the change;
+                // every paragraph of the table is re-anchored in the new tree.
+                if let Some(slot) = anchors.get_mut(entry) {
+                    let t = outcome.table.len();
+                    slot.1
+                        .retain(|p| !(p.len() > t && p[..t] == outcome.table[..]));
+                }
+                let new_doc = parse(&expected, entry, limits)?;
+                let new_table = stable_at(&new_doc, &outcome.table)?;
+                let carrier = new_doc
+                    .ancestors(new_table)
+                    .find(|&i| hp(new_doc.el(i), "p"))
+                    .ok_or_else(|| unsupported("table has no paragraph carrier"))?;
+                anchor(&mut anchors, entry, &new_doc, carrier)?;
+                for p in new_doc
+                    .descendants(new_table)
+                    .filter(|&i| hp(new_doc.el(i), "p"))
+                {
+                    anchor(&mut anchors, entry, &new_doc, p)?;
+                }
+                deleted_text |= outcome.text_deleted;
+                remaps.push((entry.to_string(), outcome.remap));
+                material = true;
             }
             VerifyOperation::EquationSetScript { script, .. } => {
                 if equation::check(&mut expected, entry, &doc, target, Some(script), None)? {
@@ -631,6 +679,7 @@ fn verify_inner(
                     }
                 }
                 expected.set(name, Arc::from(updated.into_bytes()));
+                report.prv_text_stale |= deleted_text;
             }
             Err(_) => report.prv_text_stale = material,
         }

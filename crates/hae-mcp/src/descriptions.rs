@@ -111,13 +111,25 @@ fn cell_set_text() -> &'static str {
 }
 
 fn table_set_column_widths() -> &'static str {
-    "Set table target's positive HWPUNIT widths array (exact colCnt) or uniform width. Updates merged cellSz by column sums and the absolute table width; reports tableSize and changedCells in intents. Zero-spacing, complete, determinable grids only; effective margins require content space. Requires expectedVersion; supports dryRun, atomic batch and exact Undo. No row/column creation."
+    "Set table target's positive HWPUNIT widths array (exact colCnt) or uniform width. Updates merged cellSz by column sums and the absolute table width; reports tableSize and changedCells in intents. Zero-spacing, complete, determinable grids only; effective margins require content space. Requires expectedVersion; supports dryRun, atomic batch and exact Undo. To add or remove rows/columns use `table_insert_row`/`table_delete_row`/`table_insert_column`/`table_delete_column`."
 }
 fn table_set_row_heights() -> &'static str {
     "Set table target's positive HWPUNIT heights array (exact rowCnt) or uniform height. Updates each cellSz by row-span sums and the absolute table height. Stored heights are minimum extents; Hancom may grow rows for text. Refuses indeterminate merged grids or margin violations. Requires expectedVersion; supports dryRun, batch and Undo."
 }
 fn cell_set_format() -> &'static str {
     "Set existing cell target's borderFillId (string or integer), background (#RRGGBB or none), and/or partial cellMargin {left,right,top,bottom}. Unknown IDs return TARGET_NOT_FOUND. Background selects an existing resource with identical borders; no match returns UNSUPPORTED/background_resource_unavailable. Never adds nodes or modifies shared header resources. Margins enable hasMargin and must leave content space. Requires expectedVersion; supports dryRun, batch and Undo."
+}
+fn table_insert_row() -> &'static str {
+    "Insert `count` (default 1, max 1024) empty rows into table target so the first new row gets the 0-based address `index` (0..=rowCnt; `index` = number of rows kept above it, so \"after the 3rd row\" is `index: 3`). Each new cell clones the attributes, borders and margins of a neighbouring row (the row above `index`, or the row at `index` when the one above is a title row or has vertical merges) with one empty paragraph that keeps the first paragraph's shape; the table height grows by the template row height. CREATES NEW NODES: the new cells and paragraphs get new nodeIds listed in `structure[].created` (null in `dryRun`), existing cells keep their nodeIds but cells at or below `index` move down by `count` rows (`structure[].shifted`, `changedIds`) — re-query addresses before targeting by row/col. Refused: `index` out of range (`INVALID_ARGUMENT`/`index_out_of_range`), more than 1024 rows (`table_size_limit`), a boundary that splits a merged cell (`UNSUPPORTED`/`insert_inside_merged_cell`), no plain neighbouring row (`no_simple_template_line`), nested tables, cell zones, relative or non-determinable geometry. Cached layout of the table and everything after it in the section is dropped. Requires expectedVersion (`VERSION_CONFLICT` if stale); supports dryRun, atomic `command_batch` and exact Undo/Redo (Redo keeps the same new nodeIds)."
+}
+fn table_delete_row() -> &'static str {
+    "Delete `count` (default 1) rows of table target starting at 0-based address `index`; the table shrinks by their heights and rows below move up. REMOVES NODES: the deleted cells and paragraphs are listed in `structure[].removed`; Undo restores them with the same nodeIds. Refused with `UNSUPPORTED`/`merged_cell_blocks_delete` (detail.cells) when any merged cell overlaps the range, `delete_content_unsupported` when a cell holds pictures, equations, fields, shapes or notes, and `INVALID_ARGUMENT` for a range outside the table (`index_out_of_range`) or deleting every row (`would_empty_table`). Deleted text is not removed from the preview text file (`stale.prvText`). Requires expectedVersion; supports dryRun, atomic `command_batch` and exact Undo/Redo."
+}
+fn table_insert_column() -> &'static str {
+    "Insert `count` (default 1, max 1024) empty columns into table target so the first new column gets the 0-based address `index` (0..=colCnt). Each row gets new cells cloned from the neighbouring column (the one left of `index`, else the one at `index`) with empty text; the table widens by the cloned column's width times `count` (existing columns keep their width — follow with `table_set_column_widths` to fit a page). CREATES NEW NODES (`structure[].created`; null ids in `dryRun`); cells at or right of `index` move right and appear in `structure[].shifted`. Refused: out-of-range `index`, more than 1024 columns, a boundary that splits a merged cell (`insert_inside_merged_cell`), no plain neighbouring column, nested tables, cell zones, non-determinable column widths. Requires expectedVersion; supports dryRun, atomic `command_batch` and exact Undo/Redo."
+}
+fn table_delete_column() -> &'static str {
+    "Delete `count` (default 1) columns of table target starting at 0-based address `index`; the table narrows by their widths and cells to the right move left. REMOVES NODES (`structure[].removed`; Undo restores the same nodeIds). Refused: merged cells overlapping the range (`merged_cell_blocks_delete`), cells holding objects or fields (`delete_content_unsupported`), a row that would be left without cells (`row_would_become_empty`), a range outside the table, deleting every column. Requires expectedVersion; supports dryRun, atomic `command_batch` and exact Undo/Redo."
 }
 fn cell_set_size() -> &'static str {
     "Set nonmerged cell target's positive HWPUNIT width and/or height. Changes that entire column/row track, propagates dimensions to intersecting cells and the table total, and reports changedCells/tableSize in intents. Direct merged-cell requests return UNSUPPORTED/merged_cell_size_unsupported; use table track commands instead. Requires expectedVersion; supports dryRun, batch and exact Undo."
@@ -142,7 +154,7 @@ fn header_set_text() -> &'static str {
 }
 
 fn command_batch() -> &'static str {
-    "Execute multiple edit `steps` (`field.setText`, `text.format`, `text.replace`, `text.replaceAll`, `paragraph.format`, `cell.setText`, `form.fill`, `image.replace`, `paragraph.setStyle`, `image.fit`, `header.setText`, `table.setColumnWidths`, `table.setRowHeights`, `cell.setFormat`, `cell.setSize`, `equation.setScript`, `equation.setProperties`) atomically as a single revision increment and single undo unit. Requires one top-level `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query); each step's ranges and preconditions are evaluated against the state produced by preceding steps. If any step fails, the entire batch rolls back with no state change and reports the failing step index. Set `dryRun: true` to validate and preview the combined diff without changing the document."
+    "Execute multiple edit `steps` (`field.setText`, `text.format`, `text.replace`, `text.replaceAll`, `paragraph.format`, `cell.setText`, `form.fill`, `image.replace`, `paragraph.setStyle`, `image.fit`, `header.setText`, `table.setColumnWidths`, `table.setRowHeights`, `table.insertRow`, `table.deleteRow`, `table.insertColumn`, `table.deleteColumn`, `cell.setFormat`, `cell.setSize`, `equation.setScript`, `equation.setProperties`) atomically as a single revision increment and single undo unit. Requires one top-level `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query); each step's ranges and preconditions are evaluated against the state produced by preceding steps. If any step fails, the entire batch rolls back with no state change and reports the failing step index. Set `dryRun: true` to validate and preview the combined diff without changing the document."
 }
 
 fn history_undo() -> &'static str {
@@ -235,6 +247,10 @@ pub const TABLE: &[(&str, Describe)] = &[
     ("table.setRowHeights", table_set_row_heights),
     ("cell.setFormat", cell_set_format),
     ("cell.setSize", cell_set_size),
+    ("table.insertRow", table_insert_row),
+    ("table.deleteRow", table_delete_row),
+    ("table.insertColumn", table_insert_column),
+    ("table.deleteColumn", table_delete_column),
     ("paragraph.setStyle", paragraph_set_style),
     ("image.fit", image_fit),
     ("header.setText", header_set_text),

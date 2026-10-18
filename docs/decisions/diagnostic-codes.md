@@ -111,3 +111,27 @@ batch 롤백 뒤 현재 문서에서 재조회한다. 코드는 추가하지 않
 0.3 `form.fill`: strict(기본)에서 하나라도 실패하면 아무것도 바꾸지 않고 거절한다. 사유가 모두 label_not_found면 TARGET_NOT_FOUND, 모두 ambiguous_label이면 AMBIGUOUS_TARGET, 그 밖에는 UNSUPPORTED이며 세 경우 모두 `reason: "form_fill_rejected"`와 `detail.failures[]`(라벨별 `{label, reason, detail?}`)를 담는다. strict:false는 성공한 라벨만 적용하고 건너뛴 라벨을 결과 `skipped[]`와 FORM_FILL_SKIPPED(경고)로 보고한다. 라벨별 `reason` 문자열은 진단 코드가 아닌 지원 사유다: `label_not_found`(일치 셀 없음), `ambiguous_label`(일치 셀 2개 이상), `no_cell_geometry`(라벨 셀에 cellAddr 없음), `no_target_cell`(오른쪽·아래 셀 없음), `ambiguous_target`(오른쪽 또는 아래 후보가 2개 이상), `target_not_empty`(대상 셀에 이미 글자 있음), `conflicting_target`(두 라벨이 같은 셀을 가리킴), 그리고 대상 셀의 cell.setText 거절 사유(`nested_cell`·`nested_table`·`cell_paragraph_count`·`no_run`·`verify_unsupported_markup`·`unsupported_content_in_range`·`verify_no_top_level_paragraph`·잠금 사유). 빈 `values`·빈 라벨·여러 줄 라벨·빈 값·탭/줄바꿈이 든 값은 INVALID_ARGUMENT, `scope`가 표·구역이 아니면 UNSUPPORTED(`form_scope`), 없는 scope nodeId는 TARGET_NOT_FOUND다.
 
 0.3 `field.list`·`field.setText`도 새 코드를 만들지 않는다. 조회는 scope가 문단·표·셀·구역이 아니면 INVALID_ARGUMENT, 없는 scope는 TARGET_NOT_FOUND, 커서 형식 오류는 INVALID_REQUEST, 다른 revision의 커서는 VERSION_CONFLICT다. 편집의 선택자 모호는 AMBIGUOUS_TARGET, 선택자 없음·순번 밖은 TARGET_NOT_FOUND이며, 지원하지 않는 필드 종류와 안전하지 않은 값 영역은 UNSUPPORTED_CONTENT_IN_RANGE에 reason을 담아 거절한다. reason 값: unsupported_field_type, multi_paragraph_field, nested_field, unpaired_field, field_lexical_markup, field_contains_control_or_opaque, no_text_fragment, paragraph_not_editable.
+
+## 0.3 표 행·열 추가·삭제(`table.insertRow`·`deleteRow`·`insertColumn`·`deleteColumn`)
+
+새 `Code` enum은 추가하지 않습니다. 설계: [table-structure-node-creation-design.md](table-structure-node-creation-design.md) §9.
+
+| 코드 | reason | 조건 |
+|---|---|---|
+| `INVALID_ARGUMENT` | `index_out_of_range` | 삽입 `index`가 `0..=줄 수` 밖, 삭제 `index`가 `0..줄 수` 밖이거나 `index+count`가 줄 수를 넘음 |
+| `INVALID_ARGUMENT` | `count_out_of_range` | `count`가 `1..=1024` 밖 |
+| `INVALID_ARGUMENT` | `table_size_limit` | 결과 행 또는 열 수가 1024 초과 |
+| `INVALID_ARGUMENT` | `would_empty_table` | 모든 행(열)을 지우려 함 |
+| `UNSUPPORTED` | `merged_cell_blocks_delete` | 삭제 구간과 겹치는 셀 중 `rowSpan`/`colSpan`이 1이 아닌 셀이 있음. `detail.cells[]`({row,col,rowSpan,colSpan}, 최대 16개)·`detail.cellCount` |
+| `UNSUPPORTED` | `insert_inside_merged_cell` | 삽입 경계가 병합 셀을 가름. `detail.cells[]` 동일 형식 |
+| `UNSUPPORTED` | `no_simple_template_line` | 복제할 단순한 이웃 줄(덮는 모든 셀의 병합 수가 1)이 없음 |
+| `UNSUPPORTED` | `cell_template_unsupported` | 복제할 셀에 `subList` 하나·첫 문단·첫 run·`charPrIDRef`가 없음 |
+| `UNSUPPORTED` | `delete_content_unsupported` | 삭제할 셀에 글·줄바꿈·탭 외 요소(그림·수식·필드·도형·각주 등). `detail.element`에 요소 이름 |
+| `UNSUPPORTED` | `row_would_become_empty` | 열 삭제 뒤 셀이 하나도 없는 행이 생김 |
+| `UNSUPPORTED` | `table_cellzone_unsupported` | `hp:cellzoneList`가 있는 표 |
+| `UNSUPPORTED` | `table_geometry_unsupported`·`nested_table` | 기존 치수 명령과 같은 전제(격자 완전성, `cellSpacing=0`, `ABSOLUTE` 크기, 열 폭 결정 가능, 중첩 표 없음) 위반 |
+| `UNSUPPORTED` | `structure_change_unsupported` | 옛 이름(`table.addRow`·`insertRows`·`removeColumn` 등). 구역 설정 명령의 같은 reason과 별개이며 메시지가 새 명령 이름을 안내함 |
+| `STATE_INVARIANT_ERROR` | — | 구조 변경 선언(`TableRemap`)과 후보 문서가 어긋남. 편집기 결함 방어선이며 commit되지 않음 |
+| `VERIFY_FAILED` | 기존 검증 reason | 원본과 요청에서 독립 도출한 기대 바이트와 후보가 다름(새 셀 속성·텍스트·주소·크기·캐시·요청 밖 변경 포함) |
+
+대상이 표가 아니면 기존대로 `UNSUPPORTED`/`wrong_kind`, 없는 nodeId는 `TARGET_NOT_FOUND`, 인자 형식 오류(음수 `index` 등)는 `INVALID_REQUEST`입니다. 응답 `structure[]`의 `created`/`removed`/`shifted`는 진단이 아니라 결과입니다.

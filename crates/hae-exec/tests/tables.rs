@@ -175,11 +175,11 @@ cases! {
 #[test]
 fn structure_changes_are_explicitly_unsupported() {
     let mut s = Case::new();
+    // `table.insertRow`/`deleteRow`/`insertColumn`/`deleteColumn` exist since
+    // 0.3 (tests/table_structure.rs); only other spellings are refused.
     for cmd in [
         "table.addRow",
-        "table.deleteRow",
         "table.addColumn",
-        "table.deleteColumn",
         "table.insertRows",
         "table.deleteRows",
         "table.insertColumns",

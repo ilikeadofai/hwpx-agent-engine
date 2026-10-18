@@ -23,19 +23,19 @@ pub struct CellFormat {
     pub background: Option<String>,
     pub cell_margin: Option<CellMargin>,
 }
-fn bad(message: &str) -> EngineError {
+pub(crate) fn bad(message: &str) -> EngineError {
     EngineError::new(Code::InvalidArgument, Stage::Validate, message)
 }
-fn unsupported(reason: &str, message: &str) -> EngineError {
+pub(crate) fn unsupported(reason: &str, message: &str) -> EngineError {
     EngineError::new(Code::Unsupported, Stage::Validate, message).with_reason(reason)
 }
-fn shape(message: &str) -> EngineError {
+pub(crate) fn shape(message: &str) -> EngineError {
     unsupported("table_geometry_unsupported", message)
 }
-fn hp(d: &XmlDoc, i: usize, n: &str) -> bool {
+pub(crate) fn hp(d: &XmlDoc, i: usize, n: &str) -> bool {
     hae_model::is_hp(d.el(i).ns.as_deref()) && d.el(i).local == n
 }
-fn child(d: &XmlDoc, i: usize, n: &str) -> Result<usize> {
+pub(crate) fn child(d: &XmlDoc, i: usize, n: &str) -> Result<usize> {
     let v: Vec<_> = d
         .el(i)
         .children
@@ -48,14 +48,20 @@ fn child(d: &XmlDoc, i: usize, n: &str) -> Result<usize> {
     }
     Ok(v[0])
 }
-fn number(d: &XmlDoc, i: usize, n: &str) -> Result<u32> {
+pub(crate) fn number(d: &XmlDoc, i: usize, n: &str) -> Result<u32> {
     d.el(i)
         .attr_value(n)
         .and_then(|v| v.parse::<u32>().ok())
         .filter(|&v| v <= i32::MAX as u32)
         .ok_or_else(|| shape("missing or out-of-range table geometry attribute"))
 }
-fn put(d: &XmlDoc, i: usize, n: &str, v: impl ToString, cuts: &mut Vec<Cut>) -> Result<()> {
+pub(crate) fn put(
+    d: &XmlDoc,
+    i: usize,
+    n: &str,
+    v: impl ToString,
+    cuts: &mut Vec<Cut>,
+) -> Result<()> {
     let a = d
         .el(i)
         .attr(n)
@@ -66,15 +72,15 @@ fn put(d: &XmlDoc, i: usize, n: &str, v: impl ToString, cuts: &mut Vec<Cut>) -> 
     }
     Ok(())
 }
-struct Cell {
-    el: usize,
-    sz: usize,
-    row: usize,
-    col: usize,
-    rs: usize,
-    cs: usize,
-    w: u32,
-    h: u32,
+pub(crate) struct Cell {
+    pub(crate) el: usize,
+    pub(crate) sz: usize,
+    pub(crate) row: usize,
+    pub(crate) col: usize,
+    pub(crate) rs: usize,
+    pub(crate) cs: usize,
+    pub(crate) w: u32,
+    pub(crate) h: u32,
 }
 struct Grid {
     table: usize,
@@ -83,7 +89,7 @@ struct Grid {
     widths: Vec<u32>,
     heights: Vec<u32>,
 }
-fn axis(cells: &[Cell], count: usize, total: u32, horizontal: bool) -> Result<Vec<u32>> {
+pub(crate) fn axis(cells: &[Cell], count: usize, total: u32, horizontal: bool) -> Result<Vec<u32>> {
     let mut positions = vec![None; count + 1];
     positions[0] = Some(0i64);
     positions[count] = Some(i64::from(total));
@@ -367,7 +373,7 @@ pub(crate) fn tracks(
         },
     )
 }
-fn parent_table(d: &Draft, cell: &Node) -> Result<Node> {
+pub(crate) fn parent_table(d: &Draft, cell: &Node) -> Result<Node> {
     let xml = d.doc.doc_of(cell);
     let el = xml
         .ancestors(cell.el)
