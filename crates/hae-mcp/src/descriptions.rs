@@ -36,6 +36,14 @@ fn element_get() -> &'static str {
     "Return full properties, `outline.edits` command availability, paragraph `outline.textSpans`/`textSpansTruncated` (up to 64 maximal replaceable grapheme intervals), cell `outline.childParagraphsEditable`, and complete text (with grapheme cluster count) for a single element identified by `target` (`nodeId` from `document_inspect` or `element_query`) in `documentId`. Fails with `TARGET_NOT_FOUND` if `target` does not exist. Read-only; never modifies the document."
 }
 
+fn link_list() -> &'static str {
+    "List the HYPERLINK fields of the open document (`documentId`) in document order: containing paragraph `nodeId`, fieldBegin `id`/`fieldid`, every `hp:parameters` entry's raw kind/name/value (`Command`, `Path`, `Category`, `TargetType`, `DocOpenType`, ...), display text, and whether the target is inside this document or external. `displayText` is the field's `hp:script` text when present, otherwise the character data between the fieldBegin and its matching fieldEnd (`displayTextSource`: script/between/none); Hancom can write both markers next to each other, leaving `displayText` empty. `reference.scope` is `internal` (Category `HWPHYPERLINK_TYPE_HWP`, a `#`-Path, or a `?`-Command bookmark), `external` (Category `URL`/`EMAIL`, or an addressed Path/Command head), or `unknown` when nothing identifies the target; `reference.target` repeats `Path`, else the `Command` head with `\\` escapes resolved. Optional `scope` limits the list to one nodeId and its descendants. Pass `cursor` from `nextCursor` and optional `limit` (default 100, max 500) to page; `total` counts filtered links and cursors invalidate when `revision` changes. Read-only; never modifies the document."
+}
+
+fn trackchange_list() -> &'static str {
+    "List the revision marks of the open document (`documentId`): for each `hp:insertBegin`/`insertEnd`/`deleteBegin`/`deleteEnd` mark the containing paragraph `nodeId`, `section`, mark `id`, `TcId`, `paraEnd`, and the codepoint `textOffset` inside its `hp:t`, resolved against the header records as `changeType` (Insert/Delete/CharShape/ParaShape), `date`, `authorId`, and `authorName`. The reply also carries every header `changes`/`authors` record (from `hh:trackChanges`/`hh:trackChangeAuthors`), `readonlyReasons`, and `hasTrackChanges`. Documents carrying track changes stay read-only (edits are refused with `UNSUPPORTED`/`document_readonly`); this tool only reports them and never lifts that lock. Optional `scope` limits marks to one nodeId and its descendants. Pass `cursor` from `nextCursor` and optional `limit` (default 100, max 500) to page; `markCount` counts filtered marks and cursors invalidate when `revision` changes. Read-only; never modifies the document."
+}
+
 fn text_replace() -> &'static str {
     "Replace a paragraph grapheme range [start,end), or insert non-empty text at [p,p). No tabs/newlines in text. Check edits[\"text.replace\"].modes (replace/insert) and apply requires arguments (e.g. controls=preserve); default controls=reject requires a subrange/position in textSpans. Empty paragraphs advertise {start:0,end:0}; insertion uses the following character run, then preceding run, then the empty paragraph first run. controls=preserve changes only text fragments and keeps objects/tabs/line breaks/fields in original XML order; leading objects stay before the first text fragment. Existing empty hp:t may be reused; no text fragment means UNSUPPORTED_CONTENT_IN_RANGE. CONTROLS_PRESERVED reports count and new grapheme offsets. Unsupported markup/attributes still fail. Requires expectedVersion; VERSION_CONFLICT means re-query. FORMAT_COLLAPSED warns about character shapes. dryRun=true verifies without committing."
 }
@@ -160,6 +168,8 @@ pub const TABLE: &[(&str, Describe)] = &[
     ("document.close", document_close),
     ("element.query", element_query),
     ("element.get", element_get),
+    ("link.list", link_list),
+    ("trackchange.list", trackchange_list),
     ("text.format", text_format),
     ("equation.list", equation_list),
     ("equation.get", equation_get),

@@ -93,3 +93,5 @@ batch 롤백 뒤 현재 문서에서 재조회한다. 코드는 추가하지 않
 ### 0.3 좁은 편집 명령 사유 (기존 코드 사용)
 
 새 진단 코드는 추가하지 않는다. `paragraph.setStyle`의 없는 스타일과 `header.setText`의 없는 구역/머리말/꼬리말/문단은 `TARGET_NOT_FOUND`다. `UNSUPPORTED`의 `style_shape`는 기존 참조 속성 누락·중복 스타일 ID, `image_geometry`는 누락·중복·비정상 기하/행렬 또는 정수 기하 범위 초과, `header_control`은 여백·번호·필드·탭·개체 제어를 담은 머리말/꼬리말 문단을 뜻한다. `no_text_fragment`는 기존 텍스트 조각이 없어 생성 없이 교체할 수 없는 경우다. 잘못된 mode/kind·target/targets 형식은 `INVALID_REQUEST`, 변조 후보는 `VERIFY_FAILED`다.
+
+0.3 `link.list`·`trackchange.list`도 새 코드를 만들지 않는다. 커서(`revision:offset`) 형식 오류는 INVALID_REQUEST, 다른 revision의 커서는 VERSION_CONFLICT, 없는 `scope`는 TARGET_NOT_FOUND를 쓰며 두 명령은 문서를 바꾸지 않는다. 변경 추적 문서의 `readonlyReasons: ["track_changes"]` 잠금은 그대로 유지되고 `trackchange.list`는 조회만 한다.

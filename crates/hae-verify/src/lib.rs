@@ -37,8 +37,8 @@ mod equation;
 mod fit;
 mod format;
 mod image;
-mod table;
 mod narrow;
+mod table;
 mod text;
 
 pub use contract::{

@@ -105,6 +105,33 @@ pub struct ElementQueryParams {
     pub col: Option<u32>,
 }
 
+/// Shared paging + subtree scope for read-only list views.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LinkListParams {
+    /// `revision:offset` cursor from the previous reply's `nextCursor`.
+    #[serde(default)]
+    pub cursor: Option<String>,
+    /// Page size (default 100, clamped to 1..=500).
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// Optional nodeId; only that node and its descendants are listed.
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
+/// Same paging/scope contract as `LinkListParams`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TrackChangeListParams {
+    #[serde(default)]
+    pub cursor: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ElementGetParams {
@@ -532,6 +559,34 @@ pub struct EquationGetResultShape {
     pub equation: hae_model::equation::EquationInfo,
 }
 
+/// One page of HYPERLINK fields (`link.list`); `total` counts the filtered
+/// matches, not the page.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkListResultShape {
+    pub document_id: String,
+    pub revision: u64,
+    pub links: Vec<hae_model::links::LinkInfo>,
+    pub total: usize,
+    pub next_cursor: Option<String>,
+}
+
+/// One page of track-change marks plus the header records that name their kind
+/// and author (`trackchange.list`). `markCount` counts the filtered marks.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackChangeListResultShape {
+    pub document_id: String,
+    pub revision: u64,
+    pub has_track_changes: bool,
+    pub readonly_reasons: Vec<String>,
+    pub marks: Vec<hae_model::trackchange::TrackChangeMark>,
+    pub mark_count: usize,
+    pub next_cursor: Option<String>,
+    pub changes: Vec<hae_model::trackchange::TrackChangeRecord>,
+    pub authors: Vec<hae_model::trackchange::TrackChangeAuthorRecord>,
+}
+
 /// Parsed, strongly typed command enum. No arbitrary string-to-function dispatch.
 #[derive(Debug, Clone)]
 pub enum ParsedCommand {
@@ -553,6 +608,8 @@ pub enum ParsedCommand {
     TableSetRowHeights(TableSetRowHeightsParams),
     CellSetFormat(CellSetFormatParams),
     CellSetSize(CellSetSizeParams),
+    LinkList(LinkListParams),
+    TrackChangeList(TrackChangeListParams),
     TextFormat(TextFormatParams),
     TextReplace(TextReplaceParams),
     TextReplaceAll(TextReplaceAllParams),
@@ -681,6 +738,8 @@ mod schema_tests {
             ("equation_get", [true, false, true, false]),
             ("equation_set_script", [false, true, false, false]),
             ("equation_set_properties", [false, true, false, false]),
+            ("link_list", [true, false, true, false]),
+            ("trackchange_list", [true, false, true, false]),
             ("text_replace", [false, true, false, false]),
             ("text_format", [false, true, false, false]),
             ("table_set_column_widths", [false, true, false, false]),
@@ -999,6 +1058,26 @@ define_commands! {
         summary: "Resize a nonmerged cell by changing its whole column/row tracks and table total; report affected cells; merged anchors explicitly unsupported", category: Mutation,
         mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
         stage1: true, reason: None, params: CellSetSizeParams, output: MutationResultShape,
+    },
+    LinkList {
+        name: "link.list",
+        cli: "link-list",
+        mcp: "link_list",
+        summary: "List HYPERLINK fields with their raw parameters, display text, and internal/external target",
+        category: Query,
+        mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
+        stage1: true, reason: None,
+        params: LinkListParams, output: LinkListResultShape,
+    },
+    TrackChangeList {
+        name: "trackchange.list",
+        cli: "trackchange-list",
+        mcp: "trackchange_list",
+        summary: "List track-change marks with position and kind plus the header author records; track-change documents stay read-only",
+        category: Query,
+        mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
+        stage1: true, reason: None,
+        params: TrackChangeListParams, output: TrackChangeListResultShape,
     },
     TextFormat {
         name: "text.format", cli: "text-format", mcp: "text_format",
