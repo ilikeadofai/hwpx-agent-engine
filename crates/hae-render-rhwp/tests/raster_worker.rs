@@ -161,6 +161,7 @@ fn real_worker_png_equals_the_reference_and_uses_the_exact_font_snapshot() {
 }
 
 #[test]
+#[ignore = "requires optional rhwp renderer; scripts/check.sh runs this when available"]
 fn corpus_page_png_from_the_worker_matches_the_reference_rasterizer() {
     for name in [
         "research-school-plan-reference.hwpx",

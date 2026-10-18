@@ -6,11 +6,11 @@ renderer="${HAE_RHWP:-$PWD/spikes/vendor/rhwp-src/target/release/rhwp}"
 if [[ -f "$renderer" && -x "$renderer" ]]; then
   export HAE_RHWP="$renderer"
   renderer_available=1
-  echo "RENDERER: available ($renderer); 4 real executor preview tests will run"
+  echo "RENDERER: available ($renderer); 13 real renderer tests (4 executor preview + 9 adapter) will run"
 else
   renderer_available=0
   echo "RENDERER: unavailable ($renderer)"
-  echo "SKIP: 4 real executor preview tests; green means core/sandbox gates passed, rendering untested"
+  echo "SKIP: 13 real renderer tests (4 executor preview + 9 adapter); green means core/sandbox gates passed, rendering untested"
 fi
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
@@ -21,7 +21,8 @@ cargo test --workspace
 
 if [[ "$renderer_available" == 1 ]]; then
   cargo test -p hae-exec --test preview -- --ignored --nocapture
-  echo "RENDERER: 4 real executor preview tests passed"
+  cargo test -p hae-render-rhwp -- --ignored --nocapture
+  echo "RENDERER: 13 real renderer tests passed (4 executor preview + 9 adapter)"
 else
-  echo "RENDERER: unavailable; 4 real executor preview tests SKIPPED"
+  echo "RENDERER: unavailable; 13 real renderer tests SKIPPED (4 executor preview + 9 adapter)"
 fi

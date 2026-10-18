@@ -15,6 +15,7 @@ fn open(name: &str) -> Document {
 }
 
 #[test]
+#[ignore = "requires optional rhwp renderer; scripts/check.sh runs this when available"]
 fn corpus_28_sections_matches_the_spike_counts() {
     let env = real_env();
     let doc = open("research-school-plan-reference.hwpx");
@@ -92,6 +93,7 @@ fn corpus_28_sections_matches_the_spike_counts() {
 }
 
 #[test]
+#[ignore = "requires optional rhwp renderer; scripts/check.sh runs this when available"]
 fn small_documents_resolve_too() {
     let env = real_env();
     for name in ["gyehoek-reference.hwpx", "ref_empty.hwpx", "gani-gian.hwpx"] {
@@ -113,6 +115,7 @@ fn small_documents_resolve_too() {
 }
 
 #[test]
+#[ignore = "requires optional rhwp renderer; scripts/check.sh runs this when available"]
 fn page_info_does_not_touch_the_document() {
     let env = real_env();
     let doc = open("research-school-plan-reference.hwpx");

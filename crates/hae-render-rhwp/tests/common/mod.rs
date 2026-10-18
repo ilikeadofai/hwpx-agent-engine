@@ -15,8 +15,8 @@ pub fn corpus(name: &str) -> PathBuf {
     workspace_root().join("tests/fixtures/corpus").join(name)
 }
 
-/// The rhwp binary under test: `HAE_RHWP`, else the spike build. Tests that
-/// need it fail loudly if neither exists.
+/// The rhwp binary under test: `HAE_RHWP`, else the spike build. Real-renderer
+/// tests are explicitly ignored unless scripts/check.sh selects an executable.
 pub fn rhwp_path() -> PathBuf {
     if let Some(p) = std::env::var_os("HAE_RHWP").filter(|v| !v.is_empty()) {
         return p.into();

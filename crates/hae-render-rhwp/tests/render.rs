@@ -25,6 +25,7 @@ fn corpus_bytes() -> Vec<u8> {
 }
 
 #[test]
+#[ignore = "requires optional rhwp renderer; scripts/check.sh runs this when available"]
 fn renders_corpus_document_with_metadata() {
     let env = real_env();
     let bytes = corpus_bytes();
@@ -82,6 +83,7 @@ fn renders_corpus_document_with_metadata() {
 }
 
 #[test]
+#[ignore = "requires optional rhwp renderer; scripts/check.sh runs this when available"]
 fn page_selection_and_missing_pages() {
     let env = real_env();
     let bytes = corpus_bytes();
@@ -107,6 +109,7 @@ fn page_selection_and_missing_pages() {
 }
 
 #[test]
+#[ignore = "requires optional rhwp renderer; scripts/check.sh runs this when available"]
 fn page_limit_makes_a_partial_result() {
     let fonts = font_dir();
     let mut cfg = hae_render_rhwp::AdapterConfig::new(rhwp_path(), fonts.path());

@@ -438,6 +438,7 @@ mod common;
 
 #[cfg(target_os = "linux")]
 #[test]
+#[ignore = "requires optional rhwp renderer; scripts/check.sh runs this when available"]
 fn actual_rhwp_corpus_svg_remains_accepted() {
     let env = common::real_env();
     for entry in std::fs::read_dir(common::workspace_root().join("tests/fixtures/corpus")).unwrap()

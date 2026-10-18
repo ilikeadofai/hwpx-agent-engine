@@ -9,6 +9,7 @@ use hae_render_rhwp::{RenderRequest, RenderStatus};
 use std::fs;
 
 #[test]
+#[ignore = "requires optional rhwp renderer; scripts/check.sh runs this when available"]
 fn page_one_png_for_corpus_documents() {
     let env = real_env();
     for name in [
