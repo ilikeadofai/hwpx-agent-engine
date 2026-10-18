@@ -326,6 +326,105 @@ fn script_rejects_unregistered_commands_before_running_anything() {
 }
 
 // ---------------------------------------------------------------------------
+// 0.3 section commands through the real binary.
+// ---------------------------------------------------------------------------
+
+/// The four 0.3 section commands must work end to end through `hae script` on a
+/// real HWPX package: query explicit values, edit page/numbering/visibility one
+/// section at a time, export, then Undo back to byte-identical original bytes.
+#[test]
+fn script_edits_section_page_settings_on_a_real_package() {
+    let temp = TempDir::new("section");
+    let input = temp.path().join("input");
+    let output = temp.path().join("output");
+    fs::create_dir_all(&input).expect("input root");
+    fs::create_dir_all(&output).expect("output root");
+
+    let original = fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/editing/section.hwpx"),
+    )
+    .expect("read section fixture");
+    let doc_path = input.join("section.hwpx");
+    fs::write(&doc_path, &original).expect("write input hwpx");
+    let edited_path = output.join("edited.hwpx");
+    let restored_path = output.join("restored.hwpx");
+
+    let script = json!([
+        {"command": "document.open", "params": {"path": path_str(&doc_path)}, "saveAs": "open"},
+        {"command": "section.getPage", "params": {"sectionIndex": 0}, "saveAs": "page"},
+        {"command": "section.getPage", "params": {"scope": "$page.scope"}, "saveAs": "again"},
+        {"command": "section.setPage", "expectedVersion": "$revision",
+         "params": {"sectionIndex": 1, "width": 60000, "margins": {"left": 7000}}},
+        {"command": "section.setPageNumbering", "expectedVersion": "$revision",
+         "params": {"sectionIndex": 1, "pageStartsOn": "ODD", "page": 7}},
+        {"command": "section.setVisibility", "expectedVersion": "$revision",
+         "params": {"sectionIndex": 1, "hideFirstHeader": true}},
+        {"command": "section.getPage", "params": {"sectionIndex": 1}, "saveAs": "after"},
+        {"command": "document.export", "params": {"path": path_str(&edited_path)}},
+        {"command": "history.undo", "expectedVersion": "$revision", "params": {}},
+        {"command": "history.undo", "expectedVersion": "$revision", "params": {}},
+        {"command": "history.undo", "expectedVersion": "$revision", "params": {}},
+        {"command": "document.export", "params": {"path": path_str(&restored_path)}},
+        {"command": "section.getPage", "params": {"sectionIndex": 1}, "saveAs": "restored"}
+    ]);
+    let script_path = temp.path().join("section.json");
+    fs::write(
+        &script_path,
+        serde_json::to_string_pretty(&script).expect("serialize script"),
+    )
+    .expect("write script");
+
+    let run = hae()
+        .arg("script")
+        .arg("--input-root")
+        .arg(&input)
+        .arg("--output-root")
+        .arg(&output)
+        .arg(&script_path)
+        .output()
+        .expect("run hae script");
+    let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&run.stderr).into_owned();
+    assert!(
+        run.status.success(),
+        "script exited {:?}\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}",
+        run.status
+    );
+    let responses: Vec<Value> = serde_json::from_str(&stdout).expect("array of envelopes");
+    assert_eq!(responses.len(), 13, "script step count");
+    for (index, response) in responses.iter().enumerate() {
+        assert_eq!(
+            response["ok"],
+            json!(true),
+            "step {index} failed: {response}\n--- stderr ---\n{stderr}"
+        );
+    }
+
+    // The query reports XML-explicit values with their source.
+    let page = &responses[1]["result"];
+    assert_eq!(page["width"], json!({"value": 59528, "source": "explicit"}));
+    assert_eq!(page["landscape"]["source"], json!("explicit"));
+    assert_eq!(page["scope"], responses[2]["result"]["scope"]);
+    // The three edits landed on section 1 only, and the query sees them.
+    let after = &responses[6]["result"];
+    assert_eq!(after["width"]["value"], json!(60000));
+    assert_eq!(after["margins"]["left"]["value"], json!(7000));
+    assert_eq!(after["startNum"]["page"]["value"], json!(7));
+    assert_eq!(after["startNum"]["pageStartsOn"]["value"], json!("ODD"));
+    assert_eq!(after["visibility"]["hideFirstHeader"]["value"], json!(1));
+
+    let edited = fs::read(&edited_path).expect("edited export");
+    assert_ne!(edited, original, "export must differ after the edits");
+    // Undo restored the exact original bytes, and the query sees the originals.
+    let restored = fs::read(&restored_path).expect("restored export");
+    assert_eq!(restored, original, "undo must restore the original bytes");
+    assert_eq!(
+        responses[12]["result"]["width"],
+        json!({"value": 59528, "source": "explicit"})
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 

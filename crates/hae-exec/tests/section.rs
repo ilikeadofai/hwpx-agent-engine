@@ -366,7 +366,12 @@ fn section_all_mutations_batch_is_one_undo_unit_and_query_is_read_only() {
     let r = s.apply("command.batch", batch);
     assert_eq!(r["afterVersion"], 1);
     assert_eq!(s.query(1)["startNum"]["page"]["value"], 12);
-    s.export();
+    let bytes = s.export();
+    // Retain one artifact that exercises all three section edits for the
+    // Hancom open gate; the gate script reads it for real.
+    if let Ok(path) = std::env::var("HAE_SECTION_GATE_OUTPUT") {
+        std::fs::write(path, bytes).unwrap();
+    }
     s.apply("history.undo", json!({}));
     assert_eq!(s.export(), FIXTURE);
 }

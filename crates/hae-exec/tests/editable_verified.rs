@@ -354,7 +354,9 @@ fn every_editing_fixture_and_synthetic_advertisement_survives_executor_verificat
         .filter(|p| p.extension().is_some_and(|e| e == "hwpx"))
         .collect();
     paths.sort();
-    assert_eq!(paths.len(), 18);
+    // Tripwire: every editing fixture must be walked here, including the 0.3
+    // section fixture. A new fixture has to be covered by this check too.
+    assert_eq!(paths.len(), 19);
     let mut checked = 0;
     for path in paths {
         let bytes = fs::read(&path).unwrap();
