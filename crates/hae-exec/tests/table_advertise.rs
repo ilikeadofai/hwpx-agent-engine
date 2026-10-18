@@ -25,6 +25,24 @@ const FIXTURES: &[(&str, &[u8])] = &[
     ),
 ];
 
+/// structure.hwpx with the 3x2 table's width outside signed HWPUNIT: discovery blocks every
+/// command of that table, so the planners must refuse even the row commands that never read it.
+fn structure_with_unrepresentable_width() -> Vec<u8> {
+    let source = include_bytes!("../../../tests/fixtures/tables/structure.hwpx");
+    let archive = hae_zip::Archive::open(source.to_vec(), &Limits::default()).unwrap();
+    let mut state = hae_package::PackageState::from_archive(&archive);
+    let xml = String::from_utf8(state.get("Contents/section0.xml").unwrap().to_vec()).unwrap();
+    let old = r#"<hp:sz width="42000" widthRelTo="ABSOLUTE" height="4000""#;
+    assert_eq!(xml.matches(old).count(), 1);
+    state.set(
+        "Contents/section0.xml",
+        xml.replace(old, &old.replace("42000", "4294967295"))
+            .into_bytes()
+            .into(),
+    );
+    hae_zip::write(&archive, &hae_package::zip_plan(&archive, &state).unwrap()).unwrap()
+}
+
 const TABLE_COMMANDS: &[&str] = &[
     "table.setColumnWidths",
     "table.setRowHeights",
@@ -102,7 +120,12 @@ fn revision(exec: &mut SessionExecutor) -> u64 {
 fn table_and_cell_commands_execute_exactly_when_advertised() {
     let mut per_request_only = 0usize;
     let mut checked = [0usize; 2]; // [advertised unavailable, advertised available]
-    for (name, bytes) in FIXTURES {
+    let mutated = structure_with_unrepresentable_width();
+    let fixtures = FIXTURES
+        .iter()
+        .copied()
+        .chain([("structure_unrepresentable_width", mutated.as_slice())]);
+    for (name, bytes) in fixtures {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../spikes/work/tables/test-runs")
             .join(hae_model::new_id("adv-").unwrap());

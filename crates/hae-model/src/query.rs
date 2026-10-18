@@ -804,13 +804,13 @@ impl Document {
     /// edit planner both call this, so an advertised-unavailable command is never run.
     pub fn table_command_block_reason(&self, command: &str, n: &Node) -> Option<String> {
         match command {
-            "table.setColumnWidths" => self.table_geometry_block_reason(n, Some(true)),
-            "table.setRowHeights" => self.table_geometry_block_reason(n, Some(false)),
+            "table.setColumnWidths" => self.table_geometry_block_reason(n, Some(true), true),
+            "table.setRowHeights" => self.table_geometry_block_reason(n, Some(false), true),
             "table.insertRow" | "table.deleteRow" => self
-                .table_geometry_block_reason(n, Some(false))
+                .table_geometry_block_reason(n, Some(false), false)
                 .or_else(|| self.table_structure_block_reason(n)),
             "table.insertColumn" | "table.deleteColumn" => self
-                .table_geometry_block_reason(n, Some(true))
+                .table_geometry_block_reason(n, Some(true), true)
                 .or_else(|| self.table_structure_block_reason(n)),
             _ => None,
         }
@@ -829,7 +829,7 @@ impl Document {
                     .find(|&i| is_hp(xml.el(i).ns.as_deref()) && xml.el(i).local == "tbl")
                     .and_then(|i| self.nodes.iter().find(|m| m.entry == n.entry && m.el == i));
                 let geometry = owner.map_or(Some("table_geometry_unsupported".into()), |t| {
-                    self.table_geometry_block_reason(t, None)
+                    self.table_geometry_block_reason(t, None, true)
                 });
                 let merged = self
                     .cell_addr(n)
@@ -843,7 +843,12 @@ impl Document {
     /// Discovery checks source geometry per axis. Request values, resource
     /// selection, insertion/deletion boundaries and margin minima remain validated
     /// by the planner.
-    fn table_geometry_block_reason(&self, n: &Node, columns: Option<bool>) -> Option<String> {
+    fn table_geometry_block_reason(
+        &self,
+        n: &Node,
+        columns: Option<bool>,
+        row_tracks: bool,
+    ) -> Option<String> {
         let doc = self.doc_of(n);
         let bad = || Some("table_geometry_unsupported".into());
         if doc.el(n.el).attr_value("cellSpacing") != Some("0") {
@@ -936,6 +941,12 @@ impl Document {
                 }) != Some("ABSOLUTE")
                 {
                     return None;
+                }
+                // Row insert/delete needs only an absolute height; it works from each
+                // row's own cell heights and a height delta (design table-structure 6.2),
+                // so Hancom-style auto rows (height 0, sz.height != sum) are supported.
+                if !horizontal && !row_tracks {
+                    return Some(());
                 }
                 let count = if horizontal { cols } else { rows };
                 let mut edges = vec![None; count + 1];
