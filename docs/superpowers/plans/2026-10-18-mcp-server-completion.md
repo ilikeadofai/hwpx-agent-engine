@@ -33,7 +33,7 @@
 | M1 | 프로토콜·견고성 구현(1·2) | GPT 6.1 Sol(한도 시 Sonnet 5.5) | 완료 — Rust 310·stdio 회귀 9/9·Inspector strict 0/0 |
 | M2 | 배포·doctor·버전(4), 안내서 문구 | Sol 또는 Sonnet / 문구 Gemini 4 Argon | 완료 — release 빌드·doctor 6/6·연결 예시 |
 | M3 | 실제 클라이언트 연결 시험(3) | Haiku 5.5 또는 Luna(max) | 완료 — [실행 결과](../../decisions/mcp-m3-client-runs-2026-10-18.md) |
-| M4 | 독립 검증(게이트 재실행·반례) | 구현자와 다른 모델 | 대기 |
+| M4 | 독립 검증(게이트 재실행·반례) | 구현자와 다른 모델 | 완료(조건부 수용) — [독립 검증](../../decisions/mcp-m4-independent-verification-2026-10-18.md) |
 
 진행 중 작업과 결과는 이 표의 상태 칸과 아래 기록에 적는다. 오케스트레이터가 바뀌어도 이 문서를 보고 이어 간다.
 
@@ -81,3 +81,5 @@
 - 2026-10-18, M3 실제 클라이언트 연결 완료: Codex CLI 0.163.0(GPT 6 Luna, low)와 OpenCode 2.0.30(opencode-go/deepseek-v4.1-flash)은 각각 22개 도구를 노출하고 편집·Undo·export를 완료했다. Claude Code 2.1.296(Haiku)은 서버가 `connected`로 표시됐지만 도구 0개가 노출되어 시나리오를 진행하지 못했다(M3-F1). Inspector CLI 2.11.0 strict는 종료 0, 도구 22개. Export 두 건은 ZIP 무결성 검사와 새 hae-mcp 프로세스 재열기를 통과했고 입력 fixture SHA-256은 유지됐다. Preview는 rhwp 미설정으로 불가; Inspector는 `uint64` outputSchema 형식 경고를 출력했다(M3-F2). 엔진 코드 변경 없음, push 없음. 세부 명령·사용량·재현은 [M3 실행 결과](../../decisions/mcp-m3-client-runs-2026-10-18.md)에 기록했다. M4 독립 검증은 대기.
 
 - 2026-10-18, Sol M3·M4 후속: M3-F1을 현대식 tools/list의 필수 ttlMs/cacheScope 누락에 따른 엔진 결함(높음)으로 정정·해결하고 discovery도 보완했다. M3-F2 비표준 정수 format은 schemars 생성 단계에서 표준 범위로 전환했고 M4 §5.4 documentId 안내·해결법을 리비전별로 정정했다. check.sh 종료 0(Rust 315·Python 33), oracle 98, MCP 146/146, stdio 13/13, 기본 target release 빌드 1회 성공, release Inspector 도구 22·오류 0·경고 0 및 document_open 1회 성공. 실제 Claude Code 2.1.296/Haiku가 22개 도구를 등록하고 편집·replace-all 17건·Undo·export를 완료했으며 ZIP/원본 SHA-256/새 프로세스 재열기를 확인했다. [구현·명세 전수 대조](../../decisions/mcp-m1-m2-2026-10-18.md)와 [M3 후속 검증](../../decisions/mcp-m3-client-runs-2026-10-18.md)에 근거를 남겼다. 다른 검증자의 미추적 M4 문서는 제외했고 push·main 반영 없음; M4 독립 판정은 담당 검증자의 별도 작업이다.
+
+- 2026-10-18, M4 독립 검증(Sonnet 5.5): HEAD `363e50f`에서 게이트를 모두 다시 실행해 기록과 일치했다(check.sh 종료 0·Rust 315·Python 33, oracle 98, MCP 146/146, stdio 적합성 13/13, editable_documents 3/3, release Inspector strict 도구 22·오류 0·경고 0, doctor 5/6(rhwp 없음)·6/6(지정)). M3-F1은 엔진 결함(높음)임을 확인했다: Claude Code에서 `tools/list` 응답의 ttlMs·cacheScope만 지우면 도구가 22→0, `server/discover`만 지우면 22로 유지되어 인과가 성립하며, DeepSeek 초안의 "환경 문제" 결론은 폐기했다. M3-F2·documentId 안내는 해결 확인. 프로토콜 반증·22개 도구 outputSchema 검증(위반 0)·D3 표본 376건(불일치 0)·Claude Code/Codex 실제 연결 통과. 결함: 낮음 1건(M4-D1: `project_save`가 기존 파일을 덮어쓰는데 destructiveHint:false), 정보 4건. 권고는 조건부 수용이다. push·main 반영 없음.
