@@ -29,6 +29,17 @@ pub(crate) fn bad(message: &str) -> EngineError {
 pub(crate) fn unsupported(reason: &str, message: &str) -> EngineError {
     EngineError::new(Code::Unsupported, Stage::Validate, message).with_reason(reason)
 }
+/// Applies the shared capability predicate (hae-model) at execution time, so a command
+/// advertised as unavailable is rejected with the same reason.
+pub(crate) fn gate(reason: Option<String>) -> Result<()> {
+    match reason {
+        Some(r) => Err(unsupported(
+            &r,
+            "target does not satisfy the advertised source preconditions",
+        )),
+        None => Ok(()),
+    }
+}
 pub(crate) fn shape(message: &str) -> EngineError {
     unsupported("table_geometry_unsupported", message)
 }
@@ -399,6 +410,14 @@ pub(crate) fn tracks(
     columns: bool,
 ) -> Result<()> {
     let table = d.node(target, Some(Kind::Table))?;
+    gate(d.doc.table_command_block_reason(
+        if columns {
+            "table.setColumnWidths"
+        } else {
+            "table.setRowHeights"
+        },
+        &table,
+    ))?;
     let g = grid(d.doc.doc_of(&table), table.el)?;
     let old = grid_axis(d.doc.doc_of(&table), &g, columns)?;
     let requested = dimensions(values, uniform, old.len())?;
@@ -447,6 +466,7 @@ pub(crate) fn cell_size(
         return Err(bad("cell.setSize requires width and/or height"));
     }
     let node = d.node(target, Some(Kind::Cell))?;
+    gate(d.doc.cell_command_block_reason("cell.setSize", &node))?;
     let table = parent_table(d, &node)?;
     let g = grid(d.doc.doc_of(&table), table.el)?;
     let cell = g
@@ -558,6 +578,7 @@ pub(crate) fn cell_format(d: &mut Draft, target: &str, format: &CellFormat) -> R
         }
     }
     let node = d.node(target, Some(Kind::Cell))?;
+    gate(d.doc.cell_command_block_reason("cell.setFormat", &node))?;
     let table = parent_table(d, &node)?;
     let doc = d.doc.doc_of(&node);
     let mut cuts = Vec::new();

@@ -311,6 +311,15 @@ fn scan_para_controls(
     }
 }
 
+const TABLE_STRUCTURE_COMMANDS: [&str; 6] = [
+    "table.setColumnWidths",
+    "table.setRowHeights",
+    "table.insertRow",
+    "table.deleteRow",
+    "table.insertColumn",
+    "table.deleteColumn",
+];
+
 impl Document {
     /// Deterministic failures for material edits. No-op requests may bypass the
     /// save gate; those do not constitute an editing capability.
@@ -615,49 +624,18 @@ impl Document {
                 });
             }
             Kind::Table => {
-                add(
-                    "table.setColumnWidths",
-                    self.table_geometry_block_reason(n, Some(true)),
-                );
-                add(
-                    "table.setRowHeights",
-                    self.table_geometry_block_reason(n, Some(false)),
-                );
-                for (name, columns) in [
-                    ("table.insertRow", false),
-                    ("table.deleteRow", false),
-                    ("table.insertColumn", true),
-                    ("table.deleteColumn", true),
-                ] {
-                    let reason = self
-                        .table_geometry_block_reason(n, Some(columns))
-                        .or_else(|| self.table_structure_block_reason(n));
-                    add(name, reason);
+                for name in TABLE_STRUCTURE_COMMANDS {
+                    add(name, self.table_command_block_reason(name, n));
                 }
             }
             Kind::Cell => {
-                let xml = self.doc_of(n);
-                let owner = xml
-                    .ancestors(n.el)
-                    .find(|&i| is_hp(xml.el(i).ns.as_deref()) && xml.el(i).local == "tbl")
-                    .and_then(|i| self.nodes.iter().find(|m| m.entry == n.entry && m.el == i));
-                let geometry = owner.map_or(Some("table_geometry_unsupported".into()), |t| {
-                    self.table_geometry_block_reason(t, None)
-                });
-                let merged = self
-                    .cell_addr(n)
-                    .is_some_and(|a| a.row_span != 1 || a.col_span != 1);
-                let format = if child_attr(xml, n.el, "cellMargin", "left").is_none()
-                    || xml.el(n.el).attr("borderFillIDRef").is_none()
-                {
-                    Some("table_geometry_unsupported".into())
-                } else {
-                    None
-                };
-                add("cell.setFormat", format);
+                add(
+                    "cell.setFormat",
+                    self.cell_command_block_reason("cell.setFormat", n),
+                );
                 add(
                     "cell.setSize",
-                    geometry.or_else(|| merged.then(|| "merged_cell_size_unsupported".into())),
+                    self.cell_command_block_reason("cell.setSize", n),
                 );
                 add("cell.setText", self.cell_set_text_block_reason(n));
                 let e = edits.get_mut("cell.setText").unwrap();
@@ -820,6 +798,46 @@ impl Document {
             }
         }
         None
+    }
+
+    /// Source preconditions for the six table commands. Capability discovery and the
+    /// edit planner both call this, so an advertised-unavailable command is never run.
+    pub fn table_command_block_reason(&self, command: &str, n: &Node) -> Option<String> {
+        match command {
+            "table.setColumnWidths" => self.table_geometry_block_reason(n, Some(true)),
+            "table.setRowHeights" => self.table_geometry_block_reason(n, Some(false)),
+            "table.insertRow" | "table.deleteRow" => self
+                .table_geometry_block_reason(n, Some(false))
+                .or_else(|| self.table_structure_block_reason(n)),
+            "table.insertColumn" | "table.deleteColumn" => self
+                .table_geometry_block_reason(n, Some(true))
+                .or_else(|| self.table_structure_block_reason(n)),
+            _ => None,
+        }
+    }
+
+    /// Source preconditions for `cell.setFormat` and `cell.setSize` (shared with the planner).
+    pub fn cell_command_block_reason(&self, command: &str, n: &Node) -> Option<String> {
+        let xml = self.doc_of(n);
+        match command {
+            "cell.setFormat" => (child_attr(xml, n.el, "cellMargin", "left").is_none()
+                || xml.el(n.el).attr("borderFillIDRef").is_none())
+            .then(|| "table_geometry_unsupported".into()),
+            "cell.setSize" => {
+                let owner = xml
+                    .ancestors(n.el)
+                    .find(|&i| is_hp(xml.el(i).ns.as_deref()) && xml.el(i).local == "tbl")
+                    .and_then(|i| self.nodes.iter().find(|m| m.entry == n.entry && m.el == i));
+                let geometry = owner.map_or(Some("table_geometry_unsupported".into()), |t| {
+                    self.table_geometry_block_reason(t, None)
+                });
+                let merged = self
+                    .cell_addr(n)
+                    .is_some_and(|a| a.row_span != 1 || a.col_span != 1);
+                geometry.or_else(|| merged.then(|| "merged_cell_size_unsupported".into()))
+            }
+            _ => None,
+        }
     }
 
     /// Discovery checks source geometry per axis. Request values, resource

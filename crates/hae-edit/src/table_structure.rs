@@ -683,6 +683,7 @@ pub(crate) fn structure(
         return Err(invalid("count_out_of_range", "count must be 1..=1024"));
     }
     let table = d.node(target, Some(Kind::Table))?;
+    crate::table::gate(d.doc.table_command_block_reason(command, &table))?;
     let members: Vec<Node> = d
         .doc
         .nodes
