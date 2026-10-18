@@ -675,3 +675,114 @@ fn public_native_table_with_placement_height_columns_and_exact_undo() {
     assert!(s.exec.call("history.undo", json!({}), Some(1), false).ok);
     assert_eq!(s.export("undo.hwpx"), source);
 }
+
+#[test]
+fn advertised_table_commands_execute_with_basic_arguments() {
+    // Each operation starts from the same source: successful earlier edits must
+    // not repair the geometry of the next advertised operation.
+    for source in [SOURCE, LAYOUT_HEIGHT] {
+        for command in [
+            "table.setColumnWidths",
+            "table.setRowHeights",
+            "table.insertRow",
+            "table.deleteRow",
+            "table.insertColumn",
+            "table.deleteColumn",
+            "cell.setSize",
+            "cell.setFormat",
+            "cell.setText",
+        ] {
+            let mut s = Case::with(source);
+            let target = if command.starts_with("cell.") {
+                s.cell.clone()
+            } else {
+                s.table.clone()
+            };
+            let outline = s
+                .exec
+                .call("element.get", json!({"target":target}), None, false)
+                .result
+                .unwrap();
+            assert_eq!(
+                outline["outline"]["edits"][command]["available"], true,
+                "{command}"
+            );
+            let args = match command {
+                "table.insertRow" | "table.deleteRow" | "table.insertColumn"
+                | "table.deleteColumn" => json!({"target":target,"index":1}),
+                "cell.setText" => json!({"target":target,"text":"capability"}),
+                "cell.setFormat" => json!({"target":target,"borderFillId":"4"}),
+                _ => s.params(command),
+            };
+            let dry = s.exec.call(command, args.clone(), Some(0), true);
+            assert!(dry.ok, "{command}: {dry:?}");
+            let applied = s.exec.call(command, args, Some(0), false);
+            assert!(applied.ok, "{command}: {applied:?}");
+        }
+    }
+}
+
+#[test]
+fn review_p1_opposite_axis_and_remaining_source_contradictions() {
+    // Exact review repro mutates the first (merged) table's total extent.
+    for (old, new, accepted) in [
+        (
+            "height=\"4800\"",
+            "height=\"4801\"",
+            "table.setColumnWidths",
+        ),
+        ("width=\"42000\"", "width=\"42001\"", "table.setRowHeights"),
+    ] {
+        let a = hae_zip::Archive::open(SOURCE.to_vec(), &Limits::default()).unwrap();
+        let mut state = hae_package::PackageState::from_archive(&a);
+        let xml = std::str::from_utf8(state.get("Contents/section0.xml").unwrap()).unwrap();
+        assert!(xml.contains(old));
+        state.set(
+            "Contents/section0.xml",
+            xml.replacen(old, new, 1).into_bytes().into(),
+        );
+        let source = hae_zip::write(&a, &hae_package::zip_plan(&a, &state).unwrap()).unwrap();
+        let mut s = Case::with(&source);
+        let tables = s
+            .exec
+            .call("element.query", json!({"kind":"table"}), None, false)
+            .result
+            .unwrap();
+        let table = &tables["matches"][0];
+        assert_eq!(table["edits"][accepted]["available"], true);
+        let args = if accepted == "table.setColumnWidths" {
+            json!({"target":table["nodeId"],"widths":[20000,22000]})
+        } else {
+            json!({"target":table["nodeId"],"heights":[2500,2600]})
+        };
+        let r = s.exec.call(accepted, args, Some(0), false);
+        assert!(r.ok, "{accepted}: {r:?}");
+    }
+    for (attribute, value, blocked) in [
+        ("cellSz.height", "283", "table.setRowHeights"),
+        ("cellSz.width", "21001", "table.setColumnWidths"),
+        ("sz.width", "42001", "table.setColumnWidths"),
+    ] {
+        let source = alter_layout_source(attribute, value);
+        let mut s = Case::with(&source);
+        let tables = s
+            .exec
+            .call("element.query", json!({"kind":"table"}), None, false)
+            .result
+            .unwrap();
+        assert_eq!(
+            tables["matches"][1]["edits"][blocked]["available"], false,
+            "{attribute}"
+        );
+        assert_eq!(
+            tables["matches"][1]["edits"][blocked]["reason"],
+            "table_geometry_unsupported"
+        );
+        let r = s.exec.call(blocked, s.params(blocked), Some(0), false);
+        assert!(!r.ok);
+        assert_eq!(
+            r.diagnostics[0].reason.as_deref(),
+            Some("table_geometry_unsupported")
+        );
+    }
+}

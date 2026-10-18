@@ -822,8 +822,9 @@ impl Document {
         None
     }
 
-    /// Discovery preconditions only; the request planner checks the full grid,
-    /// resource selection, parameter bounds and effective margin minima.
+    /// Discovery checks source geometry per axis. Request values, resource
+    /// selection, insertion/deletion boundaries and margin minima remain validated
+    /// by the planner.
     fn table_geometry_block_reason(&self, n: &Node, columns: Option<bool>) -> Option<String> {
         let doc = self.doc_of(n);
         let bad = || Some("table_geometry_unsupported".into());
@@ -840,28 +841,124 @@ impl Document {
                 return bad();
             }
         }
-        let absolute = |a| child_attr(doc, n.el, "sz", a).as_deref() == Some("ABSOLUTE");
-        // cell.setSize may request either axis; exact arguments are checked by
-        // the planner. Track/structure commands have a known requested axis.
-        let supported = match columns {
-            Some(true) => absolute("widthRelTo"),
-            Some(false) => absolute("heightRelTo"),
-            None => absolute("widthRelTo") || absolute("heightRelTo"),
-        };
-        if !supported {
-            return bad();
-        }
         if doc
             .descendants(n.el)
             .any(|i| is_hp(doc.el(i).ns.as_deref()) && doc.el(i).local == "tbl")
         {
             return Some("nested_table".into());
         }
-        if self.children_deep(n, Kind::Cell).iter().any(|c| {
-            self.cell_addr(c).is_none()
-                || child_attr(doc, c.el, "cellSz", "width").is_none()
-                || child_attr(doc, c.el, "cellSz", "height").is_none()
-        }) {
+        let valid = || -> Option<bool> {
+            let number = |i: usize, name: &str| {
+                doc.el(i)
+                    .attr_value(name)?
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|&v| v <= i32::MAX as u32)
+            };
+            let child = |i: usize, name: &str| {
+                let mut children = doc
+                    .el(i)
+                    .children
+                    .iter()
+                    .copied()
+                    .filter(|&c| is_hp(doc.el(c).ns.as_deref()) && doc.el(c).local == name);
+                let first = children.next()?;
+                children.next().is_none().then_some(first)
+            };
+            let rows = number(n.el, "rowCnt")? as usize;
+            let cols = number(n.el, "colCnt")? as usize;
+            let size = child(n.el, "sz")?;
+            // Even an untouched extent must remain a valid HWPUNIT value.
+            let width = number(size, "width")?;
+            number(size, "height")?;
+            let mut cells = Vec::new();
+            let mut occupied = std::collections::BTreeSet::new();
+            let mut row = 0;
+            for &tr in &doc.el(n.el).children {
+                if !is_hp(doc.el(tr).ns.as_deref()) || doc.el(tr).local != "tr" {
+                    continue;
+                }
+                for &tc in &doc.el(tr).children {
+                    if !is_hp(doc.el(tc).ns.as_deref()) || doc.el(tc).local != "tc" {
+                        return None;
+                    }
+                    let addr = child(tc, "cellAddr")?;
+                    let span = child(tc, "cellSpan")?;
+                    let sz = child(tc, "cellSz")?;
+                    let (r, c) = (
+                        number(addr, "rowAddr")? as usize,
+                        number(addr, "colAddr")? as usize,
+                    );
+                    let (rs, cs) = (
+                        number(span, "rowSpan")? as usize,
+                        number(span, "colSpan")? as usize,
+                    );
+                    if r != row || rs == 0 || cs == 0 || r + rs > rows || c + cs > cols {
+                        return None;
+                    }
+                    for y in r..r + rs {
+                        for x in c..c + cs {
+                            if !occupied.insert((y, x)) {
+                                return None;
+                            }
+                        }
+                    }
+                    cells.push((r, c, rs, cs, number(sz, "width")?, number(sz, "height")?));
+                }
+                row += 1;
+            }
+            if row != rows || occupied.len() != rows * cols {
+                return None;
+            }
+            let axis = |horizontal: bool| -> Option<()> {
+                if doc.el(size).attr_value(if horizontal {
+                    "widthRelTo"
+                } else {
+                    "heightRelTo"
+                }) != Some("ABSOLUTE")
+                {
+                    return None;
+                }
+                let count = if horizontal { cols } else { rows };
+                let mut edges = vec![None; count + 1];
+                edges[0] = Some(0i64);
+                // Native height is a placement extent, not a cell-minimum sum.
+                if horizontal {
+                    edges[count] = Some(i64::from(width));
+                }
+                for _ in 0..=count {
+                    let mut progress = false;
+                    for &(r, c, rs, cs, w, h) in &cells {
+                        let (a, b, v) = if horizontal {
+                            (c, c + cs, w)
+                        } else {
+                            (r, r + rs, h)
+                        };
+                        match (edges[a], edges[b]) {
+                            (Some(x), Some(y)) if y - x != i64::from(v) => return None,
+                            (Some(x), None) => {
+                                edges[b] = Some(x + i64::from(v));
+                                progress = true;
+                            }
+                            (None, Some(y)) => {
+                                edges[a] = Some(y - i64::from(v));
+                                progress = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                    if !progress {
+                        break;
+                    }
+                }
+                edges.windows(2).all(|e| matches!((e[0], e[1]), (Some(a), Some(b)) if b > a && b - a <= i64::from(i32::MAX))).then_some(())
+            };
+            Some(match columns {
+                Some(c) => axis(c).is_some(),
+                None => axis(true).is_some() || axis(false).is_some(),
+            })
+        };
+        if valid() != Some(true) {
             return bad();
         }
         None
