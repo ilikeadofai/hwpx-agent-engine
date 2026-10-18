@@ -4,9 +4,9 @@
 use crate::registry::{
     command_describe, command_list, BatchStepParam, CellSetTextParams, CommandBatchParams,
     CommandDescriptor, DocumentDiffParams, DocumentExportParams, DocumentOpenParams,
-    DocumentPreviewParams, ImageReplaceParams, LineSpacingParam, ParagraphFormatParams,
-    ParsedCommand, ProjectSaveParams, SnapshotCreateParams, SnapshotReleaseParams,
-    TextFormatParams, TextReplaceAllParams, TextReplaceParams,
+    DocumentPreviewParams, FormFillParams, ImageReplaceParams, LineSpacingParam,
+    ParagraphFormatParams, ParsedCommand, ProjectSaveParams, SnapshotCreateParams,
+    SnapshotReleaseParams, TextFormatParams, TextReplaceAllParams, TextReplaceParams,
 };
 use hae_diag::{Code, Diagnostic, EngineError, Limits, Result, Stage};
 use hae_edit::{Alignment, Applied, EditOp, ImageBytes, LineSpacing};
@@ -125,6 +125,14 @@ pub struct SessionExecutor {
 fn with_replace_all(mut result: Value, reports: &[hae_edit::ReplaceAllReport]) -> Value {
     if !reports.is_empty() {
         result["replaceAll"] = serde_json::to_value(reports).expect("reports serialize");
+    }
+    result
+}
+
+/// Attach per-step `form.fill` reports to a mutation result.
+fn with_form_fill(mut result: Value, reports: &[hae_edit::FormFillReport]) -> Value {
+    if !reports.is_empty() {
+        result["formFill"] = serde_json::to_value(reports).expect("reports serialize");
     }
     result
 }
@@ -264,6 +272,15 @@ fn add_op_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, op: &Verify
             add_slice_bytes(seen, total, entry.as_bytes());
             for p in paragraphs {
                 add_slice_bytes(seen, total, p.as_bytes());
+            }
+        }
+        VerifyOperation::FormFill { values, scope, .. } => {
+            for (label, value) in values {
+                add_slice_bytes(seen, total, label.as_bytes());
+                add_slice_bytes(seen, total, value.as_bytes());
+            }
+            if let Some(s) = scope {
+                add_slice_bytes(seen, total, s.entry.as_bytes());
             }
         }
         VerifyOperation::TextFormat { entry, props, .. } => {
@@ -867,6 +884,26 @@ impl SessionExecutor {
                     params: serde_json::to_value(p).unwrap(),
                 }],
             ),
+            ParsedCommand::FormFill(p) => {
+                let (mut result, diags) = self.handle_edit_steps(
+                    req,
+                    &[BatchStepParam {
+                        command: "form.fill".into(),
+                        params: serde_json::to_value(p).unwrap(),
+                    }],
+                )?;
+                // A single command reports its one step's summary at top level.
+                if let Some(Value::Array(mut reports)) =
+                    result.as_object_mut().and_then(|o| o.remove("formFill"))
+                {
+                    if let (Some(Value::Object(report)), Some(out)) =
+                        (reports.pop(), result.as_object_mut())
+                    {
+                        out.extend(report);
+                    }
+                }
+                Ok((result, diags))
+            }
             ParsedCommand::ImageReplace(p) => self.handle_edit_steps(
                 req,
                 &[BatchStepParam {
@@ -1322,6 +1359,58 @@ impl SessionExecutor {
                     },
                 ))
             }
+            "form.fill" => {
+                let p: FormFillParams =
+                    serde_json::from_value(step.params.clone()).map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            format!("invalid form.fill params: {e}"),
+                        ))
+                    })?;
+                let scope = match &p.scope {
+                    Some(id) => {
+                        let n = doc.node(id).ok_or_else(|| {
+                            wrap_err(
+                                EngineError::new(
+                                    Code::TargetNotFound,
+                                    Stage::Validate,
+                                    format!("no node {id}"),
+                                )
+                                .with_target(id),
+                            )
+                        })?;
+                        if !matches!(n.kind, Kind::Table | Kind::Section) {
+                            return Err(wrap_err(
+                                EngineError::new(
+                                    Code::Unsupported,
+                                    Stage::Validate,
+                                    "form.fill scope must be a table or section nodeId",
+                                )
+                                .with_reason("form_scope")
+                                .with_target(id),
+                            ));
+                        }
+                        Some(VerifyScope {
+                            entry: n.entry.clone(),
+                            path: doc.doc_of(n).path(n.el),
+                        })
+                    }
+                    None => None,
+                };
+                Ok((
+                    EditOp::FormFill {
+                        values: p.values.clone(),
+                        scope: p.scope,
+                        strict: p.strict,
+                    },
+                    VerifyOperation::FormFill {
+                        values: p.values,
+                        scope,
+                        strict: p.strict,
+                    },
+                ))
+            }
             "image.replace" => {
                 let p: ImageReplaceParams =
                     serde_json::from_value(step.params.clone()).map_err(|e| {
@@ -1407,21 +1496,24 @@ impl SessionExecutor {
         if req.dry_run {
             let outcome = if is_noop { "noop" } else { "applied" };
             return Ok((
-                with_replace_all(
-                    json!({
-                        "outcome": outcome,
-                        "dryRun": true,
-                        "beforeVersion": before_version,
-                        "afterVersion": before_version,
-                        "predictedAfterVersion": if is_noop { before_version } else { before_version + 1 },
-                        "changedIds": applied.changed_ids,
-                        "resourceChanges": applied.resource_changes,
-                        "intents": applied.intents,
-                        "stale": applied.stale,
-                        "cacheRemovals": applied.cache_removals,
-                        "historyEvicted": false,
-                    }),
-                    &applied.replace_all,
+                with_form_fill(
+                    with_replace_all(
+                        json!({
+                            "outcome": outcome,
+                            "dryRun": true,
+                            "beforeVersion": before_version,
+                            "afterVersion": before_version,
+                            "predictedAfterVersion": if is_noop { before_version } else { before_version + 1 },
+                            "changedIds": applied.changed_ids,
+                            "resourceChanges": applied.resource_changes,
+                            "intents": applied.intents,
+                            "stale": applied.stale,
+                            "cacheRemovals": applied.cache_removals,
+                            "historyEvicted": false,
+                        }),
+                        &applied.replace_all,
+                    ),
+                    &applied.form_fill,
                 ),
                 diags,
             ));
@@ -1429,19 +1521,22 @@ impl SessionExecutor {
 
         if is_noop {
             return Ok((
-                with_replace_all(
-                    json!({
-                        "outcome": "noop",
-                        "beforeVersion": before_version,
-                        "afterVersion": before_version,
-                        "changedIds": Vec::<String>::new(),
-                        "resourceChanges": Vec::<hae_edit::ResourceChange>::new(),
-                        "intents": Vec::<hae_edit::Intent>::new(),
-                        "stale": applied.stale,
-                        "cacheRemovals": applied.cache_removals,
-                        "historyEvicted": false,
-                    }),
-                    &applied.replace_all,
+                with_form_fill(
+                    with_replace_all(
+                        json!({
+                            "outcome": "noop",
+                            "beforeVersion": before_version,
+                            "afterVersion": before_version,
+                            "changedIds": Vec::<String>::new(),
+                            "resourceChanges": Vec::<hae_edit::ResourceChange>::new(),
+                            "intents": Vec::<hae_edit::Intent>::new(),
+                            "stale": applied.stale,
+                            "cacheRemovals": applied.cache_removals,
+                            "historyEvicted": false,
+                        }),
+                        &applied.replace_all,
+                    ),
+                    &applied.form_fill,
                 ),
                 diags,
             ));
@@ -1478,19 +1573,22 @@ impl SessionExecutor {
         s.revision += 1;
 
         Ok((
-            with_replace_all(
-                json!({
-                    "outcome": "applied",
-                    "beforeVersion": before_version,
-                    "afterVersion": s.revision,
-                    "changedIds": applied.changed_ids,
-                    "resourceChanges": applied.resource_changes,
-                    "intents": applied.intents,
-                    "stale": applied.stale,
-                    "cacheRemovals": applied.cache_removals,
-                    "historyEvicted": history_evicted,
-                }),
-                &applied.replace_all,
+            with_form_fill(
+                with_replace_all(
+                    json!({
+                        "outcome": "applied",
+                        "beforeVersion": before_version,
+                        "afterVersion": s.revision,
+                        "changedIds": applied.changed_ids,
+                        "resourceChanges": applied.resource_changes,
+                        "intents": applied.intents,
+                        "stale": applied.stale,
+                        "cacheRemovals": applied.cache_removals,
+                        "historyEvicted": history_evicted,
+                    }),
+                    &applied.replace_all,
+                ),
+                &applied.form_fill,
             ),
             diags,
         ))

@@ -13,7 +13,7 @@ macro_rules! codes {
 
         impl Code {
             /// All codes in table order.
-            pub const ALL: [Code; 34] = [ $( Code::$variant, )* ];
+            pub const ALL: [Code; 35] = [ $( Code::$variant, )* ];
 
             /// The wire string of the code.
             pub fn as_str(self) -> &'static str {
@@ -60,6 +60,7 @@ codes! {
     ControlsPreserved => "CONTROLS_PRESERVED", Some("0.2 §3"), true;
     FormatCollapsed => "FORMAT_COLLAPSED", Some("§6"), true;
     MatchesSkipped => "MATCHES_SKIPPED", Some("0.2 §7-2"), true;
+    FormFillSkipped => "FORM_FILL_SKIPPED", None, true;
     RendererUnavailable => "RENDERER_UNAVAILABLE", Some("§9"), false;
     PreviewPageLimit => "PREVIEW_PAGE_LIMIT", Some("§10"), true;
     InvalidRequest => "INVALID_REQUEST", None, false;
@@ -302,7 +303,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
-    const DOC_CODES: [&str; 34] = [
+    const DOC_CODES: [&str; 35] = [
         "PACKAGE_REJECTED",
         "RESOURCE_LIMIT",
         "STATE_INVARIANT_ERROR",
@@ -329,6 +330,7 @@ mod tests {
         "CONTROLS_PRESERVED",
         "FORMAT_COLLAPSED",
         "MATCHES_SKIPPED",
+        "FORM_FILL_SKIPPED",
         "RENDERER_UNAVAILABLE",
         "PREVIEW_PAGE_LIMIT",
         "INVALID_REQUEST",
@@ -344,7 +346,7 @@ mod tests {
         let got: BTreeSet<&str> = Code::ALL.iter().map(|c| c.as_str()).collect();
         let want: BTreeSet<&str> = DOC_CODES.into_iter().collect();
         assert_eq!(got, want);
-        assert_eq!(got.len(), 34);
+        assert_eq!(got.len(), 35);
         for c in Code::ALL {
             let j = serde_json::to_string(&c).unwrap();
             assert_eq!(j, format!("\"{}\"", c.as_str()));
@@ -376,6 +378,7 @@ mod tests {
                 Code::ControlsPreserved,
                 Code::FormatCollapsed,
                 Code::MatchesSkipped,
+                Code::FormFillSkipped,
                 Code::PreviewPageLimit
             ]
         );

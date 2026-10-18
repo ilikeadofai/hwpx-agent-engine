@@ -8,6 +8,7 @@ use schemars::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -219,6 +220,25 @@ pub struct ImageReplaceParams {
     pub image_path: String,
 }
 
+fn strict_default() -> bool {
+    true
+}
+
+/// Label → value form fill over the document, one table, or one section.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FormFillParams {
+    /// Label cell text (exact codepoints) → value for the adjacent empty cell.
+    pub values: BTreeMap<String, String>,
+    /// Optional table or section nodeId; default searches every table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// true (default) rejects every label when one fails; false fills the
+    /// resolvable labels and reports the rest.
+    #[serde(default = "strict_default")]
+    pub strict: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BatchStepParam {
@@ -323,6 +343,24 @@ pub struct GenericResultShape {
     pub revision: Option<u64>,
 }
 
+/// Result of `form.fill` (batch results carry the same object per step in
+/// `formFill`). `filled`/`skipped` are arrays of objects.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FormFillResultShape {
+    pub outcome: String,
+    pub before_version: u64,
+    pub after_version: u64,
+    pub changed_ids: Vec<String>,
+    pub history_evicted: bool,
+    pub strict: bool,
+    pub scope: Option<String>,
+    /// {label, value, nodeId, entry, path} per filled cell.
+    pub filled: Vec<Value>,
+    /// {label, reason, detail?} per label that could not be filled.
+    pub skipped: Vec<Value>,
+}
+
 /// Discovery schemas describe the command result inside ResponseEnvelope.result.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -373,6 +411,7 @@ pub enum ParsedCommand {
     TextReplaceAll(TextReplaceAllParams),
     ParagraphFormat(ParagraphFormatParams),
     CellSetText(CellSetTextParams),
+    FormFill(FormFillParams),
     ImageReplace(ImageReplaceParams),
     CommandBatch(CommandBatchParams),
     HistoryUndo(EmptyParams),
@@ -436,6 +475,12 @@ fn schema_json<T: JsonSchema>() -> Value {
         schema["properties"]["maxMatches"] =
             serde_json::json!({"type":"integer","minimum":1,"maximum":10000,"default":1000});
     }
+    if schema["title"] == "FormFillParams" {
+        schema["properties"]["values"] = serde_json::json!({
+            "type":"object","additionalProperties":{"type":"string"},"minProperties":1
+        });
+        schema["properties"]["strict"] = serde_json::json!({"type":"boolean","default":true});
+    }
     schema
 }
 
@@ -461,6 +506,7 @@ mod schema_tests {
             ("text_replace_all", [false, true, false, false]),
             ("paragraph_format", [false, true, false, false]),
             ("cell_set_text", [false, true, false, false]),
+            ("form_fill", [false, true, false, false]),
             ("image_replace", [false, true, false, false]),
             ("command_batch", [false, true, false, false]),
             ("history_undo", [false, true, false, false]),
@@ -728,6 +774,16 @@ define_commands! {
         mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
         stage1: true, reason: None,
         params: CellSetTextParams, output: MutationResultShape,
+    },
+    FormFill {
+        name: "form.fill",
+        cli: "form-fill",
+        mcp: "form_fill",
+        summary: "Fill empty value cells from exact label cells: same-row right cell, else the cell below; strict (default) rejects the whole request if any label fails, strict:false fills the resolvable labels and reports the rest",
+        category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None,
+        params: FormFillParams, output: FormFillResultShape,
     },
     ImageReplace {
         name: "image.replace",

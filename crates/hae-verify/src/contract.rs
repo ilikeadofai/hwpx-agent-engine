@@ -99,6 +99,14 @@ pub enum VerifyOperation {
         #[serde(default)]
         preserve: bool,
     },
+    /// Label → value form fill. The gate derives the label cells, the
+    /// right/below target cell, emptiness and the skip set itself.
+    #[serde(rename = "form.fill")]
+    FormFill {
+        values: BTreeMap<String, String>,
+        scope: Option<VerifyScope>,
+        strict: bool,
+    },
     #[serde(rename = "paragraph.format")]
     ParagraphFormat {
         entry: String,
@@ -128,7 +136,7 @@ pub struct VerifyScope {
 impl VerifyOperation {
     pub(crate) fn target(&self) -> (&str, &[usize]) {
         match self {
-            Self::TextReplaceAll { scope, .. } => scope
+            Self::TextReplaceAll { scope, .. } | Self::FormFill { scope, .. } => scope
                 .as_ref()
                 .map_or(("", &[][..]), |s| (s.entry.as_str(), s.path.as_slice())),
             Self::TextFormat { entry, path, .. }

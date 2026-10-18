@@ -33,6 +33,7 @@
 //! extraction, since its producer's serialization is not known.
 mod char_format;
 mod contract;
+mod form_fill;
 mod format;
 mod image;
 mod text;
@@ -295,6 +296,27 @@ fn verify_inner(
             }
             continue;
         }
+        if let VerifyOperation::FormFill {
+            values,
+            scope,
+            strict,
+        } = op
+        {
+            if form_fill::check(
+                &mut expected,
+                &info,
+                &xml,
+                values,
+                scope,
+                *strict,
+                limits,
+                &mut anchors,
+                &mut preview,
+            )? {
+                material = true;
+            }
+            continue;
+        }
         let (entry, path) = op.target();
         if !info.sections.iter().any(|s| s == entry) {
             return Err(unsupported("targets must belong to a spine section"));
@@ -352,6 +374,7 @@ fn verify_inner(
                 }
             }
             VerifyOperation::TextReplaceAll { .. } => unreachable!("handled before target lookup"),
+            VerifyOperation::FormFill { .. } => unreachable!("handled before target lookup"),
             VerifyOperation::CellSetText { .. } | VerifyOperation::CellSetParagraphs { .. } => {
                 let (text, paragraphs, preserve) = match op {
                     VerifyOperation::CellSetText { text, preserve, .. } => {
