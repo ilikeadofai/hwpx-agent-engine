@@ -34,14 +34,16 @@
 mod char_format;
 mod contract;
 mod equation;
+mod fit;
 mod format;
 mod image;
 mod table;
+mod narrow;
 mod text;
 
 pub use contract::{
-    Alignment, CellFormat, CellMargin, CharProps, EquationProps, LineSpacing, LineSpacingKind,
-    VerifyOperation, VerifyReport, VerifyScope,
+    Alignment, CellFormat, CellMargin, CharProps, EquationProps, FitMode, LineSpacing,
+    LineSpacingKind, VerifyOperation, VerifyReport, VerifyScope,
 };
 use hae_diag::{Budget, Code, EngineError, Limits, Result, Stage};
 use hae_package::{PackageInfo, PackageState, XmlMap, NS_HC, NS_HH, NS_HP, NS_HP10, NS_HS};
@@ -251,6 +253,28 @@ fn verify_inner(
     let mut material = false;
     let mut seen_images = BTreeSet::new();
     for op in requests {
+        if let VerifyOperation::ParagraphSetStyle { targets, style_id } = op {
+            if targets.is_empty() {
+                return Err(fail("empty style targets"));
+            }
+            for t in targets {
+                if !info.sections.contains(&t.entry) {
+                    return Err(fail("style target not in a section"));
+                }
+                let doc = parse(&expected, &t.entry, limits)?;
+                let source = at(&xml[&t.entry], &t.path)?;
+                let p = stable_at(&doc, &stable_path(&xml[&t.entry], source))?;
+                check_opaque_refs(&xml, &t.entry, &doc, p)?;
+                if narrow::style(&mut expected, &info, &t.entry, &doc, p, *style_id, limits)? {
+                    anchor(&mut anchors, &t.entry, &doc, p)?;
+                    material = true;
+                }
+            }
+            if expected.total_bytes() > limits.max_session_memory {
+                return Err(fail("derived package exceeds memory limit"));
+            }
+            continue;
+        }
         if let VerifyOperation::TextReplaceAll {
             find,
             replacement,
@@ -305,7 +329,11 @@ fn verify_inner(
         let doc = parse(&expected, entry, limits)?;
         let original_target = at(&xml[entry], path)?;
         let target = stable_at(&doc, &stable_path(&xml[entry], original_target))?;
-        check_opaque_refs(&xml, entry, &doc, target)?;
+        // Header requests name a section for lookup, not as the edited subtree.
+        // Check only the independently selected paragraph below.
+        if !matches!(op, VerifyOperation::HeaderSetText { .. }) {
+            check_opaque_refs(&xml, entry, &doc, target)?;
+        }
         match op {
             VerifyOperation::TableSetColumnWidths { .. }
             | VerifyOperation::TableSetRowHeights { .. }
@@ -341,6 +369,45 @@ fn verify_inner(
                         .ancestors(target)
                         .find(|&i| hp(doc.el(i), "p"))
                         .ok_or_else(|| unsupported("equation lacks paragraph"))?;
+                    anchor(&mut anchors, entry, &doc, para)?;
+                    material = true;
+                }
+            }
+            VerifyOperation::ParagraphSetStyle { .. } => unreachable!("handled above"),
+            VerifyOperation::HeaderSetText {
+                kind,
+                paragraph_index,
+                text,
+                ..
+            } => {
+                let p = narrow::header(&doc, target, kind, *paragraph_index)?;
+                check_opaque_refs(&xml, entry, &doc, p)?;
+                let len = text::paragraph_len(&doc, p);
+                if len != 0 || !text.is_empty() {
+                    if let Some(pair) =
+                        text::replace(&mut expected, entry, &doc, p, 0..len, text, false)?
+                    {
+                        anchor(&mut anchors, entry, &doc, p)?;
+                        preview.push(pair);
+                        material = true;
+                    }
+                }
+            }
+            VerifyOperation::ImageFit { mode, .. } => {
+                let (step_info, _) = hae_package::analyze(&expected, true, limits)?;
+                if fit::check(
+                    &mut expected,
+                    &step_info,
+                    entry,
+                    &doc,
+                    target,
+                    *mode,
+                    limits,
+                )? {
+                    let para = doc
+                        .ancestors(target)
+                        .find(|&p| hp(doc.el(p), "p"))
+                        .ok_or_else(|| fail("picture lacks containing paragraph"))?;
                     anchor(&mut anchors, entry, &doc, para)?;
                     material = true;
                 }

@@ -333,3 +333,60 @@ fn equation_tools_stdio_list_get_edit_dry_run_batch_and_exact_undo() {
     let (code, stderr) = mcp.finish();
     assert_eq!(code, 0, "{stderr}");
 }
+
+#[test]
+fn narrow_edit_tools_apply_export_and_undo_through_real_stdio() {
+    let t = TempDir::new("narrow-edits");
+    let source = include_bytes!("../../../tests/fixtures/editing/narrow_edits.hwpx");
+    let path = t.path().join("input.hwpx");
+    std::fs::write(&path, source).unwrap();
+    let mut mcp = McpClient::start(t.path());
+    let (opened, error) = mcp.call_tool("document_open", json!({"path":path}));
+    assert!(!error, "{opened}");
+    let doc = opened["result"]["documentId"].clone();
+    let (paras, error) = mcp.call_tool(
+        "element_query",
+        json!({"documentId":doc,"kind":"paragraph"}),
+    );
+    assert!(!error);
+    let paragraph = paras["result"]["matches"][0]["nodeId"].clone();
+    let (pics, error) = mcp.call_tool("element_query", json!({"documentId":doc,"kind":"picture"}));
+    assert!(!error);
+    let picture = pics["result"]["matches"][0]["nodeId"].clone();
+    for (version, tool, args) in [
+        (
+            0,
+            "paragraph_set_style",
+            json!({"target":paragraph,"styleId":1}),
+        ),
+        (1, "image_fit", json!({"target":picture,"mode":"contain"})),
+        (
+            2,
+            "header_set_text",
+            json!({"kind":"header","text":"MCP Header"}),
+        ),
+    ] {
+        let mut args = args;
+        args["documentId"] = doc.clone();
+        args["expectedVersion"] = json!(version);
+        let (reply, error) = mcp.call_tool(tool, args);
+        assert!(!error, "{tool}: {reply}");
+        assert_eq!(reply["result"]["afterVersion"], version + 1);
+    }
+    let out = t.path().join("edited.hwpx");
+    let (reply, error) = mcp.call_tool("document_export", json!({"documentId":doc,"path":out}));
+    assert!(!error, "{reply}");
+    assert_ne!(std::fs::read(out).unwrap(), source);
+    for version in 3..6 {
+        let (reply, error) = mcp.call_tool(
+            "history_undo",
+            json!({"documentId":doc,"expectedVersion":version}),
+        );
+        assert!(!error, "{reply}");
+    }
+    let undo = t.path().join("undo.hwpx");
+    let (reply, error) = mcp.call_tool("document_export", json!({"documentId":doc,"path":undo}));
+    assert!(!error, "{reply}");
+    assert_eq!(std::fs::read(undo).unwrap(), source);
+    assert_eq!(mcp.finish().0, 0);
+}

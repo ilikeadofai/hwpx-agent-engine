@@ -301,6 +301,45 @@ pub struct CellSetTextParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ParagraphSetStyleParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub targets: Option<Vec<String>>,
+    pub style_id: u32,
+}
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum FitModeParam {
+    Contain,
+    Cover,
+    Stretch,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ImageFitParams {
+    pub target: String,
+    pub mode: FitModeParam,
+}
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum HeaderKindParam {
+    Header,
+    Footer,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HeaderSetTextParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    pub kind: HeaderKindParam,
+    #[serde(default)]
+    pub paragraph_index: usize,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ImageReplaceParams {
     pub target: String,
     pub image_path: String,
@@ -520,6 +559,9 @@ pub enum ParsedCommand {
     ParagraphFormat(ParagraphFormatParams),
     CellSetText(CellSetTextParams),
     ImageReplace(ImageReplaceParams),
+    ParagraphSetStyle(ParagraphSetStyleParams),
+    ImageFit(ImageFitParams),
+    HeaderSetText(HeaderSetTextParams),
     CommandBatch(CommandBatchParams),
     HistoryUndo(EmptyParams),
     HistoryRedo(EmptyParams),
@@ -576,6 +618,15 @@ fn schema_json<T: JsonSchema>() -> Value {
         schema["properties"]["text"] = serde_json::json!({"type":"string"});
         schema["properties"]["paragraphs"] =
             serde_json::json!({"type":"array","items":{"type":"string"}});
+    }
+    if schema["title"] == "ParagraphSetStyleParams" {
+        schema["oneOf"] = serde_json::json!([
+            {"required":["target"],"not":{"required":["targets"]}},
+            {"required":["targets"],"not":{"required":["target"]}}
+        ]);
+        schema["properties"]["target"] = serde_json::json!({"type":"string"});
+        schema["properties"]["targets"] =
+            serde_json::json!({"type":"array","minItems":1,"items":{"type":"string"}});
     }
     if schema["title"] == "TextReplaceAllParams" {
         schema["properties"]["find"] = serde_json::json!({"type":"string","minLength":1});
@@ -640,6 +691,9 @@ mod schema_tests {
             ("paragraph_format", [false, true, false, false]),
             ("cell_set_text", [false, true, false, false]),
             ("image_replace", [false, true, false, false]),
+            ("paragraph_set_style", [false, true, false, false]),
+            ("image_fit", [false, true, false, false]),
+            ("header_set_text", [false, true, false, false]),
             ("command_batch", [false, true, false, false]),
             ("history_undo", [false, true, false, false]),
             ("history_redo", [false, true, false, false]),
@@ -1003,6 +1057,30 @@ define_commands! {
         mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
         stage1: true, reason: None,
         params: ImageReplaceParams, output: MutationResultShape,
+    },
+    ParagraphSetStyle {
+        name: "paragraph.setStyle", cli: "paragraph-set-style", mcp: "paragraph_set_style",
+        summary: "Set styleIDRef on target or non-empty targets using an existing header styleId; no style creation or other paragraph attribute changes",
+        category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None,
+        params: ParagraphSetStyleParams, output: MutationResultShape,
+    },
+    ImageFit {
+        name: "image.fit", cli: "image-fit", mcp: "image_fit",
+        summary: "Fit existing image to its frame: contain preserves aspect inside, cover center-crops to fill, stretch fills; HWPUNIT source clipping, rendering matrices and embedded media preserved",
+        category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None,
+        params: ImageFitParams, output: MutationResultShape,
+    },
+    HeaderSetText {
+        name: "header.setText", cli: "header-set-text", mcp: "header_set_text",
+        summary: "Replace existing header/footer paragraph text by section scope (default first), kind and paragraphIndex (default 0); refuse controls, never create headers",
+        category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None,
+        params: HeaderSetTextParams, output: MutationResultShape,
     },
     CommandBatch {
         name: "command.batch",

@@ -89,3 +89,7 @@ batch 롤백 뒤 현재 문서에서 재조회한다. 코드는 추가하지 않
 ### 수식 편집 reason (0.3)
 
 새 최상위 진단 코드는 추가하지 않습니다. `INVALID_REQUEST`는 빈 script/props, XML 금지 문자, 잘못된 속성 값/limit/cursor에 사용합니다. `UNSUPPORTED`의 `equation_script_notation`은 새 script의 확인되지 않은 역슬래시/큰따옴표/제어·markup 표기 또는 맞지 않는 중괄호, `equation_script_shape`는 원본 script의 누락/중복, `equation_script_markup`은 원본 script의 CDATA·주석·PI·자식 요소·속성을 뜻합니다. stale cursor는 `VERSION_CONFLICT`, 변조 후보는 `VERIFY_FAILED`입니다.
+
+### 0.3 좁은 편집 명령 사유 (기존 코드 사용)
+
+새 진단 코드는 추가하지 않는다. `paragraph.setStyle`의 없는 스타일과 `header.setText`의 없는 구역/머리말/꼬리말/문단은 `TARGET_NOT_FOUND`다. `UNSUPPORTED`의 `style_shape`는 기존 참조 속성 누락·중복 스타일 ID, `image_geometry`는 누락·중복·비정상 기하/행렬 또는 정수 기하 범위 초과, `header_control`은 여백·번호·필드·탭·개체 제어를 담은 머리말/꼬리말 문단을 뜻한다. `no_text_fragment`는 기존 텍스트 조각이 없어 생성 없이 교체할 수 없는 경우다. 잘못된 mode/kind·target/targets 형식은 `INVALID_REQUEST`, 변조 후보는 `VERIFY_FAILED`다.

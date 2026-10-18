@@ -1,4 +1,4 @@
-//! hae-edit: The four supported edits, lineseg cache policy and PrvText update.
+//! hae-edit: Bounded edits, lineseg cache policy and PrvText update.
 //!
 //! Edits are applied in order to a candidate [`Document`]; each step is a set
 //! of byte splices followed by [`Document::rebuild`] (the commit gate). Cache
@@ -6,8 +6,10 @@
 
 mod char_format;
 mod equation;
+mod fit;
 mod format;
 mod image;
+mod narrow;
 mod replace_all;
 mod table;
 mod text;
@@ -22,6 +24,7 @@ use std::sync::Arc;
 
 pub use char_format::CharProps;
 pub use equation::EquationProps;
+pub use fit::FitMode;
 pub use format::{Alignment, LineSpacing};
 pub use image::ImageBytes;
 pub use replace_all::{
@@ -59,6 +62,20 @@ pub enum EditOp {
     EquationSetProperties {
         target: String,
         props: EquationProps,
+    },
+    ParagraphSetStyle {
+        targets: Vec<String>,
+        style_id: u32,
+    },
+    ImageFit {
+        target: String,
+        mode: FitMode,
+    },
+    HeaderSetText {
+        scope: Option<String>,
+        kind: String,
+        paragraph_index: usize,
+        text: String,
     },
     TextFormat {
         target: String,
@@ -103,12 +120,15 @@ pub enum EditOp {
 impl EditOp {
     pub fn target(&self) -> &str {
         match self {
+            EditOp::ParagraphSetStyle { targets, .. } => targets.first().map_or("", String::as_str),
+            EditOp::HeaderSetText { scope, .. } => scope.as_deref().unwrap_or(""),
             EditOp::TableSetColumnWidths { target, .. }
             | EditOp::TableSetRowHeights { target, .. }
             | EditOp::CellSetFormat { target, .. }
             | EditOp::CellSetSize { target, .. }
             | EditOp::EquationSetScript { target, .. }
             | EditOp::EquationSetProperties { target, .. }
+            | EditOp::ImageFit { target, .. }
             | EditOp::TextFormat { target, .. }
             | EditOp::TextReplace { target, .. }
             | EditOp::ParagraphFormat { target, .. }
@@ -154,6 +174,26 @@ pub enum Intent {
         entry: String,
         path: Vec<usize>,
         props: EquationProps,
+    },
+    #[serde(rename = "paragraph.setStyle")]
+    ParagraphSetStyle {
+        entry: String,
+        path: Vec<usize>,
+        #[serde(rename = "styleId")]
+        style_id: u32,
+    },
+    #[serde(rename = "image.fit")]
+    ImageFit {
+        entry: String,
+        path: Vec<usize>,
+        mode: FitMode,
+    },
+    #[serde(rename = "header.setText")]
+    HeaderSetText {
+        entry: String,
+        kind: String,
+        #[serde(rename = "paragraphIndex")]
+        paragraph_index: usize,
     },
     #[serde(rename = "text.format")]
     TextFormat {
@@ -364,6 +404,16 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
             EditOp::EquationSetProperties { target, props } => {
                 equation::set(&mut d, target, None, Some(props))
             }
+            EditOp::ParagraphSetStyle { targets, style_id } => {
+                narrow::set_style(&mut d, targets, *style_id)
+            }
+            EditOp::ImageFit { target, mode } => fit::fit(&mut d, target, *mode),
+            EditOp::HeaderSetText {
+                scope,
+                kind,
+                paragraph_index,
+                text,
+            } => narrow::header_text(&mut d, scope.as_deref(), kind, *paragraph_index, text),
             EditOp::TextFormat {
                 target,
                 range,

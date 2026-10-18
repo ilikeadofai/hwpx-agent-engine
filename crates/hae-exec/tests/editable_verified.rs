@@ -354,7 +354,8 @@ fn every_editing_fixture_and_synthetic_advertisement_survives_executor_verificat
         .filter(|p| p.extension().is_some_and(|e| e == "hwpx"))
         .collect();
     paths.sort();
-    assert_eq!(paths.len(), 19);
+    let fixtures = paths.len();
+    assert_eq!(fixtures, 20, "every editing fixture must be present");
     let mut checked = 0;
     for path in paths {
         let bytes = fs::read(&path).unwrap();
@@ -379,7 +380,7 @@ fn every_editing_fixture_and_synthetic_advertisement_survives_executor_verificat
     let body: String = cases.iter().map(|s| p(s) + &cell(s)).collect();
     checked += check_samples(&mut h.open(&synthetic(&body)), "synthetic");
     assert!(checked > 100);
-    eprintln!("VERIFIED_ADVERTISEMENT_PROPERTY editing_fixtures=17 synthetic_cases={} text_dry_runs={checked}", cases.len()*2);
+    eprintln!("VERIFIED_ADVERTISEMENT_PROPERTY editing_fixtures={fixtures} synthetic_cases={} text_dry_runs={checked}", cases.len()*2);
 }
 
 #[test]

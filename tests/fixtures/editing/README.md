@@ -142,3 +142,7 @@ diff <(cd /tmp/edit_a && find . -type f | sort | xargs sha256sum) \
 - `image.replace` 의 엔진 구현(1-12)은 다른 담당이 진행 중이다. 여기서는 입력·기대 코드·보존 조건만 고정한다.
 - 작업 1-8~1-12 를 시작하기 전에 이 표를 총괄이 확인한다. `paragraph.format`(1-11) 자료도 함께 고정해 두었다.
 - 저장·다시 열기(1-13, 1-15)와 변조 oracle(1-14)은 이 디렉터리 범위가 아니다(`tests/oracle/`).
+
+### narrow_edits.hwpx (0.3)
+
+`python3 -I tests/fixtures/editing/gen_narrow_edits.py --check-determinism`으로 생성한다. 개인정보 없는 합성 문서로 기존 스타일 2개, 일반 문단, 머리말 4문단(번호·탭 제어 거절 사례 포함), 꼬리말, 2×1 PNG를 담은 정사각 프레임 그림을 포함한다. 머리말·꼬리말은 실제 HWPX(공개 코퍼스 관찰)처럼 `<hp:ctrl>` 아래에 둔다. 그림은 세 렌더링 행렬을 갖춘 기존 생성기 패턴을 쓴다. ZIP 메타데이터·순서는 고정되고 같은 Python/zlib에서 두 번 생성한 바이트가 동일한지 확인한다. 원본 corpus는 수정하지 않는다. 한컴 Linux 게이트 결과는 `docs/decisions/narrow-edits-hancom-gate-2026-10-18.md`에 있다.
