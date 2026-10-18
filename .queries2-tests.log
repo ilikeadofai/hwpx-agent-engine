@@ -1,0 +1,55 @@
+   Compiling hae-diag v0.2.0 (/tmp/opencode/wt-queries2/crates/hae-diag)
+   Compiling hae-zip v0.2.0 (/tmp/opencode/wt-queries2/crates/hae-zip)
+   Compiling hae-xml v0.2.0 (/tmp/opencode/wt-queries2/crates/hae-xml)
+   Compiling hae-package v0.2.0 (/tmp/opencode/wt-queries2/crates/hae-package)
+   Compiling hae-model v0.2.0 (/tmp/opencode/wt-queries2/crates/hae-model)
+   Compiling hae-verify v0.2.0 (/tmp/opencode/wt-queries2/crates/hae-verify)
+   Compiling hae-project v0.2.0 (/tmp/opencode/wt-queries2/crates/hae-project)
+   Compiling hae-edit v0.2.0 (/tmp/opencode/wt-queries2/crates/hae-edit)
+   Compiling hae-render-rhwp v0.2.0 (/tmp/opencode/wt-queries2/crates/hae-render-rhwp)
+   Compiling hae-exec v0.2.0 (/tmp/opencode/wt-queries2/crates/hae-exec)
+    Finished `test` profile [unoptimized] target(s) in 19.28s
+     Running tests/resource_queries.rs (target/debug/deps/resource_queries-2e0c5107a50c92a7)
+
+running 21 tests
+test resource_queries_registry_policies_schemas_and_aliases_are_complete ... ok
+test picture_list_missing_geometry_and_media_are_unknown_not_guessed ... ok
+test style_list_preserves_all_alternative_line_spacing_branches ... ok
+test picture_list_crop_effect_shadow_flip_and_reverse_are_observed ... ok
+test style_list_properties_fonts_and_literal_reference_counts ... ok
+test style_list_unresolved_totals_and_examples_are_filter_independent_and_bounded ... ok
+test style_list_empty_resources_still_reports_body_defects ... ok
+test picture_list_geometry_payload_hash_caption_and_flags ... ok
+test picture_list_external_references_are_not_fetched_or_given_payload_hashes ... ok
+test table_get_merges_report_covered_coordinates_and_overlapping_real_cells ... ok
+test table_get_geometry_margins_paragraph_counts_and_previews ... ok
+test table_get_missing_spans_are_null_and_nested_cells_are_not_borrowed ... ok
+test resource_queries_response_budget_pages_before_the_serialized_transport_limit ... ok
+test table_get_no_tables_and_invalid_scope_on_empty_document ... ok
+test picture_list_duplicate_media_is_document_wide_and_resolves_alias_items ... ok
+test table_get_pagination_and_huge_spans_fail_without_allocating_a_grid ... ok
+test picture_list_empty_and_section_or_paragraph_scope ... ok
+test resource_queries_cursors_invalidate_after_edits_and_do_not_add_history ... ok
+test table_get_empty_scope_and_single_table_selection ... ok
+test style_list_pages_without_gaps_and_validates_kind_limit_cursor ... ok
+corpus style style: total=9, unresolved=41, bodyUnresolved=0
+corpus style charPr: total=148, unresolved=41, bodyUnresolved=0
+corpus style paraPr: total=386, unresolved=41, bodyUnresolved=0
+test resource_queries_public_corpus_execute_and_preserve_exact_export_bytes has been running for over 60 seconds
+corpus style borderFill: total=38, unresolved=41, bodyUnresolved=0
+
+thread 'resource_queries_public_corpus_execute_and_preserve_exact_export_bytes' (1098067) panicked at crates/hae-exec/tests/resource_queries.rs:555:5:
+assertion `left == right` failed
+  left: Number(8)
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test resource_queries_public_corpus_execute_and_preserve_exact_export_bytes ... FAILED
+
+failures:
+
+failures:
+    resource_queries_public_corpus_execute_and_preserve_exact_export_bytes
+
+test result: FAILED. 20 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 149.79s
+
+error: test failed, to rerun pass `-p hae-exec --test resource_queries`

@@ -285,3 +285,29 @@ fn optional_document_id_never_redirects_an_edit_to_the_open_document() {
     assert_eq!(applied["result"]["afterVersion"], 1);
     assert_eq!(mcp.finish().0, 0);
 }
+
+#[test]
+fn resource_query_tools_execute_over_real_stdio_and_preserve_export_bytes() {
+    let t = TempDir::new("queries2");
+    let input = t.path().join("input.hwpx");
+    let original = include_bytes!("../../../tests/fixtures/editing/split_runs.hwpx");
+    std::fs::write(&input, original).unwrap();
+    let mut mcp = McpClient::start(t.path());
+    let (_, error) = mcp.call_tool("document_open", json!({"path":input}));
+    assert!(!error);
+    for tool in ["style_list", "table_get", "picture_list"] {
+        let before = t.path().join(format!("{tool}-before.hwpx"));
+        let after = t.path().join(format!("{tool}-after.hwpx"));
+        let (_, error) = mcp.call_tool("document_export", json!({"path":before}));
+        assert!(!error);
+        let (reply, error) = mcp.call_tool(tool, json!({}));
+        assert!(!error, "{reply}");
+        assert_eq!(reply["result"]["revision"], 0);
+        assert!(reply["result"]["items"].is_array());
+        let (_, error) = mcp.call_tool("document_export", json!({"path":after}));
+        assert!(!error);
+        assert_eq!(std::fs::read(before).unwrap(), original);
+        assert_eq!(std::fs::read(after).unwrap(), original);
+    }
+    assert_eq!(mcp.finish().0, 0);
+}

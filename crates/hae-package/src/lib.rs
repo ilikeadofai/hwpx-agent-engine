@@ -138,8 +138,10 @@ pub fn sha256_hex(b: &[u8]) -> String {
 pub struct ManifestItem {
     pub id: String,
     pub href: String,
-    /// Resolved ZIP entry name.
+    /// Resolved ZIP entry name; empty for an explicitly external image.
+    /// External hrefs are opaque metadata, never paths to read or fetch.
     pub entry: String,
+    pub is_embedded: bool,
     pub media_type: String,
 }
 
@@ -298,6 +300,21 @@ pub fn analyze_cached(
             if !ids.insert(id.clone()) {
                 return Err(broken(format!("duplicate manifest id {id}")));
             }
+            let is_embedded = !matches!(el.attr_value("isEmbeded"), Some("0" | "false"));
+            let media_type = el.attr_value("media-type").unwrap_or("").to_string();
+            if !is_embedded {
+                if !media_type.starts_with("image/") {
+                    return Err(broken("only image manifest items may be external"));
+                }
+                manifest.push(ManifestItem {
+                    id,
+                    href,
+                    entry: String::new(),
+                    is_embedded,
+                    media_type,
+                });
+                continue;
+            }
             if href.starts_with('/')
                 || href.contains('\\')
                 || href.split('/').any(|seg| seg == ".." || seg == ".")
@@ -321,7 +338,8 @@ pub fn analyze_cached(
                 id,
                 href,
                 entry,
-                media_type: el.attr_value("media-type").unwrap_or("").to_string(),
+                is_embedded,
+                media_type,
             });
         }
     }
@@ -526,6 +544,37 @@ mod tests {
     }
 
     const HPF_BASE: &str = r#"<?xml version="1.0" encoding="UTF-8"?><opf:package xmlns:opf="http://www.idpf.org/2007/opf"><opf:manifest>ITEMS</opf:manifest><opf:spine><opf:itemref idref="sec0"/></opf:spine></opf:package>"#;
+
+    #[test]
+    fn explicit_external_images_keep_opaque_hrefs_without_payload_access() {
+        for href in [
+            "https://example.invalid/p.png",
+            "/not/a/local/file.png",
+            "../outside.png",
+        ] {
+            let hpf = HPF_BASE.replace("ITEMS", &format!(r#"<opf:item id="sec0" href="Contents/section0.xml" media-type="text/xml"/><opf:item id="external" href="{href}" media-type="image/png" isEmbeded="0"/>"#));
+            let (info, _) =
+                analyze(&harness_state(&hpf, vec![]), true, &Limits::default()).unwrap();
+            let item = info.item_by_id("external").unwrap();
+            assert!(!item.is_embedded);
+            assert!(item.entry.is_empty());
+            assert_eq!(item.href, href);
+        }
+    }
+
+    #[test]
+    fn external_admission_does_not_allow_missing_embedded_payloads_or_external_spine() {
+        for external in [
+            r#"<opf:item id="bad" href="https://example.invalid/x" media-type="image/png" isEmbeded="1"/>"#,
+            r#"<opf:item id="bad" href="missing.png" media-type="image/png"/>"#,
+            r#"<opf:item id="bad" href="https://example.invalid/x" media-type="text/xml" isEmbeded="0"/>"#,
+        ] {
+            let hpf = HPF_BASE.replace("ITEMS", &format!(r#"<opf:item id="sec0" href="Contents/section0.xml" media-type="text/xml"/>{external}"#));
+            assert!(analyze(&harness_state(&hpf, vec![]), true, &Limits::default()).is_err());
+        }
+        let hpf = HPF_BASE.replace("ITEMS",r#"<opf:item id="sec0" href="https://example.invalid/x" media-type="image/png" isEmbeded="false"/>"#);
+        assert!(analyze(&harness_state(&hpf, vec![]), true, &Limits::default()).is_err());
+    }
 
     #[test]
     fn c2_manifest_href_allows_double_dot_inside_segment() {

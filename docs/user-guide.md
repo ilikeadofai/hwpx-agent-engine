@@ -495,3 +495,88 @@ cell.setText는 실제 존재하는 병합 기준 셀도 지원한다. 한 문�
 ```
 
 결과에는 `replacementCount`, `paragraphCount`, `skippedCount`, `skipped[]`, `matches[]`(앞 200곳 미리보기)와 `changedIds`가 담깁니다. 일치는 명령 시작 시점의 문단 기준 grapheme `range`로 보고합니다. 바꾼 문단마다 줄 배치 캐시를 지우는 규칙은 `command.batch`와 같아, 구역마다 가장 앞서 바뀐 최상위 문단(셀은 표를 담은 최상위 문단)부터 구역 끝까지 지웁니다. PrvText는 문단 옛 문장이 미리보기에서 한 번만 나올 때만 바뀌고 아니면 `stale`로 알립니다. 잠긴 문단(불투명 요소가 가리키는 문단 등)은 건너뜁니다. 수식·필드의 내용은 어떤 경우에도 바꾸지 않습니다.
+
+## 0.3 자원·표·그림 조회
+
+`style.list` / `table.get` / `picture.list`는 열린 문서의 자원과 개체 구조를 읽습니다.
+MCP 이름은 `style_list` / `table_get` / `picture_list`, CLI 별칭은
+`style-list` / `table-get` / `picture-list`입니다. `expectedVersion`이나 요청 순번 없이
+호출하며 문서·revision·Undo/Redo 이력을 바꾸지 않습니다.
+
+세 명령의 결과는 `documentId`, `revision`, `items`, `total`, `nextCursor`를 갖습니다.
+`limit`은 기본 100, 범위 1~500입니다. 응답 직렬화 예산에 도달하면 더 적은 항목과
+`nextCursor`를 돌려주므로 null이 될 때까지 같은 필터로 이어서 읽습니다. cursor는 문서,
+revision, 명령과 필터에 묶이며 다른 조건으로 재사용하면 `VERSION_CONFLICT`입니다.
+응답은 MCP의 텍스트·structuredContent 중복 직렬화 공간까지 예약합니다. 단일 항목이나
+필수 메타데이터가 예산을 넘으면 `RESOURCE_LIMIT`으로 거절하며 조용히 잘라내지 않습니다.
+
+### 스타일·문단 모양·글자 모양·테두리
+
+```json
+{"command":"style.list","params":{"kind":"charPr","limit":100}}
+```
+
+`kind`를 생략하면 `style`, `charPr`, `paraPr`, `borderFill`을 모두 나열합니다.
+각 항목의 `attributes`에는 원문 ID, 스타일의 `name`/`engName`/`paraPrIDRef`/`charPrIDRef`,
+글자 모양의 `height`(HWPUNIT)·`textColor` 같은 XML 속성이 있습니다. 글꼴은
+`fonts[{language,id,face}]`, 볼드/이탤릭은 `bold`/`italic`, 문단 정렬과 줄간격은
+`alignments[]`/`lineSpacings[]`, 테두리는 `borders`에 담습니다. switch/case/default의
+대체 줄간격도 XML 순서대로 모두 보고하며 한 값을 실제 적용값으로 추정하지 않습니다.
+찾을 수 없는 글꼴 이름은 null입니다.
+
+`useCount`는 해당 종류/ID를 가리키는 **실제 XML 참조 속성의 발생 횟수**입니다.
+본문 참조는 `bodyReferenceCount`, 헤더 등 나머지 XML 참조는 `otherReferenceCount`이며
+둘의 합이 `useCount`입니다. 스타일의 기반 모양과 nextStyle 참조도 포함합니다.
+상속을 펼친 글자 수나 화면에 보이는 사용량을 의미하지 않습니다. 알려진 HWPX namespace의
+비 namespace 속성만 세며 외부 namespace의 같은 이름 속성을 혼동하지 않습니다.
+
+`unresolvedReferenceCount`, `unresolvedBodyReferenceCount`는 정의가 없는 자원을 참조한
+전체/본문 발생 횟수입니다. `unresolvedExamples`는 종류·ID·entry·element·attribute와
+가능하면 가까운 `nodeId`를 본문 구역 우선으로 앞 20곳까지 보고하고, 그 이상은
+`unresolvedExamplesTruncated:true`로 알립니다. 이 집계는 kind/페이지 필터와 무관하게
+문서 전체를 대상으로 합니다. 결함을 알리는 조회이며 문서를 자동으로 고치지 않습니다.
+기존 미해결 참조 때문에 저장 검증이 실패하는 문서는 조회 후에도 export가 거절될 수 있습니다.
+
+### 표 구조
+
+```json
+{"command":"table.get","params":{"scope":"구역 또는 문단 nodeId"}}
+{"command":"table.get","params":{"table":"표 nodeId"}}
+```
+
+두 선택자를 생략하면 모든 표를 읽습니다. 둘을 함께 주면 지정 표가 scope 안에 있어야 합니다.
+각 표는 `nodeId`, `parent`, `section`, `rows`/`cols`, `cellSpacing`, `outerMargins`,
+`innerMargins`, `borderFillIdRef`와 `cells[]`를 보고합니다. 셀에는 0부터 시작하는
+`address:{row,col,rowSpan,colSpan}`, `size`, `margins`, `hasMargin`, `borderFillIdRef`,
+직접 담긴 `paragraphCount`와 앞 60 grapheme의 `textPreview`가 있습니다. 크기와 여백은
+원문 HWPUNIT 문자열입니다. 셀별 여백과 표 기본 여백을 합쳐 유효 여백을 추측하지 않습니다.
+중첩 표는 별도 표로 나오며 그 셀·문단을 바깥 표의 직접 셀·문단으로 중복 집계하지 않습니다.
+
+병합 기준 셀은 실제 XML 셀로 `cells`에 남습니다. `coveredCells`는 **완전한 명시적 주소와
+span**에서 계산한 가려진 좌표 목록으로, 기준 좌표는 제외합니다. `coveredBy`에 덮는 기준
+셀 ID를 모두, `presentCellNodeIds`에는 그 좌표에 실제로 존재하는 셀 ID를 보고합니다.
+겹치는 실제 셀도 삭제하거나 어느 셀이 승자인지 추정하지 않습니다. 실제 셀의 `coveredBy`도
+같은 사실을 알립니다. 주소·span·크기 누락은 null이고 span을 1로 보정하지 않습니다.
+거대 span 확장이나 단일 표가 응답/작업 예산을 넘으면 `RESOURCE_LIMIT`입니다.
+
+### 그림·미디어
+
+```json
+{"command":"picture.list","params":{"scope":"구역 또는 문단 nodeId","limit":100}}
+```
+
+scope를 생략하면 문서 전체를 읽습니다. 그림마다 `nodeId`, `paragraphNodeId`, `section`,
+`position`, `offset`, `size`, `orgSz`, `curSz`를 보고하며 위치의 기준·offset도 원문 속성으로
+보존합니다. `captionText`는 캡션 문단의 텍스트이고 캡션이 없으면 null입니다.
+`cropped`는 `imgClip`의 좌/상단이 0인지와 우/하단이 `imgDim`과 같은지를 비교합니다.
+필수 값이 없어 판단할 수 없으면 null입니다. `hasEffects`, `hasShadow`, `effectProperties`,
+`effectElements`, `flip`, `flipped`, 원문 `reverse`도 함께 제공합니다.
+
+`media`에는 `itemId`, 원문 `href`, ZIP `entry`, payload의 `sha256`, 원문 `isEmbeded`,
+`external`, `status`, `otherPictureNodeIds`가 있습니다. 동일 item 또는 동일 payload entry를
+가리키는 다른 그림을 문서 전체에서 찾으며 scope 밖 중복 참조도 포함합니다. 서로 다른
+entry의 바이트가 같다는 이유로 동일 미디어 참조로 간주하지는 않습니다.
+명시적인 `isEmbeded="0"`/`"false"` 이미지 manifest 항목은 외부 참조로 읽습니다.
+외부 href는 접근하거나 내려받지 않으며 entry/sha256은 null, status는 `external`입니다.
+외부 그림은 `image.replace` 대상으로 지원하지 않습니다. 내장 여부 플래그가 없으면 원문 값과
+external은 null로 남기되 ZIP payload가 있으면 해시는 제공합니다.

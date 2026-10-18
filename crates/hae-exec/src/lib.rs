@@ -1,6 +1,7 @@
 //! hae-exec: Command registry, session executor, revisions, request ordering, batch, dryRun and history.
 
 mod preview;
+mod queries;
 pub mod registry;
 pub mod session;
 
@@ -9,8 +10,9 @@ pub use registry::{
     CommandCategory, CommandDescribeParams, CommandDescriptor, DocumentDiffParams,
     DocumentExportParams, DocumentInspectParams, DocumentOpenParams, DocumentPreviewParams,
     ElementGetParams, ElementQueryParams, EmptyParams, ImageReplaceParams, LineSpacingParam,
-    ParagraphFormatParams, ParsedCommand, ProjectSaveParams, SnapshotCreateParams,
-    SnapshotReleaseParams, TextRangeParam, TextReplaceAllParams, TextReplaceParams, COMMAND_NAMES,
+    ParagraphFormatParams, ParsedCommand, PictureListParams, ProjectSaveParams,
+    SnapshotCreateParams, SnapshotReleaseParams, StyleListParams, TableGetParams, TextRangeParam,
+    TextReplaceAllParams, TextReplaceParams, COMMAND_NAMES,
 };
 pub use session::{RequestEnvelope, ResponseEnvelope, SessionExecutor};
 

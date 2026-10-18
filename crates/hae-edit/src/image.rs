@@ -411,6 +411,13 @@ pub(crate) fn image_replace(d: &mut Draft, target: &str, image: &ImageBytes) -> 
     let old_item = d.doc.info.item_by_id(&reference.value).ok_or_else(|| {
         invalid("no_embedded_media", "image media is missing").with_target(target)
     })?;
+    if !old_item.is_embedded {
+        return Err(invalid(
+            "no_embedded_media",
+            "external picture has no embedded payload",
+        )
+        .with_target(target));
+    }
     if d.doc
         .payload(&old_item.entry)
         .is_some_and(|old| old.as_ref() == image.bytes.as_ref())
