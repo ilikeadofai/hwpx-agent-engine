@@ -1,10 +1,13 @@
-//! Linux rooted I/O, session-owned project locks, atomic saves and HWPX export.
+//! Rooted I/O, session-owned project locks, atomic saves and HWPX export.
 //!
-//! Paths are absolute and lexically canonical (no `.`, `..`, repeated slashes,
-//! symlinks or hard links). Roots must already exist. All filesystem traversal
-//! uses directory descriptors and `O_NOFOLLOW`; files must be regular files.
-//! Keep one [`IoRoots`] for the executor so every HWPX/image input is registered
-//! as protected. Keep the returned [`ProjectBinding`] until session close.
+//! On Unix, paths are absolute and lexically canonical (no `.`, `..`, repeated
+//! slashes, symlinks or hard links); roots must already exist. Traversal uses
+//! directory descriptors and `O_NOFOLLOW`. On Windows, the std::fs backend
+//! rejects reparse points and performs per-component checks, but cannot provide
+//! the same race-free dirfd guarantee; see `io/windows.rs` and the dependency
+//! decision for its limits. Keep one [`IoRoots`] for the executor so every
+//! HWPX/image input is registered as protected. Keep the returned
+//! [`ProjectBinding`] until session close.
 //!
 //! Every write requires an independent validation callback. On project saves it
 //! receives the **current HWPX extracted from the temporary project**, on export

@@ -16,6 +16,17 @@ impl Drop for Temp {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
+
+#[cfg(unix)]
+fn make_file_symlink(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(src, dest)
+}
+
+#[cfg(windows)]
+fn make_file_symlink(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_file(src, dest)
+}
+
 fn document() -> Document {
     Document::open(
         include_bytes!("../../../tests/fixtures/adversarial/valid_base.hwpx").to_vec(),
@@ -119,10 +130,65 @@ fn export_cannot_overwrite_source_or_existing_or_follow_links() {
             .code(),
         Code::TargetExists
     );
-    std::os::unix::fs::symlink(&src, t.0.join("link.hwpx")).unwrap();
-    assert!(roots.read_input(t.0.join("link.hwpx")).is_err());
-    fs::hard_link(&src, t.0.join("hard.hwpx")).unwrap();
-    assert!(roots.read_input(t.0.join("hard.hwpx")).is_err());
+    let link = t.0.join("link.hwpx");
+    match make_file_symlink(&src, &link) {
+        Ok(()) => assert!(roots.read_input(&link).is_err()),
+        Err(error)
+            if cfg!(windows)
+                && matches!(
+                    error.kind(),
+                    std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported
+                ) =>
+        {
+            // Creating Windows symlinks may require Developer Mode or a privilege.
+        }
+        Err(error) => panic!("could not create test symlink: {error}"),
+    }
+    #[cfg(unix)]
+    {
+        fs::hard_link(&src, t.0.join("hard.hwpx")).unwrap();
+        assert!(roots.read_input(t.0.join("hard.hwpx")).is_err());
+    }
+}
+
+#[test]
+fn parent_component_path_escape_is_rejected() {
+    let t = Temp::new();
+    let roots = IoRoots::new(&t.0, &t.0, Limits::default()).unwrap();
+    let escaped = t.0.join("..").join("outside.hwpwork");
+
+    assert_eq!(
+        roots
+            .export_hwpx(&escaped, &document(), |_| Ok(()))
+            .unwrap_err()
+            .code(),
+        Code::PathNotAllowed
+    );
+    assert!(fs::read_dir(&t.0).unwrap().next().is_none());
+}
+
+#[test]
+fn failed_atomic_replacement_preserves_original_project_bytes() {
+    let t = Temp::new();
+    let roots = IoRoots::new(&t.0, &t.0, Limits::default()).unwrap();
+    let path = t.0.join("project.hwpwork");
+    let doc = document();
+    let mut binding = None;
+    roots
+        .save_project(&mut binding, &path, &doc, 1, |_| Ok(()))
+        .unwrap();
+    let original = fs::read(&path).unwrap();
+
+    roots.set_fault(Some(FaultStep::Rename));
+    assert_eq!(
+        roots
+            .save_project(&mut binding, &path, &doc, 2, |_| Ok(()))
+            .unwrap_err()
+            .code(),
+        Code::IoError
+    );
+    assert_eq!(fs::read(&path).unwrap(), original);
+    assert!(binding.is_some());
 }
 
 #[test]

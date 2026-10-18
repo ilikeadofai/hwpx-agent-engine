@@ -1,8 +1,12 @@
 use hae_diag::{Code, Limits, Stage};
 use hae_project::{FaultStep, IoRoots};
 use std::fs;
-use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
+
+#[cfg(unix)]
+use std::os::unix::fs::{symlink, PermissionsExt};
+#[cfg(windows)]
+use std::os::windows::fs::symlink_dir as symlink;
 
 const ABC_SHA256: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 
@@ -35,8 +39,22 @@ fn entries(path: &Path) -> Vec<PathBuf> {
     paths
 }
 
+fn assert_file_metadata(path: &Path) {
+    let metadata = fs::symlink_metadata(path).unwrap();
+    assert!(metadata.is_file());
+    #[cfg(unix)]
+    assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        // Windows has ACLs rather than POSIX mode bits. Assert the file was not
+        // published as a reparse point. ACL privacy is inherited from the parent.
+        assert_eq!(metadata.file_attributes() & 0x0000_0400, 0);
+    }
+}
+
 #[test]
-fn writes_exact_opaque_bytes_with_hash_revision_private_mode_and_unique_direct_paths() {
+fn writes_exact_opaque_bytes_with_hash_revision_and_unique_direct_paths() {
     let input = Temp::new();
     let output = Temp::new();
     let roots = IoRoots::new(&input.0, &output.0, Limits::default()).unwrap();
@@ -54,9 +72,7 @@ fn writes_exact_opaque_bytes_with_hash_revision_private_mode_and_unique_direct_p
         assert_eq!(receipt.revision, revision);
         assert_eq!(receipt.sha256, ABC_SHA256);
         assert_eq!(fs::read(&receipt.path).unwrap(), b"abc");
-        let metadata = fs::symlink_metadata(&receipt.path).unwrap();
-        assert!(metadata.is_file());
-        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        assert_file_metadata(&receipt.path);
         assert!(!paths.contains(&receipt.path));
         paths.push(receipt.path);
     }
@@ -122,7 +138,18 @@ fn refuses_symlink_swapped_output_root_without_writing_outside_or_to_the_old_roo
     fs::create_dir(&output).unwrap();
     let roots = IoRoots::new(&temp.0, &output, Limits::default()).unwrap();
     fs::rename(&output, &moved).unwrap();
-    symlink(&outside.0, &output).unwrap();
+    if let Err(error) = symlink(&outside.0, &output) {
+        if cfg!(windows)
+            && matches!(
+                error.kind(),
+                std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported
+            )
+        {
+            // Windows symlink creation may require Developer Mode or a privilege.
+            return;
+        }
+        panic!("could not create test symlink: {error}");
+    }
 
     assert_eq!(
         roots
@@ -213,10 +240,7 @@ fn parent_fsync_failure_reports_published_receipt_and_keeps_originals() {
     assert_eq!(detail["sha256"], ABC_SHA256);
     assert_eq!(detail["revision"], 42);
     assert_eq!(fs::read(&path).unwrap(), b"abc");
-    assert_eq!(
-        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-        0o600
-    );
+    assert_file_metadata(&path);
     assert_eq!(fs::read(&original).unwrap(), b"protected source");
     assert_eq!(fs::read(&previous.path).unwrap(), b"previous preview");
     let mut expected = vec![original, previous.path, path];

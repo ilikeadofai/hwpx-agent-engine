@@ -21,7 +21,13 @@ fn file_check(path: Option<PathBuf>) -> Value {
             true
         }
     });
-    json!({"ok":ok,"path":path,"message":if ok {"executable found"} else {"missing executable or configuration"}})
+    #[cfg(unix)]
+    let success_message = "executable found";
+    #[cfg(windows)]
+    let success_message = "file found; Windows execution is not determined by Unix execute bits (launch not verified)";
+    #[cfg(not(any(unix, windows)))]
+    let success_message = "file found; executable status was not verified";
+    json!({"ok":ok,"path":path,"message":if ok {success_message} else {"missing executable or configuration"}})
 }
 
 fn root_check(path: &Path, write: bool) -> Value {

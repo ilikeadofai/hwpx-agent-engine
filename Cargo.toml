@@ -23,6 +23,7 @@ getrandom = "=0.3.4"
 png = "=0.18.1"
 zune-jpeg = "=0.5.15"
 rustix = { version = "=1.1.4", features = ["fs"] }
+winapi-util = "=0.1.11"
 thiserror = "=2.0.20"
 clap = { version = "=4.6.6", features = ["derive"] }
 resvg = { version = "=0.45.1", default-features = false, features = ["text", "raster-images", "memmap-fonts"] }

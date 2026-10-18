@@ -11,10 +11,15 @@ hae-zip = { workspace = true }
 hae-package = { workspace = true }
 hae-model = { workspace = true }
 hae-verify = { workspace = true }
-rustix = { workspace = true }
 sha2 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+winapi-util = { workspace = true }
 
 [lints]
 workspace = true
