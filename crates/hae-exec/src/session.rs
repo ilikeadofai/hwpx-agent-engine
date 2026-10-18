@@ -3,15 +3,15 @@
 
 use crate::registry::FieldSetTextParams;
 use crate::registry::{
-    command_describe, command_list, BatchStepParam, CellSetFormatParams, CellSetSizeParams,
-    CellSetTextParams, CommandBatchParams, CommandDescriptor, DocumentDiffParams,
-    DocumentExportParams, DocumentExportTextParams, DocumentOpenParams, DocumentPreviewParams,
-    EquationSetPropertiesParams, EquationSetScriptParams, ExportTextFormat, FormFillParams,
-    HeaderSetTextParams, Hwp5FileHeaderShape, Hwp5InspectParams, Hwp5InspectResultShape,
-    Hwp5ParagraphShape, Hwp5SectionShape, ImageFitParams, ImageReplaceParams, LineSpacingParam,
-    LinkListParams, ParagraphFormatParams, ParagraphSetStyleParams, ParsedCommand,
-    ProjectSaveParams, SectionSetPageNumberingParams, SectionSetPageParams,
-    SectionSetVisibilityParams, SnapshotCreateParams, SnapshotReleaseParams,
+    command_describe, command_list, BatchStepParam, BookmarkListParams, CellSetFormatParams,
+    CellSetSizeParams, CellSetTextParams, CommandBatchParams, CommandDescriptor,
+    DocumentDiffParams, DocumentExportParams, DocumentExportTextParams, DocumentOpenParams,
+    DocumentPreviewParams, EquationSetPropertiesParams, EquationSetScriptParams, ExportTextFormat,
+    FormFillParams, HeaderSetTextParams, Hwp5FileHeaderShape, Hwp5InspectParams,
+    Hwp5InspectResultShape, Hwp5ParagraphShape, Hwp5SectionShape, ImageFitParams,
+    ImageReplaceParams, LineSpacingParam, LinkListParams, MemoListParams, ParagraphFormatParams,
+    ParagraphSetStyleParams, ParsedCommand, ProjectSaveParams, SectionSetPageNumberingParams,
+    SectionSetPageParams, SectionSetVisibilityParams, SnapshotCreateParams, SnapshotReleaseParams,
     TableSetColumnWidthsParams, TableSetRowHeightsParams, TextFormatParams, TextReplaceAllParams,
     TextReplaceParams, TrackChangeListParams,
 };
@@ -1180,6 +1180,8 @@ impl SessionExecutor {
             ),
             ParsedCommand::LinkList(p) => self.handle_link_list(req, &p),
             ParsedCommand::TrackChangeList(p) => self.handle_track_change_list(req, &p),
+            ParsedCommand::BookmarkList(p) => self.handle_bookmark_list(req, &p),
+            ParsedCommand::MemoList(p) => self.handle_memo_list(req, &p),
             ParsedCommand::SectionGetPage(p) => {
                 let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
                 Ok((
@@ -1691,6 +1693,64 @@ impl SessionExecutor {
                 "nextCursor": next,
                 "changes": report.changes,
                 "authors": report.authors,
+            }),
+            Vec::new(),
+        ))
+    }
+
+    /// `bookmark.list`: read-only. The document, revision, and history are
+    /// unchanged; unnamed markers stay unnamed.
+    fn handle_bookmark_list(
+        &mut self,
+        req: &RequestEnvelope,
+        p: &BookmarkListParams,
+    ) -> Result<(Value, Vec<Diagnostic>)> {
+        let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+        Self::check_query_version(s, req, "bookmark.list")?;
+        let offset = Self::query_cursor(&p.cursor, s.revision, "bookmark.list")?;
+        let limit = p.limit.unwrap_or(100).clamp(1, 500);
+        let bookmarks = s.current.doc.bookmark_list(p.scope.as_deref())?;
+        let total = bookmarks.len();
+        let start = offset.min(total);
+        let end = start.saturating_add(limit).min(total);
+        let next = (end < total).then(|| format!("{}:{end}", s.revision));
+        let page: Vec<_> = bookmarks.into_iter().skip(start).take(limit).collect();
+        Ok((
+            json!({
+                "documentId": s.current.doc.document_id,
+                "revision": s.revision,
+                "bookmarks": page,
+                "total": total,
+                "nextCursor": next,
+            }),
+            Vec::new(),
+        ))
+    }
+
+    /// `memo.list`: read-only. Memo controls carry review annotations; this
+    /// view reports them and never changes the document.
+    fn handle_memo_list(
+        &mut self,
+        req: &RequestEnvelope,
+        p: &MemoListParams,
+    ) -> Result<(Value, Vec<Diagnostic>)> {
+        let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+        Self::check_query_version(s, req, "memo.list")?;
+        let offset = Self::query_cursor(&p.cursor, s.revision, "memo.list")?;
+        let limit = p.limit.unwrap_or(100).clamp(1, 500);
+        let memos = s.current.doc.memo_list(p.scope.as_deref())?;
+        let total = memos.len();
+        let start = offset.min(total);
+        let end = start.saturating_add(limit).min(total);
+        let next = (end < total).then(|| format!("{}:{end}", s.revision));
+        let page: Vec<_> = memos.into_iter().skip(start).take(limit).collect();
+        Ok((
+            json!({
+                "documentId": s.current.doc.document_id,
+                "revision": s.revision,
+                "memos": page,
+                "total": total,
+                "nextCursor": next,
             }),
             Vec::new(),
         ))
