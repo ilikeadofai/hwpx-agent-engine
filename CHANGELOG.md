@@ -25,6 +25,24 @@
 - `crates/hae-exec/tests/documentation.rs`: `docs/user-guide.md` 부록 색인(명령 수·이름·MCP 도구
   이름·분류·문서 변경 여부)을 레지스트리와 대조하는 시험.
 
+- 0.4 기능 1호 — 문서·문단 생성: `paragraph.insert`(기준 문단 앞/뒤에 `count`개 문단,
+  문단 모양·첫 run 글자 모양 복제, 새 nodeId), `paragraph.delete`(같은 컨테이너의 문단
+  연속 삭제, 표·개체·필드·각주·구역 속성 문단 거절), `document.create`(제목·문단 목록으로
+  최소 HWPX 패키지를 처음부터 만들어 출력 루트에 새 파일로 공개, `document.export`와 같은
+  경로 격리·덮어쓰기 금지, 독립 검증 통과 후 공개).
+- 노드 생성 계약 확장: `NodeRemap`(`TableRemap` | `ParagraphRemap`)과
+  `Document::rebuild_node_structure`, 편집기/검증기 공용 문단 능력 술어(광고·실행 일치).
+- 독립 검증기 `hae-verify/src/paragraph_structure.rs`·`created.rs`(원본/요청만으로 기대
+  바이트·기대 패키지 전체를 재도출, 편집기 산출물 미사용)와 변조 거절 시험.
+- `document.open`이 HWPX를 입력 루트 다음 **출력 루트**에서도 찾는다(만든 문서 바로 열기).
+- 합성 픽스처 `tests/fixtures/paragraph/`(+생성기·결정론 확인)와 `document.create`
+  구조 검사기 `tests/fixtures/created/check_created.py`.
+- 설계·게이트 기록: `docs/decisions/document-paragraph-creation-design.md`,
+  `document-paragraph-creation-hancom-gate-2026-10-19.md`.
+- 시험 비의존성 수정: `annotations`·`readonly_queries`가 저장소 밖(`spikes/work/`) 로컬
+  입력이 없으면 SKIP한다(`tables.rs`와 같은 규칙). 레지스트리 시험이 명령 수를 상수 대신
+  `COMMAND_NAMES`와 비교한다.
+
 ## [0.3.0] - 2026-10-18
 
 기능 계약은 [0.3 설계서](docs/superpowers/specs/2026-10-18-hwpx-engine-0.3-design.md)다.

@@ -158,3 +158,31 @@ batch 롤백 뒤 현재 문서에서 재조회한다. 코드는 추가하지 않
 | `VERIFY_FAILED` | 기존 검증 reason | 원본과 요청에서 독립 도출한 기대 바이트와 후보가 다름(새 셀 속성·텍스트·주소·크기·캐시·요청 밖 변경 포함) |
 
 대상이 표가 아니면 기존대로 `UNSUPPORTED`/`wrong_kind`, 없는 nodeId는 `TARGET_NOT_FOUND`, 인자 형식 오류(음수 `index` 등)는 `INVALID_REQUEST`입니다. 응답 `structure[]`의 `created`/`removed`/`shifted`는 진단이 아니라 결과입니다.
+
+## 0.4 문단·문서 생성(`paragraph.insert`·`paragraph.delete`·`document.create`)
+
+새 `Code` enum은 추가하지 않습니다. 설계: [문서·문단 생성 설계](document-paragraph-creation-design.md) §10.
+
+| 코드 | reason | 조건 |
+|---|---|---|
+| `INVALID_ARGUMENT` | `count_out_of_range` | `paragraph.insert`/`delete`의 `count`가 `1..=1024` 밖 |
+| `INVALID_ARGUMENT` | `paragraph_count_out_of_range` | 삭제 구간이 그 컨테이너의 문단 열을 넘어감 |
+| `UNSUPPORTED` | `paragraph_scope_unsupported` | 대상 문단의 컨테이너가 구역 루트도 표 셀 `hp:subList`도 아님(각주·미주·글상자 등) |
+| `UNSUPPORTED` | `paragraph_template_unsupported` | `paragraph.insert` 대상에 첫 `hp:run` 또는 그 `charPrIDRef`가 없음 |
+| `UNSUPPORTED` | `paragraph_before_section_property` | `position: "before"` 대상 문단이 `hp:secPr`를 담음 |
+| `UNSUPPORTED` | `paragraph_delete_not_contiguous` | 삭제 구간에 문단이 아닌 형제 요소가 끼어 있음. `detail.element` |
+| `UNSUPPORTED` | `paragraph_holds_table` | 삭제할 문단이 표(`hp:tbl`)를 담음. `detail.element` |
+| `UNSUPPORTED` | `paragraph_content_unsupported` | 삭제할 문단에 글·탭·줄바꿈·줄 배치 캐시 외 요소(그림·수식·필드·도형·각주·`secPr`·`ctrl` 등). `detail.element`에 첫 위반 요소 이름 |
+| `UNSUPPORTED` | `paragraph_would_empty_container` | 삭제 뒤 컨테이너에 문단이 0개. 능력 조회의 같은 reason과 실행 코드가 일치함 |
+| `INVALID_REQUEST` | — | `position` 값 오류, `text`·`title`의 탭·줄바꿈·XML 금지 문자 |
+| `TARGET_NOT_FOUND` | — | 없는 `target` |
+| `UNSUPPORTED` | `wrong_kind` | `target`이 문단이 아님(표·셀 등) |
+| `TARGET_EXISTS` | — | `document.create` 대상 경로가 이미 있음 |
+| `PATH_NOT_ALLOWED` | — | `document.create` 경로가 출력 루트 밖·심볼릭 링크·보호된 입력 |
+| `VERIFY_FAILED` | 검증 reason | 후보가 요청에서 독립 도출한 기대와 다름(문단 바이트·캐시·새 패키지 항목·순서) |
+
+- 능력 조회(`edits`)의 `paragraph.insert`·`paragraph.delete` `reason` 값은 위 표와 같습니다. 요청 의존
+  거절(`paragraph_before_section_property`, `paragraph_count_out_of_range`)은 노드 단위로 열거하지 않습니다.
+- `document.create`가 만드는 문서에는 `Preview/PrvText.txt`가 없으므로 `stale.prvText`가 생기지 않습니다.
+- 응답 필드(코드 아님): `paragraph[]`(`{command, entry, position, count, created[], removed[]}`),
+  `document.create`의 `{path, sha256, bytes, entries, paragraphCount, title}`.

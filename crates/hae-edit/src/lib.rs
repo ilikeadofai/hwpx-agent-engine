@@ -12,6 +12,7 @@ mod form_fill;
 mod format;
 mod image;
 mod narrow;
+mod paragraph_structure;
 mod replace_all;
 mod section;
 mod table;
@@ -19,7 +20,7 @@ mod table_structure;
 mod text;
 
 use hae_diag::{Code, Diagnostic, EngineError, Result, Stage};
-use hae_model::{Document, Kind, Node, StructureDelta, TableRemap};
+use hae_model::{Document, Kind, Node, NodeRemap, StructureDelta, TableRemap};
 use hae_xml::{ParseOptions, XmlDoc};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -173,6 +174,18 @@ pub enum EditOp {
         target: String,
         image: ImageBytes,
     },
+    /// Insert `count` (default 1) paragraphs before or after `target` (0.4).
+    ParagraphInsert {
+        target: String,
+        position: String,
+        text: Option<String>,
+        count: Option<usize>,
+    },
+    /// Delete `count` (default 1) paragraphs starting at `target` (0.4).
+    ParagraphDelete {
+        target: String,
+        count: Option<usize>,
+    },
 }
 
 impl EditOp {
@@ -200,7 +213,9 @@ impl EditOp {
             | EditOp::ParagraphFormat { target, .. }
             | EditOp::CellSetText { target, .. }
             | EditOp::CellSetParagraphs { target, .. }
-            | EditOp::ImageReplace { target, .. } => target,
+            | EditOp::ImageReplace { target, .. }
+            | EditOp::ParagraphInsert { target, .. }
+            | EditOp::ParagraphDelete { target, .. } => target,
             EditOp::TextReplaceAll { scope, .. } | EditOp::FormFill { scope, .. } => {
                 scope.as_deref().unwrap_or("")
             }
@@ -342,6 +357,15 @@ pub enum Intent {
     /// One entry per `form.fill` step: every label → value applied to a cell.
     #[serde(rename = "form.fill")]
     FormFill { fills: Vec<FormFillIntent> },
+    /// One entry per `paragraph.insert`/`paragraph.delete` step (0.4).
+    #[serde(rename = "paragraph.structure")]
+    ParagraphStructure {
+        command: String,
+        entry: String,
+        path: Vec<usize>,
+        position: Option<String>,
+        count: usize,
+    },
 }
 
 /// A node created by a table structure edit. Cells carry their new address.
@@ -370,6 +394,19 @@ pub struct StructureReport {
     pub removed: Vec<String>,
     /// Surviving cells whose address moved.
     pub shifted: Vec<String>,
+}
+
+/// What one paragraph structure step created and removed (0.4).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ParagraphReport {
+    pub command: String,
+    pub entry: String,
+    /// `before` | `after` for insert, `None` for delete.
+    pub position: Option<&'static str>,
+    pub count: usize,
+    pub created: Vec<CreatedNode>,
+    pub removed: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -405,6 +442,8 @@ pub struct Applied {
     pub form_fill: Vec<FormFillReport>,
     /// One report per table structure step, in step order.
     pub structure: Vec<StructureReport>,
+    /// One report per paragraph structure step, in step order (0.4).
+    pub paragraph: Vec<ParagraphReport>,
 }
 
 /// Work-in-progress state while applying a batch.
@@ -421,7 +460,9 @@ pub(crate) struct Draft {
     pub replace_all: Vec<ReplaceAllReport>,
     pub form_fill: Vec<FormFillReport>,
     pub structure: Vec<StructureReport>,
-    /// Text vanished without a PrvText line to edit (deleted table cells).
+    pub paragraph: Vec<ParagraphReport>,
+    /// Text appeared or vanished without a PrvText line to edit (deleted table
+    /// cells, new paragraph text, deleted paragraphs).
     pub prv_extra: bool,
 }
 
@@ -452,12 +493,24 @@ impl Draft {
         Ok(())
     }
 
-    /// Splice one entry and run the structure-aware commit gate.
+    /// Splice one entry and run the structure-aware commit gate for a declared
+    /// table change (0.3).
     pub fn splice_structural(
         &mut self,
         entry: &str,
         edits: Vec<(Range<usize>, Vec<u8>)>,
         change: &TableRemap,
+    ) -> Result<StructureDelta> {
+        self.splice_node_change(entry, edits, &NodeRemap::Table(change.clone()))
+    }
+
+    /// Splice one entry and run the structure-aware commit gate for any
+    /// declared node-set change (`NodeRemap`, 0.4 generalisation).
+    pub fn splice_node_change(
+        &mut self,
+        entry: &str,
+        edits: Vec<(Range<usize>, Vec<u8>)>,
+        change: &NodeRemap,
     ) -> Result<StructureDelta> {
         let doc = self.doc.xml.get(entry).ok_or_else(|| {
             EngineError::new(
@@ -470,7 +523,7 @@ impl Draft {
         let mut st = self.doc.state.clone();
         st.set(entry, new.bytes().clone());
         let stale = self.doc.stale_layout.clone();
-        let (doc, delta) = self.doc.rebuild_table_structure(st, stale, change)?;
+        let (doc, delta) = self.doc.rebuild_node_structure(st, stale, change)?;
         self.doc = doc;
         Ok(delta)
     }
@@ -535,6 +588,7 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
         replace_all: Vec::new(),
         form_fill: Vec::new(),
         structure: Vec::new(),
+        paragraph: Vec::new(),
         prv_extra: false,
     };
     for (i, op) in ops.iter().enumerate() {
@@ -685,6 +739,22 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
                 line_spacing,
             } => format::paragraph_format(&mut d, target, *alignment, *line_spacing),
             EditOp::ImageReplace { target, image } => image::image_replace(&mut d, target, image),
+            EditOp::ParagraphInsert {
+                target,
+                position,
+                text,
+                count,
+            } => paragraph_structure::insert(
+                &mut d,
+                "paragraph.insert",
+                target,
+                position,
+                text.as_deref(),
+                *count,
+            ),
+            EditOp::ParagraphDelete { target, count } => {
+                paragraph_structure::delete(&mut d, "paragraph.delete", target, *count)
+            }
         };
         r.map_err(|mut e| {
             if ops.len() > 1 {
@@ -710,6 +780,7 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
             replace_all: d.replace_all,
             form_fill: d.form_fill,
             structure: Vec::new(),
+            paragraph: Vec::new(),
         });
     }
     let prv_extra = d.prv_extra;
@@ -731,6 +802,7 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
         replace_all: d.replace_all,
         form_fill: d.form_fill,
         structure: d.structure,
+        paragraph: d.paragraph,
     })
 }
 

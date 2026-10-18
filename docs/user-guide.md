@@ -18,16 +18,17 @@
 - **표 셀 텍스트 교체 (`cell_set_text`)**: 병합 기준 셀을 포함해 기존 셀의 텍스트를 바꿉니다. 문단 하나는 `text`, 여러 문단은 정확한 기존 문단 수의 `paragraphs` 배열을 줍니다.
 - **라벨로 양식 채우기 (`form_fill`)**: 표에서 라벨 글자("성명" 등)와 정확히 같은 셀을 찾아, 같은 행 오른쪽(없으면 바로 아래)의 **비어 있는** 셀에 값을 채웁니다. 실패한 라벨은 사유와 함께 보고하고, 기본 `strict`에서는 하나라도 실패하면 아무것도 바꾸지 않습니다.
 - **그림 교체 (`image_replace`)**: 기존 그림의 위치·크기·캡션을 그대로 유지한 채, 정적 PNG 또는 JPEG 이미지 파일로 교체합니다.
+- **문단 추가·삭제 (0.4, `paragraph_insert`·`paragraph_delete`)**: 기존 문단 앞이나 뒤에 새 문단을 넣거나, 같은 컨테이너의 문단을 이어서 지웁니다. 새 문단은 대상 문단의 문단 모양·첫 run의 글자 모양을 복제하고 글은 새로 넣거나 비웁니다. 표·개체·필드·각주가 든 문단과 구역 속성을 담은 문단은 지우지 않습니다(아래 ④-5).
+- **새 문서 만들기 (0.4, `document_create`)**: 제목과 문단 목록으로 한컴이 열 수 있는 최소 HWPX를 처음부터 만들어 출력 폴더에 새 파일로 씁니다. 만든 파일은 바로 `document_open`으로 열어 편집할 수 있습니다(아래 ⑨).
 - **표 행·열 추가·삭제 (0.3, `table_insert_row`·`table_delete_row`·`table_insert_column`·`table_delete_column`)**: 기존 표에 빈 행·열을 넣거나 지웁니다. 새 셀은 이웃 행(열)의 속성·테두리를 복제하고 글은 비웁니다. 엔진이 처음으로 **노드를 만들고 지우는** 명령이므로 새 `nodeId`와 되돌리기 규칙이 따로 있습니다(아래 ④-4).
 - **구역 용지·여백·쪽 번호·표시 설정 (0.3, `section.*`)**: 기존 구역 하나의 용지 방향·크기·제본 방식·여백, 쪽 시작 방식과 시작 번호, 첫 쪽 머리말·꼬리말·쪽 번호 숨김과 테두리·채우기 표시, 격자를 조회하고(`section_get_page`) 지정한 항목만 바꿉니다(`section_set_page`, `section_set_page_numbering`, `section_set_visibility`). 조회 값은 XML에 명시된 것만 `explicit`으로, 없는 값은 `unspecified`로 구분해 알려 주며 상속·기본값을 추측하지 않습니다. 자세한 내용은 아래 0.3절 「구역 용지·여백·쪽 번호·표시 설정」을 보세요.
 - **Markdown·HTML로 내보내기 (`document_export_text`)**: 문서(또는 한 구역)를 읽기 전용으로 변환해 새 `.md`/`.html` 파일로 씁니다. 문서·`revision`·되돌리기 이력은 바뀌지 않습니다(아래 ⑧).
 - **누름틀(필드) 조회와 값 채우기 (`field_list`·`field_set_text`, 0.3)**: 공문서 서식의 누름틀(`CLICK_HERE`)·하이퍼링크(`HYPERLINK`) 필드를 찾아 이름·ID·Command 원문·현재 값·채우기 가능 여부를 조회하고, 필드 마커와 서식을 그대로 둔 채 표시 텍스트만 채웁니다.
-- **OWPML 사전 기반 문서 검사 (`document_validate`, 0.4)**: 문서를 읽어 한컴의 공개 OWPML 모델(요소·속성 이름)과 대조하고, 알 수 없는 요소·속성, 미해결 `charPrIDRef`·`paraPrIDRef`·`styleIDRef`·`borderFillIDRef` 참조, 패키지 필수 항목 누락, `itemCnt`/`fontCnt`/`secCnt` 불일치, 중복 자원 id, 안 쓰이는 자원을 `severity`·`code`와 함께 보고합니다(아래 0.4절).
 - **구형 `.hwp`(HWP5) 읽기 전용 조회 (`hwp5_inspect`, 0.3)**: HWPX와 별개 crate(`hae-hwp5`)로 구형 HWP5 바이너리를 직접 열어 버전·압축·암호화 여부, 구역·문단·글자 수와 문단별 텍스트 앞부분을 돌려줍니다. 열린 문서가 필요 없고 파일을 바꾸지 않습니다(아래 0.3절 「구형 .hwp(HWP5) 읽기 전용 조회」).
 - **되돌리기·다시 실행 및 미리보기**: 작업 전 가상 적용(`dryRun`), 변경 내역 비교(`document_diff`), 실행 취소(`history_undo`)·다시 실행(`history_redo`), 외부 렌더러 연동을 통한 PNG/SVG 미리보기(`document_preview`)를 지원합니다.
 
 ### 하지 않는 것 및 한계 (0.3 기준 제외 범위)
-- **전체 HWP/HWPX 기능 지원 아님**: 새 문서와 새 문단은 만들 수 없고, 문단 추가·삭제·합치기·나누기, 셀 병합·분할, 병합 셀을 가르는 행·열 삽입과 병합 셀이 걸린 행·열 삭제, 표 자체의 생성·삭제, 수식 새로 만들기, 도형 편집은 지원하지 않습니다. 새로 만들 수 있는 노드는 0.3의 표 행·열 명령이 기존 표 안에 만드는 빈 셀·문단뿐입니다. 구형 `.hwp`(HWP5 바이너리)는 읽기 전용 조회(`hwp5.inspect`)만 지원하며 편집·쓰기·HWPX 변환은 지원하지 않습니다.
+- **전체 HWP/HWPX 기능 지원 아님**: 0.4는 **새 문서 하나와 기존 구역·표 셀 안의 새 문단**을 만들 수 있고, 문단을 이어서 지울 수 있습니다. 그 밖에 문단 나누기·합치기·이동, 다른 구역이나 다른 문서에서 복사, 셀 병합·분할, 병합 셀을 가르는 행·열 삽입과 병합 셀이 걸린 행·열 삭제, 표 자체의 생성·삭제, 수식·그림·도형·필드·스타일 정의 새로 만들기, 각주·미주·글상자 안 문단의 추가·삭제는 지원하지 않습니다. 새로 만들 수 있는 노드는 `paragraph.insert`의 문단과 0.3 표 명령의 빈 셀·문단, 그리고 `document.create`가 만드는 문서 전체뿐입니다. 구형 `.hwp`(HWP5 바이너리)는 읽기 전용 조회(`hwp5.inspect`)만 지원하며 편집·쓰기·HWPX 변환은 지원하지 않습니다.
 - **읽기 전용 문서**: 암호화된 문서는 열지 않으며, 전자서명이나 변경 추적(Track Changes)이 들어 있는 문서는 열어서 내용을 조회하거나 무편집 상태로 내보내는 것만 허용하고 편집은 거절합니다. 변경 추적 표시와 작성자는 `trackchange_list`로 확인합니다.
 - **외부 렌더러 별도 준비 필요**: 이 엔진에는 미리보기 렌더러가 내장되어 있지 않습니다. `document_preview`를 사용하려면 별도의 `rhwp` 실행 파일, `bubblewrap`(`bwrap`) 샌드박스 도구, 읽을 수 있는 글꼴 폴더를 환경 변수(`HAE_RHWP`, `HAE_BWRAP`, `HAE_FONT_DIR`)로 직접 지정해야 합니다.
 - **엔진 구현 완료 범위와 Windows 한컴오피스 실기 호환성(단계 4 예정)의 구분**: 현재 엔진의 파일 편집·보존 검증·격리 미리보기 기능은 구현되어 있으나, 수정된 문서를 실제 Windows 한컴오피스(한글)에서 열었을 때의 실기 호환성 및 조판 대조 검증(단계 4)은 별도 확인 대상입니다. `document_preview`가 만드는 SVG/PNG 이미지와 쪽 번호는 외부 렌더러(`rhwp`)가 어림잡아 계산한 **추정치**이므로 실제 Windows 한컴오피스의 줄바꿈·쪽 나눔·표현 범위와 100% 일치한다고 보장하지 않습니다.
@@ -455,6 +456,26 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 - **되돌리기**: `history_undo`는 지워진 셀·문단을 **원래 `nodeId`로** 되살리고, 삽입으로 만든 노드는 사라지며 내보낸 파일은 **원본과 바이트가 같습니다**. `history_redo`는 처음 만들었던 **같은 새 `nodeId`**를 복원합니다. `dryRun`은 `structure`를 돌려주지만 후보가 버려지므로 새 노드의 `nodeId`는 `null`이고 `changedIds`에도 새 ID가 들어가지 않습니다(주소가 밀린 기존 셀은 `shifted`에 그대로 나옵니다). `command_batch`에서 앞 단계가 행·열을 바꿔도 뒷 단계의 기존 셀 대상은 따라갑니다. 단 같은 배치에서 앞 단계가 **만든** 노드나 **지운** 노드는 대상이 될 수 없습니다.
 - **그 밖에**: 표와 그 뒤 모든 최상위 문단의 줄 배치 캐시를 지웁니다(한컴이 열 때 다시 계산). 중첩 표, 셀 구역(`cellzoneList`), `cellSpacing ≠ 0`, 상대 크기 표는 `UNSUPPORTED`입니다. `table.addRow` 같은 옛 이름은 계속 `structure_change_unsupported`이고 안내 문구가 새 명령을 가리킵니다.
 
+### ④-5 문단 추가·삭제 (`paragraph_insert`, `paragraph_delete`)
+
+기존 문단 앞이나 뒤에 **새 문단을 넣거나**, 같은 컨테이너(구역 본문 또는 표 셀)의 문단을 **이어서 지웁니다**. 표 행·열 명령에 이어 엔진이 문단 노드를 직접 만들고 지우는 두 번째 명령군이며, 규칙과 근거는 `docs/decisions/document-paragraph-creation-design.md`에 있습니다.
+
+```json
+{ "documentId": "doc-1", "expectedVersion": 4,
+  "target": "node-para2", "position": "after", "text": "새 문단", "count": 2 }
+```
+
+- **`position`**: `"before"` 또는 `"after"`. `count`는 기본 1, `1`~`1024`입니다. 같은 요청을 여러 번 하면 `count`개가 한꺼번에 들어갑니다.
+- **새 문단의 모양**: 대상 문단의 시작 태그(문단 모양 `paraPrIDRef`·스타일 `styleIDRef`·나눔 속성)를 복제하고, **문단 `id`는 뺍니다**. 첫 `hp:run`의 시작 태그도 그대로 복제해 글자 모양(`charPrIDRef`)을 물려받습니다.
+  - `text`가 있으면 `<hp:t>` 하나에 넣고, 없거나 빈 문자열이면 **빈 문단**(글자 조각 없음)이 됩니다.
+  - 새 문단에는 줄 배치 캐시(`linesegarray`)를 만들지 않습니다.
+- **`nodeId`**: 새 문단은 **새 `nodeId`**를 받아 결과 `paragraph[].created`(`nodeId`·`kind`)에 나옵니다. 대상 문단의 `nodeId`는 그대로이고, 삭제는 `paragraph[].removed`에 나옵니다. `dryRun`은 `created[].nodeId`를 `null`로 돌려줍니다.
+- **삽입 경계**: `before` 대상이 **구역 속성(`hp:secPr`)을 담은 문단**이면 `UNSUPPORTED`/`paragraph_before_section_property`로 거절합니다. 구역 속성은 첫 문단에 남아야 하므로, 그 문단 **뒤**에 넣으세요(`position: "after"`).
+- **삭제 제한**: 글·탭·줄바꿈만 든 문단만 지웁니다. **표를 담은 문단**은 `paragraph_holds_table`, 그림·수식·필드·도형·각주·구역 속성이 있으면 `paragraph_content_unsupported`(`detail.element`)로 거절합니다. 컨테이너에 문단이 하나도 남지 않으면 `paragraph_would_empty_container`, 삭제 구간이 컨테이너를 넘으면 `paragraph_count_out_of_range`입니다.
+- **대상 범위**: 구역 본문 문단과 **표 셀 안 문단**만 대상입니다. 각주·미주·글상자 안 문단은 `paragraph_scope_unsupported`로 거절합니다. 표 셀 문단을 넣고 지우면 그 표의 배치가 바뀌므로 표와 그 뒤 문단의 줄 배치 캐시를 지웁니다(표 행·열 명령과 같은 규칙). 구역 본문 문단이면 그 문단부터 구역 끝까지의 캐시를 지웁니다.
+- **미리보기 텍스트**: 새 글은 `PrvText`에 줄을 끼워 넣지 않고, 지운 글도 빼지 않습니다. 대신 `stale.prvText: true`로 낡음을 알립니다.
+- **되돌리기**: `history_undo`는 지운 문단을 **원래 `nodeId`로** 되살리고 삽입한 문단을 없애며, 내보낸 파일은 **원본과 바이트가 같습니다**. `history_redo`는 처음 만든 **같은 새 `nodeId`**를 복원합니다. `command_batch`에서 앞 단계가 문단을 밀어도 뒷 단계의 기존 문단 대상은 따라갑니다(새로 만든 문단은 같은 배치의 대상이 될 수 없습니다).
+
 ### ⑤ 실행 취소 (`history_undo`)와 다시 실행 (`history_redo`)
 방금 바꾼 문단 서식이 마음에 들지 않아 직전 상태로 되돌립니다. 되돌리기 역시 문서 상태를 바꾸는 작업이므로 현재 버전(`2`)을 `expectedVersion`으로 보냅니다.
 ```json
@@ -469,7 +490,7 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 
 문서를 직접 바꾸지 않는 보조 명령들입니다. 명령 이름은 점 표기(`document.diff`), MCP 도구 이름은 밑줄 표기(`document_diff`)입니다.
 
-- **명령 목록 (`command.list` / `command_list`)**: 인자가 없습니다. 등록된 58개 명령 각각의 이름·MCP 도구 이름·분류·요약, `requiresDocument`·`requiresExpectedVersion`·`supportsDryRun`·`recordsHistory` 같은 정책, 입력·출력 JSON Schema, 설정상 사용 가능 여부(`available`)를 돌려줍니다. 각 항목의 `schemaVersion`은 레지스트리 계약 버전(`0.3.0`)이며 엔진 버전과 별개입니다. `available`은 렌더러 설정 같은 실행 환경에서의 가용성이고, 개별 문단·표에서 편집이 되는지는 `element_query`·`element_get`의 `edits[명령].available`이 알려 줍니다. CLI에서는 `hae run --command command.list --params '{}'`로 같은 목록을 얻습니다.
+- **명령 목록 (`command.list` / `command_list`)**: 인자가 없습니다. 등록된 57개 명령 각각의 이름·MCP 도구 이름·분류·요약, `requiresDocument`·`requiresExpectedVersion`·`supportsDryRun`·`recordsHistory` 같은 정책, 입력·출력 JSON Schema, 설정상 사용 가능 여부(`available`)를 돌려줍니다. 각 항목의 `schemaVersion`은 레지스트리 계약 버전(`0.3.0`)이며 엔진 버전과 별개입니다. `available`은 렌더러 설정 같은 실행 환경에서의 가용성이고, 개별 문단·표에서 편집이 되는지는 `element_query`·`element_get`의 `edits[명령].available`이 알려 줍니다. CLI에서는 `hae run --command command.list --params '{}'`로 같은 목록을 얻습니다.
 - **명령 하나 설명 (`command.describe` / `command_describe`)**: `{"command":"text.replace"}`처럼 이름을 주면 그 명령의 입력·출력 Schema와 `dryRun`·이력 정책을 돌려줍니다. 인자를 만들기 전에 확인하는 용도입니다.
 - **일괄 실행 (`command.batch` / `command_batch`)**: `{"documentId":"doc-1","expectedVersion":3,"steps":[{"command":"text.replace","params":{...}},{"command":"paragraph.format","params":{...}}]}`처럼 편집 단계를 순서대로 줍니다. 전체가 한 번의 `revision`·되돌리기 단위이고, 한 단계라도 실패하면 앞 단계까지 포함해 아무것도 바뀌지 않으며 오류의 `detail.failedStep`이 실패한 단계를 가리킵니다. `dryRun: true`로 먼저 시험할 수 있습니다. 단계 안의 `params`에는 문서 ID나 `expectedVersion`을 넣지 않습니다.
 - **스냅샷 만들기 (`document.snapshot` / `document_snapshot`)**: `{"documentId":"doc-1","label":"교체 전"}`(`label`은 선택). 현재 상태를 세션 안에 보관하고 `snapshotId`와 `revision`을 돌려줍니다. 문서와 이력은 바뀌지 않으며, 세션 메모리 한도를 넘으면 `RESOURCE_LIMIT`로 거절합니다. 스냅샷은 세션이 끝나면 사라지고 `.hwpwork`에 저장되지 않습니다.
@@ -583,6 +604,24 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 
 ---
 
+## ⑨ 새 문서 만들기 (`document_create`, 0.4)
+
+제목과 문단 목록만으로 **한컴이 열 수 있는 HWPX 파일을 처음부터** 만들어 출력 폴더에 새 파일로 씁니다. 열린 문서가 필요 없고, `documentId`·`expectedVersion`도 쓰지 않습니다. 문서 상태·`revision`·되돌리기 이력은 바뀌지 않습니다.
+
+```json
+{ "path": "/home/user/hwpx-outputs/보고서.hwpx",
+  "title": "탐구 보고서",
+  "paragraphs": ["제목", "", "첫 번째 절의 내용입니다."] }
+```
+
+- **응답**: `{path, sha256, bytes, entries, paragraphCount, title}`. `entries`는 만든 패키지 항목 여섯 개입니다.
+- **만들어지는 것**: `mimetype`(첫 항목, 무압축) · `version.xml` · `META-INF/container.xml` · `Contents/content.hpf` · `Contents/header.xml`(`fontfaces` 7언어·`borderFills`·`charProps`·`paraProps`·`styles`) · `Contents/section0.xml`. 첫 문단이 A4 세로·20 mm 여백의 구역 속성(`hp:secPr`)을 담고, `paragraphs`가 없거나 비면 빈 문단 하나를 만듭니다.
+- **검증**: 파일을 공개하기 전에 `hae-verify`가 요청에서 기대 패키지 전체를 다시 만들어 **항목 순서·이름·바이트를 정확히 대조**합니다. 다르면 파일을 만들지 않습니다(`VERIFY_FAILED`).
+- **`version.xml` 주의**: `application="Hancom Office Hangul"`이면 `tagetApplication="WORDPROCESSOR"`, `major`는 5 이하여야 합니다. 이 규칙을 어기면 한컴이 빈 문서를 엽니다(0.1에서 실측).
+- **덮어쓰기 금지**: 같은 경로가 이미 있으면 `TARGET_EXISTS`이고 기존 파일은 그대로입니다. 출력 루트 밖 경로·심볼릭 링크·읽기 보호된 입력은 `PATH_NOT_ALLOWED`입니다. 같은 인자로 다시 만들면 **바이트가 같은 파일**이 나옵니다(결정적).
+- **바로 편집**: 만든 파일은 `document_open`으로 열 수 있습니다(출력 루트의 파일도 열립니다). 기본 문단·글자 모양이 정의되어 있어 바로 `text_replace`·`paragraph_insert`·`table` 명령을 쓸 수 있습니다.
+- **한계**: 새 문서에 그림·표·머리말·여러 구역·사용자 스타일을 함께 만들지는 않습니다. 만든 뒤 기존 명령으로 편집하거나, `paragraphs`로 본문만 넣으세요. Windows 한컴오피스 실기 검증은 아직 없고 Linux 한컴 2020 Beta 게이트까지만 확인했습니다.
+
 ## 5. 자주 만나는 오류·경고 코드 풀이
 
 문서 편집 중 조건이 맞지 않으면 엔진은 문서를 망가뜨리는 대신 작업을 안전하게 거절하고 이유(`diagnostics`)를 알려줍니다.
@@ -603,9 +642,9 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 | `SESSION_REQUIRED` | **세션 유지 필요**: 열린 문서가 없거나, 일회성 실행 모드(`hae run`)에서 이전 호출의 실행 취소(Undo/Redo)를 시도할 때 발생합니다. 이력 기능은 한 세션 안에서만 작동합니다. |
 | `UNKNOWN_WRITER` / `REQUEST_ID_CONFLICT` / `REPLAY_TOO_OLD` / `REQUEST_OUT_OF_ORDER` | **요청 순서·작성자 번호 오류**: JSON-lines 등에서 작성자 ID(`writerId`)나 요청 일련번호(`requestSequence`)가 어긋났을 때 발생합니다. (MCP 클라이언트나 `hae script`를 쓸 때는 번호를 자동 관리하므로 발생하지 않습니다.) |
 | `TARGET_NOT_FOUND` | **대상을 찾을 수 없음**: 지정한 `nodeId`(`target`)가 문서에 없습니다. `document_inspect`나 `element_query`로 정확한 `nodeId`를 다시 찾아 주세요. |
-| `INVALID_ARGUMENT` | **인자 값이 맞지 않음**: 표 행·열 명령의 `index_out_of_range`(범위 밖)·`count_out_of_range`·`table_size_limit`(1024 초과)·`would_empty_table`(모두 지우려 함), 표 치수 값 오류 등입니다. `reason`을 확인하세요. |
+| `INVALID_ARGUMENT` | **인자 값이 맞지 않음**: 표 행·열 명령의 `index_out_of_range`(범위 밖)·`count_out_of_range`·`table_size_limit`(1024 초과)·`would_empty_table`(모두 지우려 함), `paragraph.delete`의 `paragraph_count_out_of_range`(삭제 구간이 컨테이너를 넘음), 표 치수 값 오류 등입니다. `reason`을 확인하세요. |
 | `AMBIGUOUS_TARGET` | **대상이 모호함**: 조건에 맞는 대상이 여러 개여서 하나로 특정할 수 없을 때 발생합니다. 정확한 `nodeId`를 지정하세요. |
-| `UNSUPPORTED` | **지원하지 않는 편집**: 지원하지 않는 대상을 고치려 할 때 발생합니다. (예: 중첩 표가 있는 셀, 문단이 2개 이상인 셀에 `text` 사용, 전자서명·변경 추적이 있는 읽기 전용 문서, 자르기·효과가 들어간 그림, 애니메이션 PNG 등) |
+| `UNSUPPORTED` | **지원하지 않는 편집**: 지원하지 않는 대상을 고치려 할 때 발생합니다. 0.4 문단 명령은 `paragraph_scope_unsupported`(각주·미주·글상자 안 문단), `paragraph_template_unsupported`(첫 run이나 `charPrIDRef` 없음), `paragraph_before_section_property`(구역 속성 문단 앞 삽입), `paragraph_holds_table`·`paragraph_content_unsupported`(표·개체·필드 등이 든 문단 삭제), `paragraph_would_empty_container`(컨테이너의 마지막 문단 삭제)를 씁니다. 그 밖에 중첩 표가 있는 셀, 문단이 2개 이상인 셀에 `text` 사용, 전자서명·변경 추적이 있는 읽기 전용 문서, 자르기·효과가 들어간 그림, 애니메이션 PNG 등이 있습니다. |
 | `INVALID_RANGE` | **잘못된 글자 범위**: `text_replace`의 `[start, end)` 범위가 문단 grapheme 수를 벗어났거나 역순입니다. 길이 0 범위는 지원되는 textSpans 위치에 비어 있지 않은 text를 넣을 때만 허용합니다. |
 | `RANGE_CROSSES_CONTROL` | **제어 문자를 가로지르는 범위**: 바꾸려는 텍스트 범위 안에 탭(Tab), 줄바꿈, 필드, 수식, 표, 그림 같은 제어 요소가 끼어 있습니다. 제어 요소 앞뒤로 범위를 나누어 일반 텍스트 구간만 교체하세요. |
 | `UNSUPPORTED_CONTENT_IN_RANGE` | **범위 내 알 수 없는 요소**: 지정한 텍스트 범위 안에 엔진이 해석할 수 없는 특수 속성이나 하위 요소가 들어 있어 안전을 위해 편집을 거절했습니다. |
@@ -616,7 +655,7 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 | `PREVIEW_PAGE_LIMIT` *(경고)* | **미리보기 100쪽 제한 경고**: 문서 전체가 100쪽을 넘어 앞의 100쪽까지만 렌더링했습니다(결과 `status`는 `"partial"`이 됩니다). |
 | `INVALID_REQUEST` / `UNKNOWN_COMMAND` | **잘못된 요청 형식 / 알 수 없는 명령**: 명령 이름이 틀렸거나, 필수 인자가 빠졌거나, 줄간격 백분율(`1`~`1000`)·미리보기 쪽 번호(`1`~`100`개, 1 이상) 범위를 벗어났거나, 새 텍스트에 줄바꿈·탭 문자를 넣었을 때 발생합니다. |
 | `PATH_NOT_ALLOWED` | **허용되지 않은 파일 경로**: `--input-root` 또는 `--output-root` 바깥의 경로에 접근하려 했거나, 심볼릭 링크를 거치거나, 원본 파일 덮어쓰기를 시도했을 때 거부합니다. |
-| `TARGET_EXISTS` | **파일이 이미 존재함**: `document_export`나 첫 `project_save`를 할 때 지정한 경로에 이미 파일이 있으면 기존 파일을 보호하기 위해 저장을 거절합니다. 새 파일 이름을 지정하세요. |
+| `TARGET_EXISTS` | **파일이 이미 존재함**: `document_export`·`document_create`나 첫 `project_save`를 할 때 지정한 경로에 이미 파일이 있으면 기존 파일을 보호하기 위해 저장을 거절합니다. 새 파일 이름을 지정하세요. |
 | `VERIFY_FAILED` | **저장 전 보존 검증 실패**: 파일을 디스크에 최종 기록하기 전에 엔진이 다시 읽어 검사하는 과정에서 지정하지 않은 변경이나 구조 이상이 감지되어 파일 생성을 중단했습니다. |
 | `IO_ERROR` | **파일 입출력 오류**: 파일이 없거나 디스크 권한·용량 문제로 읽기/쓰기에 실패했습니다. |
 
@@ -984,72 +1023,6 @@ entry의 바이트가 같다는 이유로 동일 미디어 참조로 간주하�
 external은 null로 남기되 ZIP payload가 있으면 해시는 제공합니다.
 
 
-## 0.4 OWPML 사전 기반 문서 검사 (`document.validate`)
-
-`document.validate` (MCP `document_validate`, CLI `document-validate`)는 열린 문서를 **읽어서**
-한컴의 공개 OWPML 모델(`hancom-io/hwpx-owpml-model`, Apache-2.0)의 요소·속성 이름과 대조하고,
-HAE만 알 수 있는 참조·카운트·패키지 사실을 함께 보고합니다. 문서를 **절대 바꾸지 않습니다**
-(`category: Query`, `mutatesContent:false`, `readOnlyHint:true`). `expectedVersion`도 요청 순번도
-필요 없고, 부르기 전후의 `document.export` 바이트가 같습니다.
-
-```json
-{"command":"document.validate","params":{"limit":100}}
-{"command":"document.validate","params":{"scope":"구역 또는 문단 nodeId","maxExamples":10}}
-```
-
-### 무엇을 보는가
-
-| 보고 코드 | 심각도 | 내용 |
-|---|---|---|
-| `unknown_element` | warning | OWPML 모델이 이름을 모르는 요소(이름·개수·예시 경로) |
-| `unknown_attribute` | info | 모델이 그 요소에서 읽지 않는 속성 |
-| `unknown_namespace` | info | 모델이 다루지 않는 namespace, 또는 모델이 이름을 하나도 두지 않은 namespace(`hp10`, `hwpml/2016/meta/pkg#` 등) |
-| `unresolved_reference` | warning | `charPrIDRef`·`paraPrIDRef`·`styleIDRef`·`nextStyleIDRef`·`borderFillIDRef` 값이 header 정의에 없음(값별 1행, 개수·예시 포함) |
-| `unset_reference` | info | 값이 `4294967295` — 모델이 `(UINT)-1`로 초기화하는 "참조 없음" 표식. dangling으로 세지 않는다는 사실을 알려 줍니다 |
-| `missing_package_item` | error | `mimetype`·`META-INF/container.xml`·rootfile(`content.hpf`)·section·header 누락. header 파트가 아예 없는 패키지는 warning |
-| `count_mismatch` | error | `hh:charProperties@itemCnt` 같은 선언 개수와 실제 자식 수 불일치, `hh:head@secCnt`와 구역 수 불일치 |
-| `duplicate_resource_id` | error | header에 같은 종류·같은 id의 자원이 두 번 이상 정의됨 |
-| `unused_resource` | info | 정의됐지만 문서 어디에서도 참조되지 않는 `charPr`·`paraPr`·`style`·`borderFill`(종류별 1행) |
-
-- **사전에 없는 이름을 오류라고 부르지 않습니다.** 실제 한컴 문서에도 모델에 없는 요소가 있습니다
-  (`hh:layoutCompatibility`의 자식들). 그래서 `warning`/`info`로 보고하고, `error`는 패키지·header
-  불변식에만 씁니다. 반대로 검사를 약화시키지도 않습니다 — 이름·개수·예시를 모두 보고하고,
-  `itemCnt`/`secCnt`·중복 id·필수 패키지 항목은 그대로 오류입니다.
-- `4294967295`는 미해결로 세지 않습니다. 참고로 `style.list`의 `unresolvedReferenceCount`는 이 표식을
-  구분하지 않는 기존 집계이므로 같은 문서에서 10처럼 보일 수 있습니다. 두 수를 합치면 "정의 없는
-  참조"의 총 발생 수입니다(`unresolved_reference`의 `count` + `unset_reference`의 `count`).
-
-### 읽는 법
-
-- `items[]`는 **집계된** 발견입니다. 같은 이름·같은 대상은 1행으로 묶고 `count`에 발생 횟수를,
-  `examples[]`에 `{entry, path, nodeId?}`(문서 순서, 최대 `maxExamples`)를 담습니다.
-- `summary`가 결론입니다: `errors`/`warnings`/`infos`(행 수), `findings`, `issues`(발생 수 합),
-  `byCode[]`(코드별 행 수·발생 수). 페이징 없이 `summary`만 읽어도 됩니다.
-- `checked`가 **무엇을 실제로 비교했는지** 알려 줍니다: `xmlEntries`, `elements`, `attributes`,
-  `references`, `namespaces[]`, `packageItems[]`, `header`, `referenceIntegrity`,
-  `resourceDefinitions`, `dictionary`(모델 프로젝트·revision·요소 수·fingerprint).
-  header 파트가 없으면 `referenceIntegrity:false`이고 참조 검사를 하지 않습니다(모든 참조를
-  dangling으로 오탐하지 않기 위해).
-- `total`·`nextCursor`는 다른 조회와 같습니다. `limit`은 1~500(기본 100), `maxExamples`는 1~50
-  (기본 5). 같은 revision·같은 인자면 결과 순서도 같습니다.
-- `truncated:true`는 서로 다른 발견이 2048개에 도달해 새 행 추가를 멈췄다는 뜻입니다. 그때 각 행의
-  `count`도 중단 지점까지의 값입니다.
-- `scope`(임의 nodeId)는 **요소·속성·namespace 대조만** 그 부분 트리로 좁힙니다. 참조·자원·카운트·
-  중복·미사용·패키지 검사는 문서 전체 속성이므로 scope가 있어도 그대로 하고 `"scope":"document"`로
-  표시합니다.
-- 스캔이 `max_validate_elements`(기본 1,000,000 XML 요소 방문)를 넘으면 부분 결과 대신
-  `RESOURCE_LIMIT`(`reason: validate_scan_limit`)으로 거절합니다.
-
-### 한계
-
-- **공식 XSD/KS X 6101 적합성 검증이 아닙니다.** 이름 수준 대조이며 속성 **값**·자식 순서·필수
-  자식은 보지 않습니다. 모델은 2023 스냅샷입니다.
-- **한컴 호환 판정이 아닙니다.** 이 검사에서 오류 0이라고 한컴이 같은 모양으로 조판한다는 뜻이
-  아닙니다(Windows 한컴 실기 검증은 별도).
-- 저장 관문(`hae-verify`)은 그대로입니다. 이 명령은 진단만 하고 고치지 않습니다. 자세한 근거와
-  실측은 [문서 검사 결정 기록](../decisions/document-validate-2026-10-19.md)에 있습니다.
-
-
 ## 누름틀·하이퍼링크 필드 조회와 텍스트 채우기 (0.3)
 
 `field.list` (MCP `field_list`, CLI의 `--command field.list`)는 문서의 필드를 읽기 전용으로 조회합니다. `expectedVersion` 없이 호출하며 선택 `scope`에 문단·표·셀·구역 nodeId를 주면 해당 영역과 교차하는 필드만 나옵니다. 각 항목의 `nodeId`는 **시작 마커를 담은 문단**이며, `paragraphIds`에는 다문단 필드가 걸친 문단이 나옵니다.
@@ -1100,9 +1073,9 @@ HAE만 알 수 있는 참조·카운트·패키지 사실을 함께 보고합니
 
 ---
 
-## 부록. 명령 58개 색인
+## 부록. 명령 61개 색인
 
-`hae run --command command.list --params '{}'`로 얻은 58개 명령 전체입니다. 「문서를 바꿈」이 「예」인 명령만 현재 상태를 편집합니다(이력 명령 `history.undo`·`history.redo`도 문서 상태를 복원하므로 「예」). 「아니오」인 명령 중 `document.exportText`, `document.export`, `project.save`는 문서가 아니라 새 파일을 만듭니다. 「문서를 바꿈」이 「아니오」여도 `document.validate`는 문서를 읽고 아무것도 쓰지 않습니다. 분류는 `command.list`의 `category`를 풀어 쓴 것이며, 같은 이름의 내부 정책과 인자는 `command.describe`로 확인합니다.
+`hae run --command command.list --params '{}'`로 얻은 61개 명령 전체입니다. 「문서를 바꿈」이 「예」인 명령만 현재 상태를 편집합니다(이력 명령 `history.undo`·`history.redo`도 문서 상태를 복원하므로 「예」). 「아니오」인 명령 중 `document.exportText`, `document.export`, `document.create`, `project.save`는 문서가 아니라 새 파일을 만듭니다. 「문서를 바꿈」이 「아니오」여도 `document.validate`는 문서를 읽고 아무것도 쓰지 않습니다. 분류는 `command.list`의 `category`를 풀어 쓴 것이며, 같은 이름의 내부 정책과 인자는 `command.describe`로 확인합니다.
 
 | 명령 | MCP 도구 | 분류 | 문서를 바꿈 | 설명 위치 |
 |---|---|---|---|---|
@@ -1129,6 +1102,8 @@ HAE만 알 수 있는 참조·카운트·패키지 사실을 함께 보고합니
 | `table.deleteRow` | `table_delete_row` | 편집 | 예 | ④-4 |
 | `table.insertColumn` | `table_insert_column` | 편집 | 예 | ④-4 |
 | `table.deleteColumn` | `table_delete_column` | 편집 | 예 | ④-4 |
+| `paragraph.insert` | `paragraph_insert` | 편집 | 예 | ④-5 |
+| `paragraph.delete` | `paragraph_delete` | 편집 | 예 | ④-5 |
 | `link.list` | `link_list` | 조회 | 아니오 | 링크와 변경 추적 |
 | `trackchange.list` | `trackchange_list` | 조회 | 아니오 | 링크와 변경 추적 |
 | `bookmark.list` | `bookmark_list` | 조회 | 아니오 | 책갈피·메모 |
@@ -1162,5 +1137,6 @@ HAE만 알 수 있는 참조·카운트·패키지 사실을 함께 보고합니
 | `document.diff` | `document_diff` | 스냅샷·비교 | 아니오 | ⑤-2 |
 | `document.preview` | `document_preview` | 미리보기 | 아니오 | ⑥ |
 | `project.save` | `project_save` | 저장·내보내기 | 아니오 | ⑦ |
+| `document.create` | `document_create` | 저장·내보내기 | 아니오 | ⑨ |
 | `document.export` | `document_export` | 저장·내보내기 | 아니오 | ⑦ |
 | `document.exportText` | `document_export_text` | 조회 | 아니오 | ⑧ |

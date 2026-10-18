@@ -190,6 +190,24 @@ pub enum VerifyOperation {
         width: Option<u32>,
         height: Option<u32>,
     },
+    /// Insert `count` paragraphs before/after the paragraph at `path` (0.4).
+    #[serde(rename = "paragraph.insert")]
+    ParagraphInsert {
+        entry: String,
+        path: Vec<usize>,
+        position: String,
+        text: Option<String>,
+        #[serde(default = "one")]
+        count: usize,
+    },
+    /// Delete `count` paragraphs starting at the paragraph at `path` (0.4).
+    #[serde(rename = "paragraph.delete")]
+    ParagraphDelete {
+        entry: String,
+        path: Vec<usize>,
+        #[serde(default = "one")]
+        count: usize,
+    },
     #[serde(rename = "equation.setScript")]
     EquationSetScript {
         entry: String,
@@ -331,6 +349,18 @@ pub struct VerifyScope {
     pub entry: String,
     pub path: Vec<usize>,
 }
+
+/// `document.create` request, owned by the verifier and independent of the
+/// editor/builder types. There is no source package, so the whole expected
+/// archive is derived from this spec
+/// (docs/decisions/document-paragraph-creation-design.md §6.3).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateSpec {
+    pub title: Option<String>,
+    #[serde(default)]
+    pub paragraphs: Vec<String>,
+}
 impl VerifyOperation {
     pub(crate) fn target(&self) -> (&str, &[usize]) {
         match self {
@@ -349,6 +379,8 @@ impl VerifyOperation {
             | Self::TableDeleteColumn { entry, path, .. }
             | Self::CellSetFormat { entry, path, .. }
             | Self::CellSetSize { entry, path, .. }
+            | Self::ParagraphInsert { entry, path, .. }
+            | Self::ParagraphDelete { entry, path, .. }
             | Self::EquationSetScript { entry, path, .. }
             | Self::EquationSetProperties { entry, path, .. }
             | Self::SectionSetPage { entry, path, .. }

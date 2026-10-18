@@ -35,7 +35,11 @@ pub use para::{ParaText, Piece, PieceKind};
 fn carrier(doc: &XmlDoc, i: usize) -> bool {
     is_hp(doc.el(i).ns.as_deref()) && matches!(doc.el(i).local.as_str(), "run" | "t")
 }
-fn structural_children(doc: &XmlDoc, i: usize) -> Vec<usize> {
+/// Structural children of one element, with text carriers (`hp:run`/`hp:t`)
+/// transparent. This is the sequence `stable_path` counts positions in, and it
+/// is public so the editor can compute the same child positions when it
+/// declares a [`ParagraphRemap`].
+pub fn structural_children(doc: &XmlDoc, i: usize) -> Vec<usize> {
     let mut out = Vec::new();
     for &c in &doc.el(i).children {
         if carrier(doc, c) {
@@ -46,7 +50,9 @@ fn structural_children(doc: &XmlDoc, i: usize) -> Vec<usize> {
     }
     out
 }
-fn stable_path(doc: &XmlDoc, mut i: usize) -> Vec<usize> {
+/// Stable path (run/t transparent) of one element. This is the coordinate
+/// system `TableRemap`/`ParagraphRemap` declare scopes in.
+pub fn stable_path(doc: &XmlDoc, mut i: usize) -> Vec<usize> {
     let mut path = Vec::new();
     while let Some(mut p) = doc.el(i).parent {
         while carrier(doc, p) {
@@ -188,6 +194,80 @@ impl TableRemap {
     }
 }
 
+/// Declared change of one paragraph sequence (docs/decisions/document-paragraph-creation-design.md §3).
+///
+/// `scope` is the stable path of the container whose structural children move:
+/// the section root (`[]`) for top-level paragraphs, or
+/// `[.., tbl, tr, tc, subList]` for a cell's paragraphs. `children` maps old
+/// structural child positions of that container onto their new positions.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ParagraphRemap {
+    pub entry: String,
+    /// Stable path of the changed container; it keeps this path itself.
+    pub scope: Vec<usize>,
+    /// Old structural child position of the container → new position (`None`: removed).
+    pub children: Vec<Option<usize>>,
+}
+
+impl ParagraphRemap {
+    /// Path an old node is expected to have after the change; `None` if removed.
+    pub fn map(&self, path: &[usize]) -> Option<Vec<usize>> {
+        let n = self.scope.len();
+        if path.len() <= n || path[..n] != self.scope[..] {
+            return Some(path.to_vec());
+        }
+        let mut out = path[..n].to_vec();
+        out.push((*self.children.get(path[n])?)?);
+        out.extend_from_slice(&path[n + 1..]);
+        Some(out)
+    }
+
+    fn contains(&self, path: &[usize]) -> bool {
+        path.len() > self.scope.len() && path[..self.scope.len()] == self.scope[..]
+    }
+}
+
+/// What a structure edit declares to the commit gate. 0.3 opened the contract
+/// for one table's rows/columns; 0.4 adds a paragraph sequence without widening
+/// what may be created (`Paragraph` only).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NodeRemap {
+    Table(TableRemap),
+    Paragraphs(ParagraphRemap),
+}
+
+impl NodeRemap {
+    pub fn entry(&self) -> &str {
+        match self {
+            Self::Table(r) => &r.entry,
+            Self::Paragraphs(r) => &r.entry,
+        }
+    }
+
+    /// Path an old node is expected to have after the change; `None` if removed.
+    pub fn map(&self, path: &[usize]) -> Option<Vec<usize>> {
+        match self {
+            Self::Table(r) => r.map(path),
+            Self::Paragraphs(r) => r.map(path),
+        }
+    }
+
+    fn contains(&self, path: &[usize]) -> bool {
+        match self {
+            Self::Table(r) => r.contains(path),
+            Self::Paragraphs(r) => r.contains(path),
+        }
+    }
+
+    /// Kinds this declaration may create inside its scope.
+    fn creates(&self, kind: Kind) -> bool {
+        match self {
+            Self::Table(_) => matches!(kind, Kind::Cell | Kind::Paragraph),
+            Self::Paragraphs(_) => kind == Kind::Paragraph,
+        }
+    }
+}
+
 /// Ids created and removed by a structure change, in document order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StructureDelta {
@@ -201,10 +281,9 @@ fn structural_ids(
     old: &[&Node],
     new_doc: &XmlDoc,
     new: &[(usize, Kind)],
-    change: &TableRemap,
+    change: &NodeRemap,
 ) -> Result<(Vec<String>, Vec<String>, Vec<String>)> {
     let inv = |m: String| EngineError::new(Code::StateInvariantError, Stage::Commit, m);
-    let creatable = |k: Kind| matches!(k, Kind::Cell | Kind::Paragraph);
     let mut expected: HashMap<Vec<usize>, (Kind, &str)> = HashMap::new();
     let mut removed = Vec::new();
     for n in old {
@@ -219,7 +298,7 @@ fn structural_ids(
                 }
             }
             None => {
-                if !change.contains(&path) || !creatable(n.kind) {
+                if !change.contains(&path) || !change.creates(n.kind) {
                     return Err(inv(format!(
                         "structure change removes {} {} outside its declared scope",
                         n.kind.as_str(),
@@ -244,7 +323,7 @@ fn structural_ids(
                 )))
             }
             None => {
-                if !change.contains(&path) || !creatable(k) {
+                if !change.contains(&path) || !change.creates(k) {
                     return Err(inv(format!(
                         "undeclared new {} element at {:?}",
                         k.as_str(),
@@ -518,6 +597,19 @@ impl Document {
         stale_layout: Vec<String>,
         change: &TableRemap,
     ) -> Result<(Document, StructureDelta)> {
+        self.rebuild_node_structure(state, stale_layout, &NodeRemap::Table(change.clone()))
+    }
+
+    /// Commit gate for declared node-set changes (0.3 tables, 0.4 paragraph
+    /// sequences): every node outside the declaration keeps its id and stable
+    /// path, and only the declared kinds may appear or disappear inside the
+    /// declared scope (docs/decisions/document-paragraph-creation-design.md §3).
+    pub fn rebuild_node_structure(
+        &self,
+        state: PackageState,
+        stale_layout: Vec<String>,
+        change: &NodeRemap,
+    ) -> Result<(Document, StructureDelta)> {
         let (d, delta) = self.rebuild_inner(state, stale_layout, Some(change))?;
         Ok((d, delta.unwrap_or_default()))
     }
@@ -526,7 +618,7 @@ impl Document {
         &self,
         state: PackageState,
         stale_layout: Vec<String>,
-        change: Option<&TableRemap>,
+        change: Option<&NodeRemap>,
     ) -> Result<(Document, Option<StructureDelta>)> {
         let inv = |m: String| EngineError::new(Code::StateInvariantError, Stage::Commit, m);
         let (info, xml) = hae_package::analyze_cached(
@@ -540,10 +632,10 @@ impl Document {
             return Err(inv("section list changed".into()));
         }
         if let Some(c) = change {
-            if !info.sections.contains(&c.entry) {
+            if !info.sections.contains(&c.entry().to_string()) {
                 return Err(inv(format!(
                     "structure change names unknown entry {}",
-                    c.entry
+                    c.entry()
                 )));
             }
         }
@@ -552,7 +644,7 @@ impl Document {
         for s in &info.sections {
             let old: Vec<&Node> = self.nodes.iter().filter(|n| &n.entry == s).collect();
             let new = identity_elements(&xml[s]);
-            match change.filter(|c| &c.entry == s) {
+            match change.filter(|c| c.entry() == s) {
                 None => {
                     if old.len() != new.len()
                         || old.iter().zip(&new).any(|(o, (_, kn))| o.kind != *kn)
@@ -584,7 +676,7 @@ impl Document {
         )?;
         // Identity ancestry/order is unchanged modulo text-carrier insertion and
         // splitting. The declared entry was already compared path by path.
-        let skip = change.map(|c| c.entry.as_str());
+        let skip = change.map(|c| c.entry().to_string());
         if skip.is_none() {
             for (a, b) in self.nodes.iter().zip(&d.nodes) {
                 if stable_path(&self.xml[&a.entry], a.el) != stable_path(&d.xml[&b.entry], b.el) {
@@ -594,7 +686,11 @@ impl Document {
         } else {
             let new_by_id: HashMap<&str, &Node> =
                 d.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
-            for a in self.nodes.iter().filter(|n| Some(n.entry.as_str()) != skip) {
+            for a in self
+                .nodes
+                .iter()
+                .filter(|n| Some(n.entry.as_str()) != skip.as_deref())
+            {
                 let b = new_by_id
                     .get(a.id.as_str())
                     .ok_or_else(|| inv(format!("node {} vanished", a.id)))?;

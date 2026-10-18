@@ -33,6 +33,7 @@
 //! extraction, since its producer's serialization is not known.
 mod char_format;
 mod contract;
+mod create;
 mod equation;
 mod fields;
 mod fit;
@@ -40,13 +41,14 @@ mod form_fill;
 mod format;
 mod image;
 mod narrow;
+mod paragraph_structure;
 mod section;
 mod table;
 mod table_structure;
 mod text;
 
 pub use contract::{
-    Alignment, CellFormat, CellMargin, CharProps, EquationProps, FitMode, LineSpacing,
+    Alignment, CellFormat, CellMargin, CharProps, CreateSpec, EquationProps, FitMode, LineSpacing,
     LineSpacingKind, Margins, PageNumbering, PageSettings, VerifyOperation, VerifyReport,
     VerifyScope, Visibility,
 };
@@ -103,8 +105,22 @@ fn stable_at(doc: &XmlDoc, path: &[usize]) -> Result<usize> {
     })
 }
 type Anchors = BTreeMap<String, (usize, BTreeSet<Vec<usize>>)>;
-/// Path remappings made by earlier table-structure steps of this request list.
-pub(crate) type Remaps = Vec<(String, table_structure::Remap)>;
+
+/// A path remapping made by an earlier structure step of this request list.
+pub(crate) enum PathRemap {
+    Table(table_structure::Remap),
+    Paragraphs(paragraph_structure::Remap),
+}
+impl PathRemap {
+    fn map(&self, path: &[usize]) -> Option<Vec<usize>> {
+        match self {
+            Self::Table(r) => r.map(path),
+            Self::Paragraphs(r) => r.map(path),
+        }
+    }
+}
+/// Path remappings made by earlier structure steps of this request list.
+pub(crate) type Remaps = Vec<(String, PathRemap)>;
 /// Find the element a request addresses in the current expected `doc`: the
 /// address names the pre-request element, which earlier structure steps may
 /// have moved (or removed).
@@ -214,6 +230,15 @@ pub fn verify_candidate(
     })
 }
 
+/// Verify a brand-new document built for `spec` (`document.create`).
+///
+/// There is no pre-edit package: [`create::check`] derives every expected entry
+/// from the request and requires exact payload equality, a STORED `mimetype`
+/// first entry, the expected entry order and an analyzable package graph.
+pub fn verify_created(bytes: &[u8], spec: &CreateSpec, limits: &Limits) -> Result<VerifyReport> {
+    create::check(bytes, spec, limits)
+}
+
 /// As [`verify_candidate`], with the ZIP preservation contract as well.
 pub fn verify_archive(
     original: &Archive,
@@ -281,7 +306,9 @@ fn verify_inner(
     let mut material = false;
     let mut seen_images = BTreeSet::new();
     let mut remaps = Remaps::new();
-    let mut deleted_text = false;
+    // Body text appeared or vanished without a PrvText line that could be
+    // edited in place: PrvText is reported stale.
+    let mut untracked_text = false;
     for op in requests {
         if let VerifyOperation::ParagraphSetStyle { targets, style_id } = op {
             if targets.is_empty() {
@@ -422,8 +449,44 @@ fn verify_inner(
                 {
                     anchor(&mut anchors, entry, &new_doc, p)?;
                 }
-                deleted_text |= outcome.text_deleted;
-                remaps.push((entry.to_string(), outcome.remap));
+                untracked_text |= outcome.text_deleted;
+                remaps.push((entry.to_string(), PathRemap::Table(outcome.remap)));
+                material = true;
+            }
+            VerifyOperation::ParagraphInsert { .. } | VerifyOperation::ParagraphDelete { .. } => {
+                let outcome = paragraph_structure::check(&mut expected, entry, &doc, target, op)?;
+                match &outcome.inside_table {
+                    None => {
+                        // The paragraph flow of this section changed: the cache
+                        // of every top-level paragraph from the target's
+                        // ordinal to the section end is removed (design §5.4).
+                        anchor(&mut anchors, entry, &doc, target)?;
+                    }
+                    Some(table) => {
+                        // A cell paragraph can change the cell's height: the
+                        // table is re-anchored exactly like a table structure
+                        // edit, and earlier anchors below it are void.
+                        if let Some(slot) = anchors.get_mut(entry) {
+                            let n = table.len();
+                            slot.1.retain(|p| !(p.len() > n && p[..n] == table[..]));
+                        }
+                        let new_doc = parse(&expected, entry, limits)?;
+                        let new_table = stable_at(&new_doc, table)?;
+                        let carrier = new_doc
+                            .ancestors(new_table)
+                            .find(|&i| hp(new_doc.el(i), "p"))
+                            .ok_or_else(|| unsupported("table has no paragraph carrier"))?;
+                        anchor(&mut anchors, entry, &new_doc, carrier)?;
+                        for p in new_doc
+                            .descendants(new_table)
+                            .filter(|&i| hp(new_doc.el(i), "p"))
+                        {
+                            anchor(&mut anchors, entry, &new_doc, p)?;
+                        }
+                    }
+                }
+                untracked_text |= outcome.text_changed;
+                remaps.push((entry.to_string(), PathRemap::Paragraphs(outcome.remap)));
                 material = true;
             }
             VerifyOperation::EquationSetScript { script, .. } => {
@@ -693,7 +756,7 @@ fn verify_inner(
                     }
                 }
                 expected.set(name, Arc::from(updated.into_bytes()));
-                report.prv_text_stale |= deleted_text;
+                report.prv_text_stale |= untracked_text;
             }
             Err(_) => report.prv_text_stale = material,
         }

@@ -353,6 +353,23 @@ impl IoRoots {
     /// its path and `(dev, ino)` as protected against subsequent writes.
     pub fn read_input(&self, path: impl AsRef<Path>) -> Result<InputFile> {
         let a = self.resolve_input(path.as_ref(), Stage::Open)?;
+        self.finish_input(a)
+    }
+
+    /// Read an HWPX from the input root, or from the output root when the file
+    /// was published there (for example by `document.create`). The input root
+    /// is preferred so a created file can never shadow an input file; the
+    /// chosen root's own checks (missing file, symlink, hard link) still decide
+    /// the error.
+    pub fn read_input_or_output(&self, path: impl AsRef<Path>) -> Result<InputFile> {
+        let a = match self.resolve_input(path.as_ref(), Stage::Open) {
+            Ok(a) => a,
+            Err(_) => self.resolve_output(path.as_ref(), Stage::Open)?,
+        };
+        self.finish_input(a)
+    }
+
+    fn finish_input(&self, a: AnchoredParent) -> Result<InputFile> {
         let (bytes, id) =
             Self::read_regular_nofollow(&a.dir, &a.name, self.limits.max_hwpx_bytes, Stage::Open)?;
         let sha256 = sha256_hex(&bytes);
@@ -933,7 +950,38 @@ impl IoRoots {
     where
         F: FnOnce(&[u8]) -> Result<()>,
     {
-        let a = self.resolve_output(path.as_ref(), Stage::Export)?;
+        let bytes = format::export_bytes(doc, &self.limits)?;
+        check_size(bytes.len(), self.limits.max_hwpx_bytes)?;
+        self.publish_new_file("export", path.as_ref(), &bytes, validate)
+    }
+
+    /// Publish caller-provided HWPX bytes as a new file under `output_root`
+    /// (`document.create`). Same root isolation, no-overwrite rule, temporary
+    /// file -> reread -> validate -> `RENAME_NOREPLACE` order as `export_hwpx`.
+    pub fn publish_new_hwpx<F>(
+        &self,
+        path: impl AsRef<Path>,
+        bytes: &[u8],
+        validate: F,
+    ) -> Result<SaveReceipt>
+    where
+        F: FnOnce(&[u8]) -> Result<()>,
+    {
+        check_size(bytes.len(), self.limits.max_hwpx_bytes)?;
+        self.publish_new_file("created document", path.as_ref(), bytes, validate)
+    }
+
+    fn publish_new_file<F>(
+        &self,
+        what: &str,
+        path: &Path,
+        bytes: &[u8],
+        validate: F,
+    ) -> Result<SaveReceipt>
+    where
+        F: FnOnce(&[u8]) -> Result<()>,
+    {
+        let a = self.resolve_output(path, Stage::Export)?;
         let existing_stat = statat(&a.dir, a.name.as_str(), AtFlags::SYMLINK_NOFOLLOW).ok();
         self.check_not_protected(
             &a.canonical,
@@ -944,14 +992,12 @@ impl IoRoots {
             return Err(EngineError::new(
                 Code::TargetExists,
                 Stage::Export,
-                "export target already exists",
+                format!("{what} target already exists"),
             ));
         }
 
-        let bytes = format::export_bytes(doc, &self.limits)?;
-        check_size(bytes.len(), self.limits.max_hwpx_bytes)?;
-        let sha256 = sha256_hex(&bytes);
-        let (tmp_name, tmp_fd) = self.write_temp_file(&a.dir, &a.name, &bytes, Stage::Export)?;
+        let sha256 = sha256_hex(bytes);
+        let (tmp_name, tmp_fd) = self.write_temp_file(&a.dir, &a.name, bytes, Stage::Export)?;
 
         let pre_publish = (|| -> Result<()> {
             let (reread, _) = Self::read_regular_nofollow(
@@ -990,7 +1036,7 @@ impl IoRoots {
                     EngineError::new(
                         Code::TargetExists,
                         Stage::Export,
-                        "export target created concurrently",
+                        format!("{what} target created concurrently"),
                     )
                 } else {
                     io_err(Stage::Export, format!("renameat_with export: {e}"))
@@ -1013,8 +1059,12 @@ impl IoRoots {
             return Err(EngineError::new(
                 Code::SaveDurabilityUncertain,
                 Stage::Export,
-                format!("export published but parent directory fsync failed: {e}"),
-            ));
+                format!("{what} published but parent directory fsync failed: {e}"),
+            )
+            .with_detail(serde_json::json!({
+                "path": a.canonical,
+                "sha256": sha256,
+            })));
         }
 
         Ok(SaveReceipt {

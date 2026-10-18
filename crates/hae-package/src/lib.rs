@@ -4,6 +4,7 @@
 //! [`analyze`] validates the package graph and parses every XML entry once
 //! (spec §4, §11). [`zip_plan`] turns a state back into a raw-copy write plan.
 
+pub mod create;
 use hae_diag::{EngineError, Limits, PackageRejectReason as R, Result};
 use hae_xml::{ParseOptions, XmlDoc};
 use hae_zip::{Archive, OutEntry};

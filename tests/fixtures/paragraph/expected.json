@@ -1,0 +1,68 @@
+{
+  "entry": "Contents/section0.xml",
+  "layoutCache": {
+    "cellFirst": 1,
+    "first": 1,
+    "second": 1,
+    "third": 0
+  },
+  "paragraphs": [
+    "첫 문단",
+    "둘째 문단",
+    "셋째 문단",
+    "￼",
+    "표 셀",
+    "￼",
+    "￼",
+    "한 문단 셀",
+    "셀 문단 1",
+    "셀 문단 2"
+  ],
+  "prvText": "첫 문단\n둘째 문단",
+  "roles": {
+    "cellTableCarrier": {
+      "text": "￼",
+      "topLevel": 5
+    },
+    "first": {
+      "ownsSectionProperties": true,
+      "text": "첫 문단",
+      "topLevel": 0
+    },
+    "multiParagraphCell": {
+      "texts": [
+        "셀 문단 1",
+        "셀 문단 2"
+      ]
+    },
+    "pictureCarrier": {
+      "text": "￼",
+      "topLevel": 4
+    },
+    "second": {
+      "charPrIDRef": "1",
+      "paraPrIDRef": "1",
+      "text": "둘째 문단",
+      "topLevel": 1
+    },
+    "singleParagraphCell": {
+      "text": "한 문단 셀"
+    },
+    "tableCarrier": {
+      "text": "￼",
+      "topLevel": 3
+    },
+    "third": {
+      "text": "셋째 문단",
+      "topLevel": 2
+    }
+  },
+  "topLevel": [
+    "첫 문단",
+    "둘째 문단",
+    "셋째 문단",
+    "￼",
+    "표 셀",
+    "￼"
+  ]
+}
