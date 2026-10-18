@@ -204,7 +204,7 @@ fn total(values: &[u32]) -> Result<u32> {
         .iter()
         .try_fold(0u32, |a, &v| a.checked_add(v))
         .ok_or_else(|| bad("table dimension overflow"))?;
-    if sum > i32::MAX as u32 || values.iter().any(|&v| v == 0) {
+    if sum > i32::MAX as u32 || values.contains(&0) {
         return Err(bad(
             "dimensions must be positive signed HWPUNIT integers; sum <= 2147483647",
         ));
