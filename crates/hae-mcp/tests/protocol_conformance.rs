@@ -313,7 +313,7 @@ fn modern_requests_negotiate_per_request_and_require_explicit_document_handles()
         .contains(&json!("documentId")));
     assert_eq!(
         r["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["version"],
-        "0.2.0"
+        env!("CARGO_PKG_VERSION")
     );
     let r = c.rpc("tools/list", json!({"_meta":meta("1900-01-01")}));
     assert_eq!(r["error"]["code"], -32022);
@@ -417,7 +417,7 @@ fn doctor_checks_dependencies_and_roots_without_starting_stdio() {
         .output()
         .unwrap();
     let report: Value = serde_json::from_slice(&r.stdout).unwrap();
-    assert_eq!(report["version"], "0.2.0");
+    assert_eq!(report["version"], env!("CARGO_PKG_VERSION"));
     for key in [
         "rhwp",
         "raster",

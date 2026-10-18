@@ -28,6 +28,12 @@ pub enum CommandCategory {
     Preview,
 }
 
+/// Version of the command-descriptor contract (`command.list`/`command.describe`).
+/// It is deliberately independent of the engine package version: bump it only when
+/// the descriptor shape or its compatibility rules change (see docs/decisions/versioning.md).
+/// 0.3.0 adds the `annotations` hints to the 0.2.0 shape; the field set is otherwise additive.
+pub const REGISTRY_SCHEMA_VERSION: &str = "0.3.0";
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandDescriptor {
@@ -1115,6 +1121,16 @@ mod schema_tests {
     use serde_json::json;
 
     #[test]
+    fn descriptor_schema_version_is_the_registry_contract_not_the_package_version() {
+        assert_eq!(REGISTRY_SCHEMA_VERSION, "0.3.0");
+        let list = command_list();
+        assert_eq!(list.len(), 57);
+        assert!(list
+            .iter()
+            .all(|d| d.schema_version == REGISTRY_SCHEMA_VERSION));
+    }
+
+    #[test]
     fn all_tool_annotations_match_behavior_audit() {
         // (readOnly, destructive, idempotent, openWorld), audited against
         // session dispatch, snapshot lifetime, and file publication behavior.
@@ -1256,7 +1272,7 @@ macro_rules! define_commands {
             vec![
                 $(
                     CommandDescriptor {
-                        schema_version: "0.2.0",
+                        schema_version: REGISTRY_SCHEMA_VERSION,
                         name: $name,
                         cli_name: $cli,
                         mcp_tool_name: $mcp,

@@ -701,3 +701,17 @@ fn annotation_query_cli_aliases_resolve_and_preserve_export_bytes() {
         );
     }
 }
+
+#[test]
+fn version_flag_reports_the_workspace_package_version() {
+    let out = Command::new(HAE)
+        .arg("--version")
+        .output()
+        .expect("run hae");
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        format!("hae {}", env!("CARGO_PKG_VERSION"))
+    );
+    assert_eq!(env!("CARGO_PKG_VERSION"), "0.3.0");
+}
