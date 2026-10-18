@@ -1,0 +1,163 @@
+    Checking hae-hwp5 v0.2.0 (/tmp/opencode/wt-hwp5/crates/hae-hwp5)
+    Checking hae-exec v0.2.0 (/tmp/opencode/wt-hwp5/crates/hae-exec)
+    Checking hae-jsonl v0.2.0 (/tmp/opencode/wt-hwp5/crates/hae-jsonl)
+    Checking hae-cli v0.2.0 (/tmp/opencode/wt-hwp5/crates/hae-cli)
+    Checking hae-mcp v0.2.0 (/tmp/opencode/wt-hwp5/crates/hae-mcp)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.31s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.14s
+.................................
+----------------------------------------------------------------------
+Ran 33 tests in 0.014s
+
+OK
+   Compiling hae-hwp5 v0.2.0 (/tmp/opencode/wt-hwp5/crates/hae-hwp5)
+   Compiling hae-exec v0.2.0 (/tmp/opencode/wt-hwp5/crates/hae-exec)
+   Compiling hae-jsonl v0.2.0 (/tmp/opencode/wt-hwp5/crates/hae-jsonl)
+   Compiling hae-mcp v0.2.0 (/tmp/opencode/wt-hwp5/crates/hae-mcp)
+   Compiling hae-cli v0.2.0 (/tmp/opencode/wt-hwp5/crates/hae-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.68s
+     Running unittests src/main.rs (/home/mattc/.cache/hae-hwp5-ds2/debug/deps/hae-b52e5e5442bbba14)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cli.rs (/home/mattc/.cache/hae-hwp5-ds2/debug/deps/cli-ea3caf31f0a4d5de)
+
+running 8 tests
+test script_rejects_unregistered_commands_before_running_anything ... ok
+test one_shot_history_commands_are_rejected_with_session_required ... ok
+test one_shot_run_accepts_cli_aliases_as_canonical_names ... ok
+test script_accepts_newline_delimited_json_from_stdin ... ok
+test resource_query_cli_aliases_preserve_export_bytes ... ok
+test one_shot_introspection_commands_return_json ... ok
+test script_runs_representative_stage1_scenario_end_to_end ... ok
+test script_edits_section_page_settings_on_a_real_package ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.89s
+
+     Running tests/renderer_env.rs (/home/mattc/.cache/hae-hwp5-ds2/debug/deps/renderer_env-04a8fb51a583ff36)
+
+running 2 tests
+test preview_without_hae_rhwp_reports_renderer_not_configured ... ok
+test preview_renders_page_one_when_hae_rhwp_is_set ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.97s
+
+     Running unittests src/lib.rs (/home/mattc/.cache/hae-hwp5-ds2/debug/deps/hae_diag-936e6e973cfe605f)
+
+running 7 tests
+test tests::budget ... ok
+test tests::diagnostic_json_shape ... ok
+test tests::limits_default ... ok
+test tests::warnings_and_sections ... ok
+test tests::codes_match_doc_and_roundtrip ... ok
+test tests::error_display_and_rejected ... ok
+test tests::reasons_roundtrip ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/mattc/.cache/hae-hwp5-ds2/debug/deps/hae_edit-5b7838f068a82808)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/char_format.rs (/home/mattc/.cache/hae-hwp5-ds2/debug/deps/char_format-5ea57dc2066e0b01)
+
+running 9 tests
+test char_format_rejects_invalid_props_and_empty_reversed_outside_ranges ... ok
+test char_format_graphemes_across_runs_and_entity_spellings_survive ... ok
+test char_format_untouched_zip_entries_keep_raw_compressed_bytes ... ok
+test char_format_preserve_keeps_tab_and_its_old_run_shape ... ok
+test char_format_reuses_existing_shape_and_splits_before_inside_after ... ok
+test char_format_false_restores_base_reference_without_new_resource ... ok
+test char_format_creates_one_shape_and_updates_count ... ok
+test char_format_rejects_cdata_and_comment_crossings_in_both_modes ... ok
+test char_format_preserve_retains_equation_node_ids_and_fields_fail ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/editing_fixtures.rs (/home/mattc/.cache/hae-hwp5-ds2/debug/deps/editing_fixtures-77bdc02759bd213b)
+
+running 1 test
+test editing_expected_json_all_17_cases_and_8_inputs_match_engine ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running tests/equations.rs (/home/mattc/.cache/hae-hwp5-ds2/debug/deps/equations-db2f282b849a999f)
+
+running 4 tests
+test equation_properties_add_missing_attributes_and_escape_both_quotes ... ok
+test equation_edit_expands_existing_selfclosing_script_without_new_model_nodes ... ok
+test equation_properties_on_empty_equation_do_not_create_a_script ... ok
+test equation_edit_rejects_cdata_comments_nested_and_duplicate_script_carriers ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/image.rs (/home/mattc/.cache/hae-hwp5-ds2/debug/deps/image-d242d69093351f70)
+
+running 13 tests
+test rejects_mpo_even_when_primary_picture_decodes ... ok
+test rejects_missing_jpeg_entropy_even_with_terminal_eoi ... ok
+test rejects_apng_even_when_it_has_only_one_frame ... ok
+test rejects_unsupported_truncated_corrupt_and_multiple_images ... ok
+test validates_png_ancillary_crc_instead_of_silently_ignoring_corruption ... ok
+test validates_png_adler32_even_when_chunk_crc_is_valid ... ok
+test rejects_huge_headers_before_trying_to_decode ... ok
+test validates_and_freezes_original_png_and_jpeg ... ok
+test identical_image_is_noop_and_editability_still_checked_first ... ok
+test empty_native_effects_is_editable_and_replacement_updates_media_geometry ... ok
+test repeated_replacements_use_distinct_items_and_recheck_candidate_limits ... ok
+test replaces_only_target_reference_and_appends_media_preserving_shared_old_bytes ... ok
+test rejects_crop_effect_and_missing_target_without_changing_original ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/text_format.rs (/home/mattc/.cache/hae-hwp5-ds2/debug/deps/text_format-bfbc824aed5ee078)
+
+running 13 tests
+test readonly_and_locked_nodes_disable_every_advertised_edit ... ok
+test empty_cell_with_unknown_text_attribute_is_rejected ... ok
+test split_run_range_keeps_unselected_bytes_and_first_shape ... ok
+test invalid_second_batch_step_preserves_original_document ... ok
+test object_only_paragraph_can_format_and_insert_at_control_boundaries ... ok
+test cache_policy_clears_only_edited_tail_and_preserves_node_ids ... ok
+test format_clone_preserves_unknown_header_data_and_other_paragraph ... ok
+test outline_capabilities_describe_existing_text_and_cell_boundaries ... ok
+test cdata_text_can_be_partially_replaced_without_losing_neighbors ... ok
+test unsupported_text_attributes_and_grapheme_edges_are_not_advertised ... ok
+test spans_are_bounded_and_diagnostics_use_the_same_bound ... ok
+test cell_capability_accounts_for_its_entire_content_and_empty_insertion_path ... ok
+test every_advertised_grapheme_subrange_is_supported_by_planner ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running unittests src/lib.rs (/home/mattc/.cache/hae-hwp5-ds2/debug/deps/hae_exec-b07009bfb700c0d2)
+
+running 15 tests
+test preview::tests::base64_matches_rfc4648_vectors ... ok
+test registry::schema_tests::generated_integer_schemas_express_rust_bounds_with_standard_keywords ... ok
+test preview::contract_tests::snapshot_budget_is_checked_before_starting_a_renderer ... ok
+test preview::contract_tests::png_only_failure_is_not_reported_as_rendered ... ok
+test preview::contract_tests::escaped_svg_is_sized_as_json_before_being_inlined ... ok
+test registry::schema_tests::all_tool_annotations_match_behavior_audit ... ok
+test tests::query_result_schemas_describe_real_outlines_and_capabilities ... ok
+test tests::default_inspect_page_with_many_spans_stays_under_response_budget ... ok
+test preview::contract_tests::oversized_svg_is_delivered_as_an_exact_output_root_artifact ... ok
+test tests::envelope_writer_sequence_replay_conflict_and_ordering_rules ... ok
+test registry::char_format_tests::text_format_dry_run_undo_redo_and_batch_use_the_session_gate ... ok
+test tests::full_scenario_batch_dry_run_undo_redo_frozen_image_and_project_roundtrip ... ok
+test tests::retained_verification_logs_are_counted_in_the_session_budget ... ok
+test tests::registry_lists_all_commands_and_rejects_unknown_commands_or_fields ... ok
+test tests::history_100_unit_eviction_clear_and_snapshot_release_and_memory_budget ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.77s
+
+     Running tests/editable_documents.rs (/home/mattc/.cache/hae-hwp5-ds2/debug/deps/editable_documents-89250f3c5887fb8d)
+
+running 3 tests
+test v02_retry_24_recorded_stage4_rejections_and_undo_exactly ... ok
+test local_documents_advertised_spans_match_real_dry_runs has been running for over 60 seconds
+test v02_all_local_control_paragraphs_empty_paragraphs_and_complex_cells_undo_exactly has been running for over 60 seconds
+test v02_all_local_control_paragraphs_empty_paragraphs_and_complex_cells_undo_exactly ... ok

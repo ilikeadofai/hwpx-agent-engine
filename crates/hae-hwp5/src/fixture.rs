@@ -1,4 +1,4 @@
-//! Deterministic synthetic HWP5 containers for tests (feature `fixture`).
+//! Deterministic synthetic HWP5 containers for tests.
 //!
 //! The builder writes the smallest faithful MS-CFB layout the reader claims to
 //! support: 512-byte sectors, 64-byte mini sectors, a mini stream + mini FAT for

@@ -540,8 +540,8 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 
 | 코드 | 쉬운 설명 및 해결 방법 |
 |---|---|
-| `PACKAGE_REJECTED` | **문서 열기 거절**: 암호가 걸려 있는 문서(`encrypted`)이거나 손상된 파일, 비정상 ZIP/XML 구조일 때 발생합니다. 한컴오피스에서 암호를 해제하고 표준 `.hwpx`로 저장한 뒤 다시 열어 주세요. |
-| `RESOURCE_LIMIT` | **용량·크기 한도 초과**: `text_replace_all`의 바꿀 일치 수가 `maxMatches`를 넘을 때도 이 코드로 거절합니다. 파일 크기(기본 HWPX 32 MiB, 프로젝트 96 MiB), 압축 해제 크기(128 MiB), 그림 화소 수(4,096만 화소), 세션 메모리(512 MiB), 단일 요청(1 MiB)·응답(4 MiB) 등의 안전 한도를 넘었을 때 발생합니다. |
+| `PACKAGE_REJECTED` | **문서 열기 거절**: 암호가 걸려 있는 문서(`encrypted`)이거나 손상된 파일, 비정상 ZIP/XML 구조일 때 발생합니다. 한컴오피스에서 암호를 해제하고 표준 `.hwpx`로 저장한 뒤 다시 열어 주세요. 구형 `.hwp`(HWP5) 조회(`hwp5.inspect`)도 이 코드를 쓰며 reason은 `malformed_compound_file`·`missing_component`·`malformed_record_stream`·`distribution_unsupported`·`encrypted`입니다(아래 「구형 .hwp(HWP5) 읽기 전용 조회」). |
+| `RESOURCE_LIMIT` | **용량·크기 한도 초과**: `text_replace_all`의 바꿀 일치 수가 `maxMatches`를 넘을 때도 이 코드로 거절합니다. 파일 크기(기본 HWPX 32 MiB, 프로젝트 96 MiB), 압축 해제 크기(128 MiB), 그림 화소 수(4,096만 화소), 세션 메모리(512 MiB), 단일 요청(1 MiB)·응답(4 MiB) 등의 안전 한도를 넘었을 때 발생합니다. `hwp5.inspect`는 여기에 더해 컨테이너 항목 수(`max_entries`)와 문단 수(`max_hwp5_paragraphs`, 기본 1,000,000) 한도를 씁니다. |
 | `STATE_INVARIANT_ERROR` | **내부 상태 검증 오류**: 편집을 확정하기 직전 내부 데이터와 색인의 일관성이 맞지 않아 엔진이 변경을 취소했습니다. 원본 문서는 그대로 보존됩니다. |
 | `PROJECT_INTEGRITY_ERROR` | **프로젝트 파일 손상**: `.hwpwork` 프로젝트 파일의 무결성(해시·구조) 검사가 실패했습니다. 임의로 수정되었거나 손상된 프로젝트 파일은 열 수 없습니다. |
 | `PROJECT_LOCKED` | **프로젝트 잠김**: 같은 `.hwpwork` 프로젝트를 다른 프로그램이나 세션이 이미 열어 작업 중입니다. 이전 세션을 닫은(`document_close`) 뒤 다시 시도하세요. |
@@ -943,4 +943,4 @@ external은 null로 남기되 ZIP payload가 있으면 해시는 제공합니다
 - 거절 사유: 암호·DRM 문서는 `PACKAGE_REJECTED(encrypted)`, 배포용 문서는 `PACKAGE_REJECTED(distribution_unsupported)`, 필수 요소(FileHeader/BodyText)가 없으면 `missing_component`, 컨테이너 손상은 `malformed_compound_file`, 압축·레코드 손상은 `malformed_record_stream`입니다. 한도 초과는 `RESOURCE_LIMIT`입니다(해제 누적 `max_inflate_total`, 컨테이너 항목 `max_entries`, 문단 수 `max_hwp5_paragraphs` 기본 1,000,000, 입력 파일 크기는 다른 입력과 같은 `max_hwpx_bytes`).
 - 지원하지 않는 것: 쓰기·변환 저장, 암호 문서, 배포용 문서, HWP 3.x, DocInfo의 폰트·스타일 해석과 표·컨트롤 구조 해석(구역 수는 DocInfo가 아니라 컨테이너의 `BodyText/SectionN` 열거로 셉니다), 수식·그림·글자겹침의 내용 추출.
 
-검증 범위: 합성 CFB 컨테이너 시험 22개(`crates/hae-hwp5/tests/hwp5.rs`)와 명령 시험 5개(`crates/hae-exec/tests/hwp5.rs`)가 `scripts/check.sh`에 포함됩니다. 실물은 공개 표본 44개 중 43개를 읽었고 배포용 1개는 위 사유로 거절했으며, `rhwp` `export-text`와 대조한 42개 중 30개가 공백 제거 후 문자 단위로 일치했습니다(나머지 차이는 자동 번호·수식·글자겹침·숨은 설명·조판 순서 등 조판 시 만들어지는 값입니다). **Windows 한컴오피스에서의 열기·조판 대조는 하지 않았습니다.** 형식 근거와 확인/미확인 구분은 `docs/decisions/hwp5-format-notes.md`에 있습니다.
+검증 범위: 합성 CFB 컨테이너 시험 23개(`crates/hae-hwp5/tests/hwp5.rs`)와 명령 시험 5개(`crates/hae-exec/tests/hwp5.rs`)가 `scripts/check.sh`에 포함됩니다. 실물은 공개 표본 44개 중 43개를 읽었고 배포용 1개는 위 사유로 거절했으며(입력 44개 모두 실행 전후 SHA-256 동일), 독립 구현 `rhwp` `export-text`와 대조한 42개 중 비교 가능한 39개 가운데 27개가 공백 제거 후 문자 단위로 일치했습니다(나머지 12개는 자동 번호·수식·글자겹침·숨은 설명·캡션 자동 번호·조판 순서 등 조판 시 만들어지는 값 때문이고, 미리보기 1000자 상한을 넘는 3개는 문자 비교 불가). Linux 한컴 2020 Beta로 실물 표본 4개를 열어 모두 로드됐고(PASS) 그중 2개는 화면 텍스트까지 대조했지만, **Windows 한컴오피스에서의 열기·조판 대조는 하지 않았습니다.** 형식 근거와 확인/미확인 구분은 `docs/decisions/hwp5-format-notes.md`에 있습니다.

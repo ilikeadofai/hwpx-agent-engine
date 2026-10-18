@@ -135,6 +135,20 @@ fn damaged_fat_is_refused() {
 }
 
 #[test]
+fn impossible_difat_count_is_refused() {
+    let mut doc = document(vec![[para("DIFAT")].concat()], 0);
+    // The header claims ~4 billion DIFAT sectors; they cannot fit a small file.
+    doc[0x44..0x48].copy_from_slice(&0u32.to_le_bytes());
+    doc[0x48..0x4C].copy_from_slice(&u32::MAX.to_le_bytes());
+    let err = inspect(&doc, &Limits::default(), &options(120)).unwrap_err();
+    assert_eq!(err.code(), Code::PackageRejected);
+    assert_eq!(
+        reason(&err),
+        PackageRejectReason::MalformedCompoundFile.as_str()
+    );
+}
+
+#[test]
 fn compressed_stream_is_inflated_and_trailing_trailer_is_ignored() {
     let section = [para("deflate 본문")].concat();
     let mut stored = fixture::deflate(&section);

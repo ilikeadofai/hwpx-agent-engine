@@ -139,6 +139,14 @@ impl<'a> CompoundFile<'a> {
         {
             return Err(bad(format!("{num_fat} FAT sectors do not fit the file")));
         }
+        if num_difat
+            .checked_mul(sector_size)
+            .is_none_or(|bytes| bytes > data.len())
+        {
+            return Err(bad(format!(
+                "{num_difat} DIFAT sectors do not fit the file"
+            )));
+        }
 
         let fat_ids = collect_fat_sectors(
             data,
