@@ -285,3 +285,53 @@ fn optional_document_id_never_redirects_an_edit_to_the_open_document() {
     assert_eq!(applied["result"]["afterVersion"], 1);
     assert_eq!(mcp.finish().0, 0);
 }
+
+/// The two read-only list tools reach the executor through the MCP adapter:
+/// tool names, paging (`cursor`), and `scope` arguments survive the envelope.
+#[test]
+fn link_and_trackchange_list_tools_page_and_scop() {
+    let t = TempDir::new("list-tools");
+    let path = t.with_corpus("research-school-plan-reference.hwpx");
+    let mut mcp = McpClient::start(t.path());
+    let (open, is_error) = mcp.call_tool("document_open", json!({ "path": path }));
+    assert!(!is_error, "{open}");
+    let doc = open["result"]["documentId"].as_str().unwrap().to_string();
+
+    let (page, is_error) = mcp.call_tool("link_list", json!({ "documentId": doc, "limit": 2 }));
+    assert!(!is_error, "{page}");
+    assert_eq!(page["result"]["total"], 3);
+    assert_eq!(page["result"]["nextCursor"], "0:2");
+    assert_eq!(page["result"]["links"].as_array().unwrap().len(), 2);
+    let (second, is_error) =
+        mcp.call_tool("link_list", json!({ "documentId": doc, "cursor": "0:2" }));
+    assert!(!is_error, "{second}");
+    assert_eq!(second["result"]["links"].as_array().unwrap().len(), 1);
+
+    // The corpus paragraph holding the first link has exactly that one link;
+    // the next paragraph holds two, so scope is a real filter here.
+    let node = page["result"]["links"][0]["nodeId"].as_str().unwrap();
+    let (scoped, is_error) =
+        mcp.call_tool("link_list", json!({ "documentId": doc, "scope": node }));
+    assert!(!is_error, "{scoped}");
+    assert_eq!(scoped["result"]["total"], 1);
+    let second_node = page["result"]["links"][1]["nodeId"].as_str().unwrap();
+    let (two, is_error) = mcp.call_tool(
+        "link_list",
+        json!({ "documentId": doc, "scope": second_node }),
+    );
+    assert!(!is_error, "{two}");
+    assert_eq!(two["result"]["total"], 2);
+    let (bad_scope, is_error) = mcp.call_tool(
+        "link_list",
+        json!({ "documentId": doc, "scope": "n-missing" }),
+    );
+    assert!(is_error);
+    assert_eq!(first_code(&bad_scope), "TARGET_NOT_FOUND");
+
+    let (marks, is_error) = mcp.call_tool("trackchange_list", json!({ "documentId": doc }));
+    assert!(!is_error, "{marks}");
+    assert_eq!(marks["result"]["hasTrackChanges"], false);
+    assert_eq!(marks["result"]["markCount"], 0);
+    assert_eq!(marks["result"]["marks"], json!([]));
+    assert_eq!(mcp.finish().0, 0);
+}

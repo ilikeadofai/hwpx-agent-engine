@@ -6,8 +6,10 @@
 //! commit gate: an edit may change payloads but never the sequence of
 //! identity-bearing elements of an entry (0.1 adds or removes no body nodes).
 
+pub mod links;
 pub mod para;
 pub mod query;
+pub mod trackchange;
 
 use hae_diag::{Code, EngineError, Limits, Result, Stage};
 use hae_package::{PackageInfo, PackageState, XmlMap, NS_HC, NS_HH, NS_HP, NS_HP10, NS_HS};

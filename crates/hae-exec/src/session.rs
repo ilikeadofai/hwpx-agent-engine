@@ -4,9 +4,10 @@
 use crate::registry::{
     command_describe, command_list, BatchStepParam, CellSetTextParams, CommandBatchParams,
     CommandDescriptor, DocumentDiffParams, DocumentExportParams, DocumentOpenParams,
-    DocumentPreviewParams, ImageReplaceParams, LineSpacingParam, ParagraphFormatParams,
-    ParsedCommand, ProjectSaveParams, SnapshotCreateParams, SnapshotReleaseParams,
-    TextFormatParams, TextReplaceAllParams, TextReplaceParams,
+    DocumentPreviewParams, ImageReplaceParams, LineSpacingParam, LinkListParams,
+    ParagraphFormatParams, ParsedCommand, ProjectSaveParams, SnapshotCreateParams,
+    SnapshotReleaseParams, TextFormatParams, TextReplaceAllParams, TextReplaceParams,
+    TrackChangeListParams,
 };
 use hae_diag::{Code, Diagnostic, EngineError, Limits, Result, Stage};
 use hae_edit::{Alignment, Applied, EditOp, ImageBytes, LineSpacing};
@@ -819,6 +820,8 @@ impl SessionExecutor {
                     Vec::new(),
                 ))
             }
+            ParsedCommand::LinkList(p) => self.handle_link_list(req, &p),
+            ParsedCommand::TrackChangeList(p) => self.handle_track_change_list(req, &p),
             ParsedCommand::TextFormat(p) => self.handle_edit_steps(
                 req,
                 &[BatchStepParam {
@@ -1039,6 +1042,117 @@ impl SessionExecutor {
             }
         }
         (align, spacing)
+    }
+
+    /// Optional `expectedVersion` on a read-only query: it must match the
+    /// current revision when supplied, and never advances anything.
+    fn check_query_version(s: &OpenDocSession, req: &RequestEnvelope, command: &str) -> Result<()> {
+        if let Some(ev) = req.expected_version {
+            if ev != s.revision {
+                return Err(EngineError::new(
+                    Code::VersionConflict,
+                    Stage::Query,
+                    format!("expectedVersion mismatch on {command}"),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Parse the `revision:offset` cursor shared with `document.inspect`.
+    fn query_cursor(cursor: &Option<String>, revision: u64, command: &str) -> Result<usize> {
+        let Some(c) = cursor else {
+            return Ok(0);
+        };
+        let Some((rev, offset)) = c.split_once(':') else {
+            return Err(EngineError::new(
+                Code::InvalidRequest,
+                Stage::Query,
+                format!("invalid {command} cursor format"),
+            ));
+        };
+        let cursor_rev: u64 = rev.parse().map_err(|_| {
+            EngineError::new(
+                Code::InvalidRequest,
+                Stage::Query,
+                format!("invalid {command} cursor revision"),
+            )
+        })?;
+        if cursor_rev != revision {
+            return Err(EngineError::new(
+                Code::VersionConflict,
+                Stage::Query,
+                format!("{command} cursor belongs to revision {cursor_rev}, current is {revision}"),
+            ));
+        }
+        offset.parse::<usize>().map_err(|_| {
+            EngineError::new(
+                Code::InvalidRequest,
+                Stage::Query,
+                format!("invalid {command} cursor offset"),
+            )
+        })
+    }
+
+    /// `link.list`: read-only. The document, revision, and history are unchanged.
+    fn handle_link_list(
+        &mut self,
+        req: &RequestEnvelope,
+        p: &LinkListParams,
+    ) -> Result<(Value, Vec<Diagnostic>)> {
+        let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+        Self::check_query_version(s, req, "link.list")?;
+        let offset = Self::query_cursor(&p.cursor, s.revision, "link.list")?;
+        let limit = p.limit.unwrap_or(100).clamp(1, 500);
+        let links = s.current.doc.link_fields(p.scope.as_deref())?;
+        let total = links.len();
+        let start = offset.min(total);
+        let end = start.saturating_add(limit).min(total);
+        let next = (end < total).then(|| format!("{}:{end}", s.revision));
+        let page: Vec<_> = links.into_iter().skip(start).take(limit).collect();
+        Ok((
+            json!({
+                "documentId": s.current.doc.document_id,
+                "revision": s.revision,
+                "links": page,
+                "total": total,
+                "nextCursor": next,
+            }),
+            Vec::new(),
+        ))
+    }
+
+    /// `trackchange.list`: read-only. A track-change document stays locked
+    /// read-only; this view only reports the marks and the lock reasons.
+    fn handle_track_change_list(
+        &mut self,
+        req: &RequestEnvelope,
+        p: &TrackChangeListParams,
+    ) -> Result<(Value, Vec<Diagnostic>)> {
+        let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+        Self::check_query_version(s, req, "trackchange.list")?;
+        let offset = Self::query_cursor(&p.cursor, s.revision, "trackchange.list")?;
+        let limit = p.limit.unwrap_or(100).clamp(1, 500);
+        let report = s.current.doc.track_change_report(p.scope.as_deref())?;
+        let total = report.marks.len();
+        let start = offset.min(total);
+        let end = start.saturating_add(limit).min(total);
+        let next = (end < total).then(|| format!("{}:{end}", s.revision));
+        let marks: Vec<_> = report.marks.into_iter().skip(start).take(limit).collect();
+        Ok((
+            json!({
+                "documentId": s.current.doc.document_id,
+                "revision": s.revision,
+                "hasTrackChanges": report.has_track_changes,
+                "readonlyReasons": report.readonly_reasons,
+                "marks": marks,
+                "markCount": total,
+                "nextCursor": next,
+                "changes": report.changes,
+                "authors": report.authors,
+            }),
+            Vec::new(),
+        ))
     }
 
     fn handle_open(&mut self, p: &DocumentOpenParams) -> Result<(Value, Vec<Diagnostic>)> {

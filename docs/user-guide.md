@@ -21,9 +21,16 @@
 
 ### 하지 않는 것 및 한계 (0.2 제외 범위)
 - **전체 HWP/HWPX 기능 지원 아님**: 문단 추가·삭제·합치기·나누기, 표의 행·열 추가 및 삭제, 셀 병합 구조나 문단 수 변경, 수식 새로 만들기 및 편집, 도형 편집, 구형 `.hwp`(HWP5 바이너리) 파일 읽기·쓰기는 0.2에서도 지원하지 않습니다.
-- **읽기 전용 문서**: 암호화된 문서는 열지 않으며, 전자서명이나 변경 추적(Track Changes)이 들어 있는 문서는 열어서 내용을 조회하거나 무편집 상태로 내보내는 것만 허용하고 편집은 거절합니다.
+- **읽기 전용 문서**: 암호화된 문서는 열지 않으며, 전자서명이나 변경 추적(Track Changes)이 들어 있는 문서는 열어서 내용을 조회하거나 무편집 상태로 내보내는 것만 허용하고 편집은 거절합니다. 변경 추적 표시와 작성자는 `trackchange_list`로 확인합니다.
 - **외부 렌더러 별도 준비 필요**: 이 엔진에는 미리보기 렌더러가 내장되어 있지 않습니다. `document_preview`를 사용하려면 별도의 `rhwp` 실행 파일, `bubblewrap`(`bwrap`) 샌드박스 도구, 읽을 수 있는 글꼴 폴더를 환경 변수(`HAE_RHWP`, `HAE_BWRAP`, `HAE_FONT_DIR`)로 직접 지정해야 합니다.
 - **엔진 구현 완료 범위와 Windows 한컴오피스 실기 호환성(단계 4 예정)의 구분**: 현재 엔진의 파일 편집·보존 검증·격리 미리보기 기능은 구현되어 있으나, 수정된 문서를 실제 Windows 한컴오피스(한글)에서 열었을 때의 실기 호환성 및 조판 대조 검증(단계 4)은 별도 확인 대상입니다. `document_preview`가 만드는 SVG/PNG 이미지와 쪽 번호는 외부 렌더러(`rhwp`)가 어림잡아 계산한 **추정치**이므로 실제 Windows 한컴오피스의 줄바꿈·쪽 나눔·표현 범위와 100% 일치한다고 보장하지 않습니다.
+
+### 할 수 있는 것 (0.3 추가, 읽기 전용 조회)
+
+- **링크 목록 조회 (`link_list`)**: 본문 하이퍼링크 필드의 문단 `nodeId`, `fieldid`/`id`, `hp:parameters` 원문(`Command`·`Path` 등), 표시 텍스트, 참조가 내부 문서인지 외부인지, 커서 페이징을 제공합니다.
+- **변경 추적 목록 조회 (`trackchange_list`)**: 삽입·삭제 표시(`insertBegin`/`insertEnd`/`deleteBegin`/`deleteEnd`)의 문단 위치·종류·오프셋과 머리말 `hh:trackChange`/`hh:trackChangeAuthor` 작성자 연결을 보여 줍니다. 변경 추적 문서는 계속 읽기 전용이며 조회만 허용됩니다.
+
+두 명령의 자세한 인자·결과는 아래 §0.3 절을 참고하세요.
 
 ---
 
@@ -495,3 +502,46 @@ cell.setText는 실제 존재하는 병합 기준 셀도 지원한다. 한 문�
 ```
 
 결과에는 `replacementCount`, `paragraphCount`, `skippedCount`, `skipped[]`, `matches[]`(앞 200곳 미리보기)와 `changedIds`가 담깁니다. 일치는 명령 시작 시점의 문단 기준 grapheme `range`로 보고합니다. 바꾼 문단마다 줄 배치 캐시를 지우는 규칙은 `command.batch`와 같아, 구역마다 가장 앞서 바뀐 최상위 문단(셀은 표를 담은 최상위 문단)부터 구역 끝까지 지웁니다. PrvText는 문단 옛 문장이 미리보기에서 한 번만 나올 때만 바뀌고 아니면 `stale`로 알립니다. 잠긴 문단(불투명 요소가 가리키는 문단 등)은 건너뜁니다. 수식·필드의 내용은 어떤 경우에도 바꾸지 않습니다.
+
+
+## 0.3 링크와 변경 추적 조회 (`link_list`, `trackchange_list`)
+
+0.3에서 읽기 전용 조회 두 가지가 추가되었습니다. 두 명령 모두 문서를 바꾸지 않으며 `revision`·Undo 이력·세션 상태를 그대로 둡니다. 시험에서 명령 실행 전후 `document_export` 결과가 원본과 바이트 단위로 같음을 확인했습니다. 커서(`cursor`) 규약은 `document_inspect`와 같습니다. `revision`이 바뀐 뒤의 옛 커서는 `VERSION_CONFLICT`로 거절하고, 형식이 틀리면 `INVALID_REQUEST`입니다.
+
+### 링크 목록 (`link_list`)
+
+본문의 하이퍼링크 필드(`hp:fieldBegin type="HYPERLINK"`와 짝이 맞는 `hp:fieldEnd`)를 문서 순서대로 나열합니다. 링크를 담은 **문단 `nodeId`**, `fieldid`/`id`, `hp:parameters`의 **원문**(`Command`·`Path`·`Category`·`TargetType`·`DocOpenType` 등), **표시 텍스트**, 그리고 참조가 **문서 내부인지 외부인지**를 알려 줍니다.
+
+```json
+{"command":"link.list","params":{"limit":2}}
+```
+
+- **인자**: `cursor`(이전 응답의 `nextCursor`), `limit`(기본 100, 최대 500), `scope`(표·셀·문단 등 nodeId; 그 노드와 하위 문단만 조회).
+- **결과**: `links[]`, `total`(scope 적용 후 전체 개수), `nextCursor`, `documentId`, `revision`.
+- **`links[]` 항목**: `nodeId`, `section`, `entry`, `fieldType`, `fieldId`(`fieldid`), `beginId`(fieldBegin의 `id`), `name`, `editable`, `parameters[]`(`{kind,name,value}` 원문), `displayText`, `displayTextSource`, `reference`.
+- **표시 텍스트**: `hp:script`가 있으면 그 글자, 없으면 fieldBegin과 짝이 맞는 fieldEnd **사이**의 글자입니다(`displayTextSource`: `script`/`between`/`none`). 한컴이 두 표식을 붙여서 저장한 문서는 사이 글자가 비어 `displayText`가 빈 문자열이 됩니다(로컬 기준 문서 `research-school-plan-reference.hwpx`의 링크 3건이 이 경우입니다). 엔진은 그때 주변 글자를 추측하지 않습니다.
+- **내부/외부 판정**(`reference.scope`): `Category=HWPHYPERLINK_TYPE_HWP`이거나 `Path`가 `#`로 시작하거나 `Command`가 `?`로 시작하면(책갈피) `internal`입니다. `Category`가 `…_URL`/`…_EMAIL`이거나 `Path`/`Command`가 주소 형태(`https:`, `mailto:`, `file:`, `//`, `\\`)이면 `external`입니다. 어느 쪽도 아니면 `unknown`이며 **추측하지 않습니다**.
+- **`reference.target`**: `Path`가 있으면 그 값, 없으면 `\` 이스케이프를 푼 `Command` 값입니다(책갈피는 `?책갈피이름;0;0;0;` 형태 유지). `Command`의 `;1;5;-1;` 꼬리와 이스케이프는 원문 그대로이므로 함께 해석하세요.
+
+```json
+{
+  "command": "link.list",
+  "params": {"scope": "표 또는 문단 nodeId"}
+}
+```
+
+### 변경 추적 목록 (`trackchange_list`)
+
+삽입·삭제 표시와 머리말의 변경 추적 기록을 보여 줍니다.
+
+```json
+{"command":"trackchange.list","params":{"limit":20}}
+```
+
+- **인자**: `link_list`와 같은 `cursor`/`limit`/`scope`.
+- **결과**: `hasTrackChanges`, `readonlyReasons`, `marks[]`, `markCount`, `nextCursor`, `changes[]`, `authors[]`, `documentId`, `revision`.
+- **`marks[]`**: 본문 표시(`hp:insertBegin`/`insertEnd`/`deleteBegin`/`deleteEnd`)마다 `kind`(요소 이름), `nodeId`(표시를 담은 문단, 표 셀 안 문단 포함), `section`, `entry`, `id`, `tcId`, `paraEnd`, `textOffset`(그 표시가 속한 `hp:t` 안에서의 코드포인트 위치)를 담고, 머리말 기록에서 `changeType`(`Insert`/`Delete`/`CharShape`/`ParaShape`), `date`, `authorId`, `authorName`을 연결합니다. 표시의 `TcId`가 `hh:trackChange@id`와 연결됩니다.
+- **`changes[]`**는 `hh:trackChange` 기록(`id`, `type`, `date`, `authorId`, `hide`, `charShapeId`, `paraShapeId`), **`authors[]`**는 `hh:trackChangeAuthor` 기록(`id`, `name`, `mark`, `color`)입니다.
+- **`hasTrackChanges`**는 본문 표시나 머리말 기록이 있거나 엔진이 변경 추적으로 잠근 문서면 true입니다.
+- **잠금 유지**: 변경 추적이 있는 문서는 지금처럼 읽기 전용으로 열립니다(`readonlyReasons: ["track_changes"]`). 조회와 무편집 내보내기만 가능하고 편집 명령은 `UNSUPPORTED`(`document_readonly`)로 거절됩니다. `trackchange_list`는 이 잠금을 풀지 않습니다.
+- **검증 범위**: 로컬 입력(픽스처·spikes)에는 변경 추적 문서가 없어 이 명령의 시험은 KS X 6101 표기(`Id`/`TcId`/`paraend`)와 `hh:trackChanges`/`hh:trackChangeAuthors` 스키마를 따른 **합성 문서로만** 수행했습니다. 실제 한컴 변경 추적 문서로는 아직 확인하지 않았습니다.
