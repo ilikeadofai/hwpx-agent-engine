@@ -33,6 +33,7 @@
 //! extraction, since its producer's serialization is not known.
 mod char_format;
 mod contract;
+mod fields;
 mod format;
 mod image;
 mod text;
@@ -304,6 +305,28 @@ fn verify_inner(
         let target = stable_at(&doc, &stable_path(&xml[entry], original_target))?;
         check_opaque_refs(&xml, entry, &doc, target)?;
         match op {
+            VerifyOperation::FieldSetText {
+                text,
+                name,
+                fieldid,
+                occurrence,
+                ..
+            } => {
+                if let Some((old, new)) = fields::set_text(
+                    &mut expected,
+                    entry,
+                    &doc,
+                    target,
+                    text,
+                    name.as_deref(),
+                    fieldid.as_deref(),
+                    *occurrence,
+                )? {
+                    anchor(&mut anchors, entry, &doc, target)?;
+                    preview.push((old, new));
+                    material = true;
+                }
+            }
             VerifyOperation::TextFormat {
                 range,
                 props,

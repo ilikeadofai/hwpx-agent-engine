@@ -36,8 +36,15 @@ fn element_get() -> &'static str {
     "Return full properties, `outline.edits` command availability, paragraph `outline.textSpans`/`textSpansTruncated` (up to 64 maximal replaceable grapheme intervals), cell `outline.childParagraphsEditable`, and complete text (with grapheme cluster count) for a single element identified by `target` (`nodeId` from `document_inspect` or `element_query`) in `documentId`. Fails with `TARGET_NOT_FOUND` if `target` does not exist. Read-only; never modifies the document."
 }
 
+fn field_list() -> &'static str {
+    "List fields in documentId, optionally restricted to scope (paragraph, cell, table or section nodeId). Returns containing paragraph nodeId, type, name, fieldid/id, decoded Command and commandRaw (original parameter inner XML), current text, empty/multiParagraph/nested/inCell flags, paragraphIds, setTextSupported and reason. CLICKHERE/HYPERLINK are fill candidates; MEMO/proofreading fields are query-only. Read-only; no expectedVersion required. Multi-paragraph fields intersecting scope are listed with their starting nodeId."
+}
+fn field_set_text() -> &'static str {
+    "Replace only field value text in target (containing paragraph nodeId), with text (no tabs/newlines). Select by optional name and/or fieldid (matches fieldid or id); occurrence is a 0-based index among matches. Default index is 0 only for an unambiguous match; multiple matches without occurrence return AMBIGUOUS_TARGET. Missing/out-of-range selectors return TARGET_NOT_FOUND. Supports CLICKHERE/HYPERLINK; rejects other types, multi-paragraph/nested fields, objects/tabs, CDATA/comments/PI or opaque markup with a reason. Preserves fieldBegin/fieldEnd and every attribute/parameter byte, existing runs and shapes; text goes into the first carrier, others become empty. An empty field may use a text carrier in the existing run; no model nodes are created. Requires documentId/current expectedVersion, supports dryRun and command.batch, and one undo unit with exact byte restoration. VERSION_CONFLICT means re-query. HYPERLINK Command/URL is never changed. Synthetic fixtures verified; real CLICKHERE forms remain unverified."
+}
+
 fn text_replace() -> &'static str {
-    "Replace a paragraph grapheme range [start,end), or insert non-empty text at [p,p). No tabs/newlines in text. Check edits[\"text.replace\"].modes (replace/insert) and apply requires arguments (e.g. controls=preserve); default controls=reject requires a subrange/position in textSpans. Empty paragraphs advertise {start:0,end:0}; insertion uses the following character run, then preceding run, then the empty paragraph first run. controls=preserve changes only text fragments and keeps objects/tabs/line breaks/fields in original XML order; leading objects stay before the first text fragment. Existing empty hp:t may be reused; no text fragment means UNSUPPORTED_CONTENT_IN_RANGE. CONTROLS_PRESERVED reports count and new grapheme offsets. Unsupported markup/attributes still fail. Requires expectedVersion; VERSION_CONFLICT means re-query. FORMAT_COLLAPSED warns about character shapes. dryRun=true verifies without committing."
+    "Replace a paragraph grapheme range [start,end), or insert non-empty text at [p,p). No tabs/newlines in text. Check edits[\"text.replace\"].modes (replace/insert) and apply requires arguments (e.g. controls=preserve); default controls=reject requires a subrange/position in textSpans. Empty paragraphs advertise {start:0,end:0}; insertion uses the following character run, then preceding run, then the empty paragraph first run. controls=preserve changes only text fragments and keeps objects/tabs/line breaks in original XML order; crossing field markers is refused; leading objects stay before the first text fragment. Existing empty hp:t may be reused; no text fragment means UNSUPPORTED_CONTENT_IN_RANGE. CONTROLS_PRESERVED reports count and new grapheme offsets. Unsupported markup/attributes still fail. Requires expectedVersion; VERSION_CONFLICT means re-query. FORMAT_COLLAPSED warns about character shapes. dryRun=true verifies without committing."
 }
 
 fn text_replace_all() -> &'static str {
@@ -53,7 +60,7 @@ fn paragraph_format() -> &'static str {
 }
 
 fn cell_set_text() -> &'static str {
-    "Replace text in existing cell target (nodeId); merged anchor cells are supported. Supply exactly one of text (one paragraph only) or paragraphs (string array matching the exact existing paragraph count). No new paragraphs are created. Wrong count returns INVALID_ARGUMENT with detail.paragraphCount; multi-paragraph cells with text return UNSUPPORTED and a paragraphs hint. controls=reject is default; controls=preserve keeps inline objects/tabs/line breaks/fields and reports CONTROLS_PRESERVED. Empty paragraphs use the first run; no run, nested tables/cells, unsupported markup/attributes or read-only documents still fail. Check edits[\"cell.setText\"].available and apply its requires guidance: requires.paragraphs=N means supply a string array of exactly N paragraphs, not the number N; requires.controls=preserve means also supply controls=preserve. Requires expectedVersion; on VERSION_CONFLICT re-query. dryRun=true verifies without changing document or history."
+    "Replace text in existing cell target (nodeId); merged anchor cells are supported. Supply exactly one of text (one paragraph only) or paragraphs (string array matching the exact existing paragraph count). No new paragraphs are created. Wrong count returns INVALID_ARGUMENT with detail.paragraphCount; multi-paragraph cells with text return UNSUPPORTED and a paragraphs hint. controls=reject is default; controls=preserve keeps inline objects/tabs/line breaks (field marker crossings are refused) and reports CONTROLS_PRESERVED. Empty paragraphs use the first run; no run, nested tables/cells, unsupported markup/attributes or read-only documents still fail. Check edits[\"cell.setText\"].available and apply its requires guidance: requires.paragraphs=N means supply a string array of exactly N paragraphs, not the number N; requires.controls=preserve means also supply controls=preserve. Requires expectedVersion; on VERSION_CONFLICT re-query. dryRun=true verifies without changing document or history."
 }
 
 fn image_replace() -> &'static str {
@@ -61,7 +68,7 @@ fn image_replace() -> &'static str {
 }
 
 fn command_batch() -> &'static str {
-    "Execute multiple edit `steps` (`text.format`, `text.replace`, `text.replaceAll`, `paragraph.format`, `cell.setText`, `image.replace`) atomically as a single revision increment and single undo unit. Requires one top-level `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query); each step's ranges and preconditions are evaluated against the state produced by preceding steps. If any step fails, the entire batch rolls back with no state change and reports the failing step index. Set `dryRun: true` to validate and preview the combined diff without changing the document."
+    "Execute multiple edit `steps` (`field.setText`, `text.format`, `text.replace`, `text.replaceAll`, `paragraph.format`, `cell.setText`, `image.replace`) atomically as a single revision increment and single undo unit. Requires one top-level `expectedVersion` equal to the current revision (`VERSION_CONFLICT` if stale → re-query); each step's ranges and preconditions are evaluated against the state produced by preceding steps. If any step fails, the entire batch rolls back with no state change and reports the failing step index. Set `dryRun: true` to validate and preview the combined diff without changing the document."
 }
 
 fn history_undo() -> &'static str {
@@ -109,6 +116,8 @@ pub const TABLE: &[(&str, Describe)] = &[
     ("document.close", document_close),
     ("element.query", element_query),
     ("element.get", element_get),
+    ("field.list", field_list),
+    ("field.setText", field_set_text),
     ("text.format", text_format),
     ("text.replace", text_replace),
     ("text.replaceAll", text_replace_all),

@@ -1,6 +1,7 @@
 //! Session executor: envelope validation, writer/sequence table, transactions,
 //! batch, dryRun, 100-unit Undo/Redo history, snapshots, and resource budgets.
 
+use crate::registry::FieldSetTextParams;
 use crate::registry::{
     command_describe, command_list, BatchStepParam, CellSetTextParams, CommandBatchParams,
     CommandDescriptor, DocumentDiffParams, DocumentExportParams, DocumentOpenParams,
@@ -236,6 +237,19 @@ fn add_state_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, state: &
 
 fn add_op_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, op: &VerifyOperation) {
     match op {
+        VerifyOperation::FieldSetText {
+            entry,
+            text,
+            name,
+            fieldid,
+            ..
+        } => {
+            add_slice_bytes(seen, total, entry.as_bytes());
+            add_slice_bytes(seen, total, text.as_bytes());
+            for v in [name, fieldid].into_iter().flatten() {
+                add_slice_bytes(seen, total, v.as_bytes());
+            }
+        }
         VerifyOperation::TextReplace {
             entry, replacement, ..
         } => {
@@ -819,6 +833,21 @@ impl SessionExecutor {
                     Vec::new(),
                 ))
             }
+            ParsedCommand::FieldList(p) => {
+                let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+                let fields = s.current.doc.fields(p.scope.as_deref())?;
+                Ok((
+                    json!({"documentId":s.current.doc.document_id,"revision":s.revision,"fields":fields}),
+                    Vec::new(),
+                ))
+            }
+            ParsedCommand::FieldSetText(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "field.setText".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
             ParsedCommand::TextFormat(p) => self.handle_edit_steps(
                 req,
                 &[BatchStepParam {
@@ -1128,6 +1157,38 @@ impl SessionExecutor {
             )));
         }
         match step.command.as_str() {
+            "field.setText" => {
+                let p: FieldSetTextParams =
+                    serde_json::from_value(step.params.clone()).map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            e.to_string(),
+                        ))
+                    })?;
+                let (entry, path) = doc
+                    .node(&p.target)
+                    .map(|n| (n.entry.clone(), doc.doc_of(n).path(n.el)))
+                    .unwrap_or_default();
+                Ok((
+                    EditOp::FieldSetText {
+                        target: p.target,
+                        text: p.text.clone(),
+                        name: p.name.clone(),
+                        fieldid: p.fieldid.clone(),
+                        occurrence: p.occurrence,
+                    },
+                    VerifyOperation::FieldSetText {
+                        entry,
+                        path,
+                        text: p.text,
+                        name: p.name,
+                        fieldid: p.fieldid,
+                        occurrence: p.occurrence,
+                    },
+                ))
+            }
+
             "text.format" => {
                 let p: TextFormatParams =
                     serde_json::from_value(step.params.clone()).map_err(|e| {

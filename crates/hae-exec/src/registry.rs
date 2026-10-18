@@ -136,6 +136,28 @@ pub struct TextReplaceParams {
     pub text: String,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FieldListParams {
+    pub scope: Option<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FieldSetTextParams {
+    pub target: String,
+    pub text: String,
+    pub name: Option<String>,
+    pub fieldid: Option<String>,
+    pub occurrence: Option<usize>,
+}
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FieldListResultShape {
+    pub document_id: String,
+    pub revision: u64,
+    pub fields: Vec<hae_model::fields::FieldInfo>,
+}
+
 /// Character properties are deliberately bounded; fontRef is not supported.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -368,6 +390,8 @@ pub enum ParsedCommand {
     DocumentClose(EmptyParams),
     ElementQuery(ElementQueryParams),
     ElementGet(ElementGetParams),
+    FieldList(FieldListParams),
+    FieldSetText(FieldSetTextParams),
     TextFormat(TextFormatParams),
     TextReplace(TextReplaceParams),
     TextReplaceAll(TextReplaceAllParams),
@@ -456,6 +480,8 @@ mod schema_tests {
             ("document_close", [false, true, false, false]),
             ("element_query", [true, false, true, false]),
             ("element_get", [true, false, true, false]),
+            ("field_list", [true, false, true, false]),
+            ("field_set_text", [false, true, false, false]),
             ("text_replace", [false, true, false, false]),
             ("text_format", [false, true, false, false]),
             ("text_replace_all", [false, true, false, false]),
@@ -698,6 +724,18 @@ define_commands! {
         mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
         stage1: true, reason: None,
         params: TextReplaceParams, output: MutationResultShape,
+    },
+    FieldList {
+        name: "field.list", cli: "field-list", mcp: "field_list",
+        summary: "List field markers, names/IDs, raw Command, current values and safe filling availability in a document or scope",
+        category: Query, mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
+        stage1: true, reason: None, params: FieldListParams, output: FieldListResultShape,
+    },
+    FieldSetText {
+        name: "field.setText", cli: "field-set-text", mcp: "field_set_text",
+        summary: "Fill CLICKHERE/HYPERLINK text in one paragraph, preserving markers/parameters/runs; rejects ambiguous or unsafe fields",
+        category: Mutation, mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None, params: FieldSetTextParams, output: MutationResultShape,
     },
     TextReplaceAll {
         name: "text.replaceAll",

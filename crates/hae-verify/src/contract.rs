@@ -55,6 +55,15 @@ pub struct CharProps {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "op", deny_unknown_fields)]
 pub enum VerifyOperation {
+    #[serde(rename = "field.setText")]
+    FieldSetText {
+        entry: String,
+        path: Vec<usize>,
+        text: String,
+        name: Option<String>,
+        fieldid: Option<String>,
+        occurrence: Option<usize>,
+    },
     #[serde(rename = "text.format")]
     TextFormat {
         entry: String,
@@ -131,7 +140,8 @@ impl VerifyOperation {
             Self::TextReplaceAll { scope, .. } => scope
                 .as_ref()
                 .map_or(("", &[][..]), |s| (s.entry.as_str(), s.path.as_slice())),
-            Self::TextFormat { entry, path, .. }
+            Self::FieldSetText { entry, path, .. }
+            | Self::TextFormat { entry, path, .. }
             | Self::TextReplace { entry, path, .. }
             | Self::CellSetText { entry, path, .. }
             | Self::CellSetParagraphs { entry, path, .. }

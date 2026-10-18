@@ -495,3 +495,29 @@ cell.setText는 실제 존재하는 병합 기준 셀도 지원한다. 한 문�
 ```
 
 결과에는 `replacementCount`, `paragraphCount`, `skippedCount`, `skipped[]`, `matches[]`(앞 200곳 미리보기)와 `changedIds`가 담깁니다. 일치는 명령 시작 시점의 문단 기준 grapheme `range`로 보고합니다. 바꾼 문단마다 줄 배치 캐시를 지우는 규칙은 `command.batch`와 같아, 구역마다 가장 앞서 바뀐 최상위 문단(셀은 표를 담은 최상위 문단)부터 구역 끝까지 지웁니다. PrvText는 문단 옛 문장이 미리보기에서 한 번만 나올 때만 바뀌고 아니면 `stale`로 알립니다. 잠긴 문단(불투명 요소가 가리키는 문단 등)은 건너뜁니다. 수식·필드의 내용은 어떤 경우에도 바꾸지 않습니다.
+
+
+## 누름틀·하이퍼링크 필드 조회와 텍스트 채우기 (0.3)
+
+`field.list` (MCP `field_list`, CLI의 `--command field.list`)는 문서의 필드를 읽기 전용으로 조회합니다. `expectedVersion` 없이 호출하며 선택 `scope`에 문단·표·셀·구역 nodeId를 주면 해당 영역과 교차하는 필드만 나옵니다. 각 항목의 `nodeId`는 **시작 마커를 담은 문단**이며, `paragraphIds`에는 다문단 필드가 걸친 문단이 나옵니다.
+
+결과에는 `type`, `name`, `fieldid`, `id`, 현재 `text`, 빈 값 여부(`empty`), 여러 문단 여부(`multiParagraph`), 중첩 여부(`nested`), 셀 내부 여부(`inCell`), `setTextSupported`와 불가 `reason`이 있습니다. `command`는 Command 파라미터의 해석된 문자열이고 `commandRaw`는 엔터티 표기를 포함한 원래 내부 XML입니다. 필드 이름이 빈 문자열이어도 ID로 선택할 수 있습니다. CLICKHERE·HYPERLINK만 채우기 후보이고 MEMO·교정부호 등은 조회만 가능합니다.
+
+```json
+{"command":"field.list","params":{}}
+```
+
+`field.setText` (MCP `field_set_text`, CLI의 `--command field.setText`)에는 조회 결과의 문단 `target`, 새 `text`, 선택 `name` 또는 `fieldid`를 줍니다. `fieldid`는 XML의 `fieldid` 또는 `id` 중 하나와 일치해야 하며, 두 선택자를 모두 주면 모두 일치해야 합니다. 같은 문단에서 선택자와 일치하는 필드가 여러 개면 **`occurrence`를 명시**해야 합니다(`0`부터 시작). 생략하면 `AMBIGUOUS_TARGET`; 필드나 순번이 없으면 `TARGET_NOT_FOUND`입니다. 이름이 유일한 경우 생략된 순번은 0입니다.
+
+```json
+{"command":"field.setText","expectedVersion":0,"dryRun":true,
+ "params":{"target":"조회한 문단 nodeId","name":"성명","text":"홍길동"}}
+```
+
+`text`에는 탭·줄바꿈을 넣을 수 없습니다. 이 명령은 필드 마커와 모든 속성·파라미터를 그대로 두고 **표시 텍스트만** 바꿉니다. 하이퍼링크의 URL/Command는 바뀌지 않습니다. 기존 run·글자 모양을 유지하며 첫 텍스트 조각에 새 글을 넣고 나머지 조각은 비웁니다(`FORMAT_COLLAPSED` 경고 가능). 빈 필드는 기존 run 안의 빈 텍스트 조각을 채우거나 안전한 위치에 텍스트 carrier를 넣습니다. 새 문단·run·모델 노드는 만들지 않습니다.
+
+여러 문단·중첩·짝이 맞지 않는 마커, 개체·탭·불투명 요소, CDATA·주석·처리 명령(PI)이 있는 필드는 안전하게 거절합니다. `reason`은 각각 `multi_paragraph_field`, `nested_field`, `unpaired_field`, `field_contains_control_or_opaque`, `field_lexical_markup`, `unsupported_field_type`, `no_text_fragment`, `paragraph_not_editable` 중 해당 사유입니다. 안전한 기존 run도 없는 빈 필드는 `no_text_fragment`로 거절합니다.
+
+다른 편집과 동일하게 현재 `expectedVersion`이 필요하고, `dryRun`은 실제 적용·이력 없이 독립 검증을 수행합니다. `command.batch`에 넣으면 전체가 한 revision·Undo 단위이며 실패 시 전체를 취소합니다. 재전송도 공통 writer/requestSequence 규칙을 따릅니다. Undo는 원본 HWPX 바이트를 복원하고 Redo는 편집 바이트를 복원합니다. linesegarray·PrvText 갱신 정책과 미편집 ZIP 항목의 압축 바이트·로컬 헤더 보존 계약도 동일합니다.
+
+검증 근거는 `tests/fixtures/editing/fields.hwpx`와 결정론적 생성기 `gen_fields.py`를 사용하는 **합성 시험**입니다. 로컬 입력 문서에는 실제 CLICKHERE가 없어 **실제 공문서/CLICKHERE 양식 검증을 수행하지 못했습니다**. Linux 한컴 열기 게이트는 Windows 한컴 실기 검증이나 내용·조판의 시각 대조를 대신하지 않습니다.
