@@ -32,7 +32,10 @@ fn zip(archive: &Archive, state: &PackageState) -> Vec<u8> {
     hae_zip::write(archive, &hae_package::zip_plan(archive, state).unwrap()).unwrap()
 }
 fn candidate(command: &str) -> (Archive, PackageState, VerifyOperation) {
-    let archive = Archive::open(SOURCE.to_vec(), &Limits::default()).unwrap();
+    candidate_from(SOURCE, command)
+}
+fn candidate_from(source: &[u8], command: &str) -> (Archive, PackageState, VerifyOperation) {
+    let archive = Archive::open(source.to_vec(), &Limits::default()).unwrap();
     let mut state = PackageState::from_archive(&archive);
     let d = parse(state.get(SECTION).unwrap());
     let tables: Vec<_> = d
@@ -63,7 +66,14 @@ fn candidate(command: &str) -> (Archive, PackageState, VerifyOperation) {
         }
         "cell.setSize" => {
             attr(&d, size, "width", 44000, &mut cuts);
-            attr(&d, size, "height", 5200, &mut cuts);
+            let last_size = children(&d, *cells.last().unwrap(), "cellSz")[0];
+            let old_last_height: u32 = d
+                .el(last_size)
+                .attr_value("height")
+                .unwrap()
+                .parse()
+                .unwrap();
+            attr(&d, size, "height", 2800 + old_last_height, &mut cuts);
             for &i in &[0, 2] {
                 attr(
                     &d,
@@ -262,3 +272,56 @@ suite!(
     size_reject_new_node,
     size_reject_header
 );
+
+#[test]
+fn native_layout_height_independent_candidates_and_tampering() {
+    let source = include_bytes!("../../../tests/fixtures/tables/layout_height.hwpx");
+    for command in [
+        "table.setColumnWidths",
+        "table.setRowHeights",
+        "cell.setSize",
+    ] {
+        let (archive, state, op) = candidate_from(source, command);
+        let candidate = zip(&archive, &state);
+        assert!(
+            verify_archive(
+                &archive,
+                &candidate,
+                std::slice::from_ref(&op),
+                &Limits::default()
+            )
+            .is_ok(),
+            "{command}"
+        );
+        for (name, attribute) in [
+            ("sz", "height"),
+            ("cellSz", "height"),
+            ("cellSz", "width"),
+            ("cellMargin", "right"),
+            ("cellAddr", "colAddr"),
+            ("cellSpan", "colSpan"),
+        ] {
+            let mut tampered = state.clone();
+            let d = parse(tampered.get(SECTION).unwrap());
+            let table = d.iter().find(|(_, e)| e.is(NS_HP, "tbl")).unwrap().0;
+            let el = d.descendants(table).find(|&i| hp(&d, i, name)).unwrap();
+            let old: u32 = d.el(el).attr_value(attribute).unwrap().parse().unwrap();
+            let mut cuts = vec![];
+            attr(&d, el, attribute, old + 1, &mut cuts);
+            tampered.set(
+                SECTION,
+                d.splice(cuts, Default::default()).unwrap().bytes().clone(),
+            );
+            assert!(
+                verify_archive(
+                    &archive,
+                    &zip(&archive, &tampered),
+                    std::slice::from_ref(&op),
+                    &Limits::default()
+                )
+                .is_err(),
+                "{command} {name}.{attribute}"
+            );
+        }
+    }
+}

@@ -33,7 +33,7 @@ def table(number, shape):
     return re.sub(r'<hp:tr>.*?</hp:tr>', ''.join('<hp:tr>'+''.join(r)+'</hp:tr>' for r in rows), s)
 
 
-def generate():
+def generate(layout_height=False):
     with zipfile.ZipFile(evaluation.PUBLIC_SEED) as z:
         files = {i.filename: (z.read(i), i.compress_type) for i in z.infolist()}
     header = files['Contents/header.xml'][0].decode()
@@ -43,6 +43,13 @@ def generate():
     section = evaluation.section_xml(table=False, picture=False)
     extras = ''.join(f'<hp:p {evaluation.P_ATTRS.format(id=100+i)}><hp:run charPrIDRef="0">{table(2000+i, shape)}<hp:t/></hp:run><hp:linesegarray><hp:lineseg textpos="0"/></hp:linesegarray></hp:p>' for i, shape in enumerate(['merged', 'plain', 'vertical']))
     section = section.replace('</hs:sec>', extras + '<hp:p '+evaluation.P_ATTRS.format(id=110)+'><hp:run charPrIDRef="0"><hp:t>AFTER-TABLES</hp:t></hp:run><hp:linesegarray/></hp:p></hs:sec>')
+    if layout_height:
+        # Native-shaped minima: placement height is unrelated to cell minima;
+        # vertical margins may consume the entire saved minimum height.
+        section = section.replace('height="4800" heightRelTo', 'height="120164" heightRelTo')
+        section = section.replace('width="21000" height="2400"', 'width="21000" height="282"')
+        section = section.replace('width="42000" height="2400"', 'width="42000" height="282"')
+        section = section.replace('width="21000" height="4800"', 'width="21000" height="564"')
     files['Contents/section0.xml'] = (section.encode(), 8)
     hpf = files['Contents/content.hpf'][0].decode()
     hpf = re.sub(r'<opf:metadata>.*?</opf:metadata>', '<opf:metadata><opf:title>Synthetic tables</opf:title></opf:metadata>', hpf, flags=re.S)
@@ -64,3 +71,8 @@ if __name__ == '__main__':
     dest = Path(__file__).with_name('dimensions.hwpx')
     dest.write_bytes(data)
     print(f'{dest.name} sha256={hashlib.sha256(data).hexdigest()} deterministic=True')
+
+    native = generate(layout_height=True)
+    assert native == generate(layout_height=True)
+    dest.with_name('layout_height.hwpx').write_bytes(native)
+    print(f'layout_height.hwpx sha256={hashlib.sha256(native).hexdigest()} deterministic=True')

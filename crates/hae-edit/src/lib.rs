@@ -218,6 +218,7 @@ pub enum Intent {
         command: String,
         entry: String,
         path: Vec<usize>,
+        // Empty means that axis was not requested or reconstructed.
         widths: Vec<u32>,
         heights: Vec<u32>,
         #[serde(rename = "tableSize")]

@@ -18,12 +18,15 @@ impl Drop for Case {
 }
 impl Case {
     fn new() -> Self {
+        Self::with(SOURCE)
+    }
+    fn with(source: &[u8]) -> Self {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../spikes/work/tables/test-runs")
             .join(hae_model::new_id("run-").unwrap());
         fs::create_dir_all(&root).unwrap();
         let root = root.canonicalize().unwrap();
-        fs::write(root.join("in.hwpx"), SOURCE).unwrap();
+        fs::write(root.join("in.hwpx"), source).unwrap();
         let mut exec = SessionExecutor::new(&root, &root, Limits::default()).unwrap();
         assert!(
             exec.call(
@@ -424,4 +427,251 @@ fn untouched_entries_raw_compression_headers_and_preview_survive() {
             after.raw_local_header(&e.name)
         );
     }
+}
+
+const LAYOUT_HEIGHT: &[u8] = include_bytes!("../../../tests/fixtures/tables/layout_height.hwpx");
+
+#[test]
+fn native_layout_height_columns_preserve_vertical_bytes_and_undo() {
+    let mut s = Case::with(LAYOUT_HEIGHT);
+    let r = s.exec.call(
+        "table.setColumnWidths",
+        s.params("table.setColumnWidths"),
+        Some(0),
+        false,
+    );
+    assert!(r.ok, "{r:?}");
+    let edited = s.export("columns.hwpx");
+    let original = Document::open(LAYOUT_HEIGHT.to_vec(), &Limits::default()).unwrap();
+    let output = Document::open(edited, &Limits::default()).unwrap();
+    let before = &original.xml["Contents/section0.xml"];
+    let after = &output.xml["Contents/section0.xml"];
+    // Every size's vertical attribute and all margin/border declarations survive.
+    for name in ["sz", "cellSz", "cellMargin", "inMargin", "outMargin"] {
+        let attrs = |d: &hae_xml::XmlDoc| {
+            d.iter()
+                .filter(|(_, e)| e.local == name)
+                .map(|(_, e)| {
+                    if name == "sz" || name == "cellSz" {
+                        e.attr_value("height").unwrap().to_string()
+                    } else {
+                        String::from_utf8_lossy(d.raw(e.outer())).into_owned()
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(attrs(before), attrs(after), "{name}");
+    }
+    assert!(s.exec.call("history.undo", json!({}), Some(1), false).ok);
+    assert_eq!(s.export("undo.hwpx"), LAYOUT_HEIGHT);
+}
+
+#[test]
+fn native_layout_height_rows_and_single_axis_cell_size_undo() {
+    for (cmd, args) in [
+        ("table.setRowHeights", json!({"heights":[2800,3000]})),
+        ("cell.setSize", json!({"width":23000})),
+        ("cell.setSize", json!({"height":2800})),
+        ("cell.setSize", json!({"width":23000,"height":2800})),
+    ] {
+        let mut s = Case::with(LAYOUT_HEIGHT);
+        let mut p = args;
+        p["target"] = json!(if cmd == "cell.setSize" {
+            &s.cell
+        } else {
+            &s.table
+        });
+        let r = s.exec.call(cmd, p, Some(0), false);
+        assert!(r.ok, "{cmd}: {r:?}");
+        s.export("edited.hwpx");
+        assert!(s.exec.call("history.undo", json!({}), Some(1), false).ok);
+        assert_eq!(s.export("undo.hwpx"), LAYOUT_HEIGHT);
+    }
+}
+
+fn alter_layout_source(name: &str, value: &str) -> Vec<u8> {
+    let archive = hae_zip::Archive::open(LAYOUT_HEIGHT.to_vec(), &Limits::default()).unwrap();
+    let mut state = hae_package::PackageState::from_archive(&archive);
+    let d = hae_xml::XmlDoc::parse(state.get("Contents/section0.xml").unwrap().clone()).unwrap();
+    let table = d.iter().filter(|(_, e)| e.local == "tbl").nth(1).unwrap().0;
+    let size = d
+        .descendants(table)
+        .find(|&i| d.el(i).local == name.split('.').next().unwrap())
+        .unwrap();
+    let attr = d.el(size).attr(name.split('.').nth(1).unwrap()).unwrap();
+    let next = d
+        .splice(
+            vec![(attr.value_span.clone(), value.as_bytes().to_vec())],
+            Default::default(),
+        )
+        .unwrap();
+    state.set("Contents/section0.xml", next.bytes().clone());
+    hae_zip::write(&archive, &hae_package::zip_plan(&archive, &state).unwrap()).unwrap()
+}
+
+#[test]
+fn geometry_checks_only_the_requested_axis_but_refuses_its_contradictions() {
+    for (attribute, value, accepted, refused) in [
+        (
+            "cellSz.height",
+            "283",
+            "table.setColumnWidths",
+            "table.setRowHeights",
+        ),
+        (
+            "cellSz.width",
+            "21001",
+            "table.setRowHeights",
+            "table.setColumnWidths",
+        ),
+        (
+            "sz.heightRelTo",
+            "PARA",
+            "table.setColumnWidths",
+            "table.setRowHeights",
+        ),
+        (
+            "sz.widthRelTo",
+            "PARA",
+            "table.setRowHeights",
+            "table.setColumnWidths",
+        ),
+    ] {
+        let source = alter_layout_source(attribute, value);
+        let mut s = Case::with(&source);
+        if attribute.ends_with("RelTo") {
+            let q = s
+                .exec
+                .call("element.query", json!({"kind":"table"}), None, false)
+                .result
+                .unwrap();
+            assert_eq!(q["matches"][1]["edits"][accepted]["available"], true);
+            assert_eq!(q["matches"][1]["edits"][refused]["available"], false);
+        }
+        let r = s.exec.call(accepted, s.params(accepted), Some(0), false);
+        assert!(r.ok, "{accepted} {attribute}: {r:?}");
+        assert!(s.exec.call("history.undo", json!({}), Some(1), false).ok);
+        assert_eq!(s.export("undo.hwpx"), source);
+        let r = s.exec.call(refused, s.params(refused), Some(2), false);
+        assert!(!r.ok, "{refused} {attribute}");
+        assert_eq!(
+            r.diagnostics[0].reason.as_deref(),
+            Some("table_geometry_unsupported")
+        );
+        assert_eq!(s.export("rejected.hwpx"), source);
+    }
+}
+
+#[test]
+fn native_layout_height_structure_commands_preserve_other_axis_and_undo() {
+    for (cmd, rows) in [
+        ("table.insertRow", true),
+        ("table.deleteRow", true),
+        ("table.insertColumn", false),
+        ("table.deleteColumn", false),
+    ] {
+        let source = alter_layout_source(
+            if rows {
+                "sz.widthRelTo"
+            } else {
+                "sz.heightRelTo"
+            },
+            "PARA",
+        );
+        let mut s = Case::with(&source);
+        let r = s
+            .exec
+            .call(cmd, json!({"target":s.table,"index":1}), Some(0), false);
+        assert!(r.ok, "{cmd}: {r:?}");
+        let edited = s.export("structure.hwpx");
+        let d = Document::open(edited, &Limits::default()).unwrap();
+        let t = d
+            .nodes
+            .iter()
+            .filter(|n| n.kind == Kind::Table)
+            .nth(1)
+            .unwrap();
+        let xml = d.doc_of(t);
+        let size = xml
+            .el(t.el)
+            .children
+            .iter()
+            .find(|&&i| xml.el(i).local == "sz")
+            .unwrap();
+        assert_eq!(
+            xml.el(*size)
+                .attr_value(if rows { "width" } else { "height" }),
+            Some(if rows { "42000" } else { "120164" })
+        );
+        assert!(s.exec.call("history.undo", json!({}), Some(1), false).ok);
+        assert_eq!(s.export("undo.hwpx"), source);
+    }
+}
+
+/// Local-only: never embeds or copies a user's input into the public fixtures.
+#[test]
+fn local_native_document_columns_and_undo_when_present() {
+    let path = std::env::var_os("HAE_LOCAL_TABLE_DOCUMENT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../spikes/work/stage4-e2e/inputs/04_complex.hwpx")
+        });
+    if !path.is_file() {
+        eprintln!("SKIP: optional local table document absent");
+        return;
+    }
+    let source = fs::read(path).unwrap();
+    let mut s = Case::with(&source);
+    let tables = s
+        .exec
+        .call("element.query", json!({"kind":"table"}), None, false)
+        .result
+        .unwrap();
+    // Both horizontal- and vertical-merged tables in the local complex document.
+    for (i, t) in tables["matches"].as_array().unwrap().iter().enumerate() {
+        let r = s.exec.call(
+            "table.setColumnWidths",
+            json!({"target":t["nodeId"],"widths":[15000,26954]}),
+            Some(i as u64),
+            false,
+        );
+        assert!(r.ok, "local table {i}: {r:?}");
+    }
+    let edited = s.export("local-columns.hwpx");
+    if let Some(out) = std::env::var_os("HAE_LOCAL_TABLE_OUTPUT_DIR") {
+        let out = PathBuf::from(out);
+        fs::create_dir_all(&out).unwrap();
+        fs::write(out.join("04_complex-columns.hwpx"), edited).unwrap();
+    }
+    let count = tables["matches"].as_array().unwrap().len();
+    for i in 0..count {
+        assert!(
+            s.exec
+                .call("history.undo", json!({}), Some((count + i) as u64), false)
+                .ok
+        );
+    }
+    assert_eq!(s.export("local-undo.hwpx"), source);
+}
+
+#[test]
+fn public_native_table_with_placement_height_columns_and_exact_undo() {
+    let source = include_bytes!("../../../tests/fixtures/corpus/bodojaryo-reference.hwpx");
+    let mut s = Case::with(source);
+    let tables = s
+        .exec
+        .call("element.query", json!({"kind":"table"}), None, false)
+        .result
+        .unwrap();
+    let r = s.exec.call(
+        "table.setColumnWidths",
+        json!({"target":tables["matches"][0]["nodeId"],"widths":[12000,23000,12697]}),
+        Some(0),
+        false,
+    );
+    assert!(r.ok, "{r:?}");
+    s.export("public-columns.hwpx");
+    assert!(s.exec.call("history.undo", json!({}), Some(1), false).ok);
+    assert_eq!(s.export("undo.hwpx"), source);
 }

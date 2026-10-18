@@ -60,15 +60,22 @@ struct Source {
     table: usize,
     size: usize,
     regions: Vec<Region>,
-    columns: Vec<u32>,
-    rows: Vec<u32>,
+    nc: usize,
+    nr: usize,
 }
-pub(crate) fn tracks(regions: &[Region], count: usize, whole: u32, is_x: bool) -> Result<Vec<u32>> {
+pub(crate) fn tracks(
+    regions: &[Region],
+    count: usize,
+    whole: Option<u32>,
+    is_x: bool,
+) -> Result<Vec<u32>> {
     // Prefix-coordinate constraint graph. Every known interval is an edge;
     // disconnected boundaries and contradictory cycles are refused.
     let mut graph = vec![Vec::<(usize, i64)>::new(); count + 1];
-    graph[0].push((count, i64::from(whole)));
-    graph[count].push((0, -i64::from(whole)));
+    if let Some(whole) = whole {
+        graph[0].push((count, i64::from(whole)));
+        graph[count].push((0, -i64::from(whole)));
+    }
     for r in regions {
         let (a, b, v) = if is_x {
             (r.x, r.x + r.dx, r.width)
@@ -122,11 +129,6 @@ fn source(d: &XmlDoc, t: usize) -> Result<Source> {
         return Err(unsupported("table grid limits or spacing"));
     }
     let size = one(d, t, "sz")?;
-    for field in ["widthRelTo", "heightRelTo"] {
-        if attr(d, size, field)?.value != "ABSOLUTE" {
-            return Err(unsupported("relative table extent"));
-        }
-    }
     let rows: Vec<_> = d
         .el(t)
         .children
@@ -181,15 +183,26 @@ fn source(d: &XmlDoc, t: usize) -> Result<Source> {
             return Err(fail("incomplete table row"));
         }
     }
-    let columns = tracks(&regions, nc, num(d, size, "width")?, true)?;
-    let rows = tracks(&regions, nr, num(d, size, "height")?, false)?;
     Ok(Source {
         table: t,
         size,
         regions,
-        columns,
-        rows,
+        nc,
+        nr,
     })
+}
+fn source_tracks(d: &XmlDoc, s: &Source, is_x: bool) -> Result<Vec<u32>> {
+    let rel = if is_x { "widthRelTo" } else { "heightRelTo" };
+    if attr(d, s.size, rel)?.value != "ABSOLUTE" {
+        return Err(unsupported("relative requested table extent"));
+    }
+    // Independently solve cell-minimum intervals; placement height is no edge.
+    let extent = if is_x {
+        Some(num(d, s.size, "width")?)
+    } else {
+        None
+    };
+    tracks(&s.regions, if is_x { s.nc } else { s.nr }, extent, is_x)
 }
 fn sum(values: &[u32]) -> Result<u32> {
     let mut n = 0u64;
@@ -229,13 +242,19 @@ fn edges(d: &XmlDoc, e: usize) -> Result<[u32; 4]> {
         num(d, e, "bottom")?,
     ])
 }
-fn cell_minimum(d: &XmlDoc, s: &Source, r: &Region, w: u32, h: u32) -> Result<()> {
+fn cell_minimum(d: &XmlDoc, s: &Source, r: &Region, w: Option<u32>, h: Option<u32>) -> Result<()> {
     let m = match attr(d, r.element, "hasMargin")?.value.as_str() {
         "0" => one(d, s.table, "inMargin")?,
         "1" => one(d, r.element, "cellMargin")?,
         _ => return Err(fail("invalid cell margin flag")),
     };
-    enough(w, h, edges(d, m)?)
+    let margin = edges(d, m)?;
+    if w.is_some_and(|w| u64::from(margin[0]) + u64::from(margin[1]) >= u64::from(w))
+        || h.is_some_and(|h| u64::from(margin[2]) + u64::from(margin[3]) >= u64::from(h))
+    {
+        return Err(fail("requested cell extent is less than margin minimum"));
+    }
+    Ok(())
 }
 fn border_signature(d: &XmlDoc, i: usize) -> Result<Vec<u8>> {
     let outer = d.el(i).outer();
@@ -420,14 +439,14 @@ pub(crate) fn check(
         formatting(state, info, d, t, target, format, limits)?
     } else {
         let s = source(d, t)?;
-        let mut w = s.columns.clone();
-        let mut h = s.rows.clone();
+        let mut w = vec![];
+        let mut h = vec![];
         match op {
             VerifyOperation::TableSetColumnWidths { widths, width, .. } => {
                 if t != target {
                     return Err(fail("column target not table"));
                 }
-                w = requested(widths.as_deref(), *width, w.len())?;
+                w = requested(widths.as_deref(), *width, source_tracks(d, &s, true)?.len())?;
             }
             VerifyOperation::TableSetRowHeights {
                 heights, height, ..
@@ -435,7 +454,11 @@ pub(crate) fn check(
                 if t != target {
                     return Err(fail("row target not table"));
                 }
-                h = requested(heights.as_deref(), *height, h.len())?;
+                h = requested(
+                    heights.as_deref(),
+                    *height,
+                    source_tracks(d, &s, false)?.len(),
+                )?;
             }
             VerifyOperation::CellSetSize { width, height, .. } => {
                 if width.is_none() && height.is_none() {
@@ -450,26 +473,58 @@ pub(crate) fn check(
                     return Err(unsupported("merged cell direct size"));
                 }
                 if let Some(v) = width {
+                    w = source_tracks(d, &s, true)?;
                     w[cell.x] = *v;
                 }
                 if let Some(v) = height {
+                    h = source_tracks(d, &s, false)?;
                     h[cell.y] = *v;
                 }
             }
             _ => return Err(fail("wrong table operation")),
         }
         let mut changes = vec![];
-        let width = sum(&w)?;
-        let height = sum(&h)?;
+        let width = if w.is_empty() {
+            num(d, s.size, "width")?
+        } else {
+            sum(&w)?
+        };
+        let height = if h.is_empty() {
+            num(d, s.size, "height")?
+        } else {
+            sum(&h)?
+        };
         for r in &s.regions {
-            let cw = sum(&w[r.x..r.x + r.dx])?;
-            let ch = sum(&h[r.y..r.y + r.dy])?;
-            cell_minimum(d, &s, r, cw, ch)?;
-            set(d, r.size, "width", cw, &mut changes)?;
-            set(d, r.size, "height", ch, &mut changes)?;
+            let cw = if w.is_empty() {
+                None
+            } else {
+                Some(sum(&w[r.x..r.x + r.dx])?)
+            };
+            let ch = if h.is_empty() {
+                None
+            } else {
+                Some(sum(&h[r.y..r.y + r.dy])?)
+            };
+            cell_minimum(
+                d,
+                &s,
+                r,
+                cw.filter(|&v| v != r.width),
+                ch.filter(|&v| v != r.height),
+            )?;
+            if let Some(cw) = cw {
+                set(d, r.size, "width", cw, &mut changes)?;
+            }
+            if let Some(ch) = ch {
+                set(d, r.size, "height", ch, &mut changes)?;
+            }
         }
-        set(d, s.size, "width", width, &mut changes)?;
-        set(d, s.size, "height", height, &mut changes)?;
+        if !w.is_empty() {
+            set(d, s.size, "width", width, &mut changes)?;
+        }
+        if !h.is_empty() {
+            set(d, s.size, "height", height, &mut changes)?;
+        }
         changes
     };
     if cuts.is_empty() {

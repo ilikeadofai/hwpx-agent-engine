@@ -418,11 +418,11 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
   "target": "node-tbl1", "widths": [20000, 30000, 25000] }
 ```
 
-- **`table.setColumnWidths`**: 열 너비를 HWPUNIT으로 지정합니다. `widths`는 **표의 열 수와 정확히 같아야** 하고, 모든 열을 같은 값으로 하려면 `width`를 씁니다. 병합 셀은 열 합계에 맞춰 함께 조정됩니다.
-- **`table.setRowHeights`**: 행 높이를 지정합니다. 저장된 값은 **최소 높이**라서, 글자가 많으면 한컴이 행을 더 늘릴 수 있습니다. 병합 구조를 확정할 수 없거나 여백 때문에 내용 공간이 남지 않으면 거절합니다.
-- **`cell.setFormat`**: 셀의 **테두리·배경·안 여백**을 바꿉니다. `borderFillId`는 `header.xml`에 **이미 있는** 값만 쓸 수 있고(없으면 `TARGET_NOT_FOUND`), `background`는 `"#RRGGBB"` 또는 `"none"`이며 **테두리가 같은 기존 자원이 있을 때만** 적용됩니다(없으면 `UNSUPPORTED`/`background_resource_unavailable`). `cellMargin`은 `{left,right,top,bottom}` 중 지정한 것만 바뀝니다.
-- **`cell.setSize`**: **병합되지 않은** 셀 하나의 너비·높이를 바꿉니다. 그 셀이 속한 **열/행 트랙 전체**가 바뀌고 교차하는 셀과 표 전체 크기가 함께 조정됩니다. 병합 셀을 직접 지정하면 `UNSUPPORTED`/`merged_cell_size_unsupported`이고, 대신 표 트랙 명령을 쓰세요.
-- **공통**: 네 명령 모두 `expectedVersion`이 필요하고 `dryRun`·`command.batch`·되돌리기를 지원합니다. `intents`에 `tableSize`와 `changedCells`가 담겨 무엇이 바뀌었는지 확인할 수 있습니다. **공유 자원(`header.xml`)을 새로 만들거나 고치지 않습니다.**
+- **`table.setColumnWidths`**: 열 너비를 HWPUNIT으로 지정합니다. `widths`는 **표의 열 수와 정확히 같아야** 하고, 모든 열을 같은 값으로 하려면 `width`를 씁니다. 병합 셀은 열 합계에 맞춰 함께 조정됩니다. 가로 격자와 바뀌는 너비의 좌우 여백만 검증합니다. 한컴 문서의 배치 높이(`hp:sz height`)가 행 높이 합과 달라도 사용할 수 있고, 높이·상하 여백은 그대로 보존됩니다.
+- **`table.setRowHeights`**: 행 높이를 지정합니다. 저장된 값은 **최소 높이**라서, 글자가 많으면 한컴이 행을 더 늘릴 수 있습니다. 행 트랙은 셀의 저장 높이에서 복원하며, 기존 배치 높이가 행 합과 같을 필요는 없습니다. 지정한 행 높이 합을 새 표 높이로 기록하고 너비는 보존합니다. 셀 사이의 높이 제약이 모순되거나 행을 유일하게 복원할 수 없는 경우, 바뀌는 높이가 상하 여백 이하인 경우에는 거절합니다.
+- **`cell.setFormat`**: 셀의 **테두리·배경·안 여백**을 바꿉니다. `borderFillId`는 `header.xml`에 **이미 있는** 값만 쓸 수 있고(없으면 `TARGET_NOT_FOUND`), `background`는 `"#RRGGBB"` 또는 `"none"`이며 **테두리가 같은 기존 자원이 있을 때만** 적용됩니다(없으면 `UNSUPPORTED`/`background_resource_unavailable`). `cellMargin`은 `{left,right,top,bottom}` 중 지정한 것만 바뀝니다. 이때는 해당 셀의 크기와 유효 여백을 검증하며 표 전체의 트랙 합 일치를 요구하지 않습니다.
+- **`cell.setSize`**: **병합되지 않은** 셀 하나의 너비·높이를 바꿉니다. 너비를 지정하면 그 셀이 속한 **열 트랙**, 높이를 지정하면 **행 트랙** 전체가 바뀌고 교차하는 셀과 해당 축의 표 크기가 함께 조정됩니다. 지정하지 않은 축은 복원하거나 수정하지 않습니다. 병합 셀을 직접 지정하면 `UNSUPPORTED`/`merged_cell_size_unsupported`이고, 대신 표 트랙 명령을 쓰세요.
+- **공통**: 네 명령 모두 `expectedVersion`이 필요하고 `dryRun`·`command.batch`·되돌리기를 지원합니다. 치수 명령의 `intents`에는 `tableSize`와 `changedCells`가 담깁니다. `widths`/`heights` 중 요청하지 않은 축은 빈 배열이며, 이 축의 저장값은 보존됩니다. **공유 자원(`header.xml`)을 새로 만들거나 고치지 않습니다.**
 
 ### ④-4 표 행·열 추가·삭제 (`table_insert_row`, `table_delete_row`, `table_insert_column`, `table_delete_column`)
 기존 표에 **빈 행·열을 넣거나**, 지정한 행·열을 **지웁니다**. 엔진이 노드(셀·문단)를 만들고 지우는 유일한 명령이라 규칙이 조금 다릅니다. 설계와 근거는 `docs/decisions/table-structure-node-creation-design.md`에 있습니다.
@@ -434,7 +434,7 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 
 - **`index`는 0부터 센 새 줄의 주소입니다.** `table_insert_row`의 `index: 3`은 "위에 3개 행을 남기고 그 아래에 넣기"(= 3번째 행 뒤)입니다. 범위는 `0` ~ 행 수(맨 뒤에 붙이려면 행 수)입니다. 삭제는 `index`부터 `count`개를 지우며 `0` ~ (행 수 − 1)입니다. `count`는 기본 1, 최대 1024이고 표는 1024행·1024열을 넘을 수 없습니다.
 - **새 셀**: 이웃 행(위 행, 없거나 제목 행이면 아래 행)의 셀 속성·테두리·안 여백을 그대로 복제하고, 글은 비워 문단 하나만 둡니다(그 셀 첫 문단의 문단 모양·글자 모양 유지). 셀 이름(`name`)은 비우고 새 **행**의 제목 표시(`header`)는 끕니다. 열 삽입은 왼쪽 이웃 열(없으면 오른쪽)을 복제하며 제목 셀은 제목 셀로 남습니다.
-- **크기**: 행은 복제한 행의 높이만큼 표 높이가 늘고(삭제는 지운 행 높이만큼 줄고) 열은 **표 전체 너비가 새 열 너비만큼 늘어납니다**(기존 열은 줄이지 않습니다). 쪽 너비를 넘는지는 검사하지 않으니 필요하면 이어서 `table_set_column_widths`로 맞추세요. `rowCnt`/`colCnt`, 모든 셀의 `cellAddr`, 표 `sz`가 함께 갱신되고 저장 전에 독립 검증기가 바이트 단위로 다시 확인합니다.
+- **크기**: 행은 복제한 행의 저장 높이 최댓값만큼 기존 배치 높이가 늘고(삭제는 지운 행별 최댓값 합만큼 줄고) 열은 **표 전체 너비가 새 열 너비만큼 늘어납니다**(기존 열은 줄이지 않습니다). 기존 배치 높이와 행 합의 일치를 요구하지 않습니다. 열 명령은 가로 격자만 복원하고 높이를 보존하며, 행 명령은 너비를 보존합니다. 수정할 축은 절대 크기여야 하고, 배치 높이 가감 결과가 양의 HWPUNIT 범위를 벗어나면 거절합니다. 쪽 너비를 넘는지는 검사하지 않으니 필요하면 이어서 `table_set_column_widths`로 맞추세요. `rowCnt`/`colCnt`, 모든 셀의 `cellAddr`, 표 `sz`가 함께 갱신되고 저장 전에 독립 검증기가 바이트 단위로 다시 확인합니다.
 - **nodeId**: 새 셀·문단은 **새 `nodeId`**를 받아 결과 `structure[].created`(`nodeId`·`kind`·`row`·`col`)에 나옵니다. 기존 셀은 `nodeId`를 유지하지만 **주소가 밀립니다**(`structure[].shifted`, `changedIds`). 행·열 번호로 대상을 찾았다면 변경 뒤 다시 조회하세요. 삭제된 노드는 `structure[].removed`에 나오며, 그 ID는 다른 요소에 다시 쓰이지 않습니다.
 - **병합 셀**: 삽입은 새 줄의 경계가 병합 셀을 가르면 `UNSUPPORTED`/`insert_inside_merged_cell`로, 복제할 단순한 이웃 줄이 없으면 `no_simple_template_line`으로 거절합니다. 삭제는 구간과 겹치는 셀이 **하나라도 병합(행·열 병합 수 ≠ 1)**이면 `merged_cell_blocks_delete`로 거절하고 `detail.cells`에 해당 셀 주소를 담습니다. 병합을 건드리지 않는 한 같은 표의 다른 행·열은 지울 수 있습니다.
 - **삭제 제한**: 글과 줄바꿈·탭 정도만 든 셀만 지웁니다. 그림·수식·필드·도형·각주가 든 셀은 `delete_content_unsupported`, 표의 모든 행(열)을 지우려 하면 `INVALID_ARGUMENT`/`would_empty_table`, 범위 밖이면 `index_out_of_range`, 열 삭제로 셀이 하나도 없는 행이 생기면 `row_would_become_empty`입니다. 지운 셀의 글자는 미리보기 텍스트(`PrvText`)에서 지우지 않고 `stale.prvText: true`로만 알립니다.

@@ -64,7 +64,7 @@ struct Layout {
     by_row: Vec<Vec<usize>>,
 }
 
-fn layout(d: &XmlDoc, table: usize) -> Result<Layout> {
+fn layout(d: &XmlDoc, table: usize, rows_axis: bool) -> Result<Layout> {
     let rows = number(d, table, "rowCnt")? as usize;
     let cols = number(d, table, "colCnt")? as usize;
     if !(1..=MAX_LINES).contains(&rows) || !(1..=MAX_LINES).contains(&cols) {
@@ -74,8 +74,11 @@ fn layout(d: &XmlDoc, table: usize) -> Result<Layout> {
         return Err(shape("nonzero cellSpacing is unsupported"));
     }
     let sz = child(d, table, "sz")?;
-    if d.el(sz).attr_value("widthRelTo") != Some("ABSOLUTE")
-        || d.el(sz).attr_value("heightRelTo") != Some("ABSOLUTE")
+    if d.el(sz).attr_value(if rows_axis {
+        "heightRelTo"
+    } else {
+        "widthRelTo"
+    }) != Some("ABSOLUTE")
     {
         return Err(shape("relative table dimensions are unsupported"));
     }
@@ -430,7 +433,7 @@ fn insert_rows(d: &XmlDoc, g: &Layout, index: usize, count: usize) -> Result<Pla
 }
 
 fn column_widths(d: &XmlDoc, g: &Layout) -> Result<Vec<u32>> {
-    axis(&g.cells, g.cols, number(d, g.sz, "width")?, true)
+    axis(&g.cells, g.cols, Some(number(d, g.sz, "width")?), true)
 }
 
 fn insert_columns(d: &XmlDoc, g: &Layout, index: usize, count: usize) -> Result<Plan> {
@@ -693,7 +696,7 @@ pub(crate) fn structure(
         d.doc.check_editable(n)?;
     }
     let xml = d.doc.doc_of(&table).clone();
-    let mut g = layout(&xml, table.el)?;
+    let mut g = layout(&xml, table.el, axis_kind == Axis::Row)?;
     for n in d.doc.nodes.iter().filter(|n| n.entry == table.entry) {
         if n.kind == Kind::Cell {
             g.ids.insert(n.el, n.id.clone());

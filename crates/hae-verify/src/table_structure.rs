@@ -95,11 +95,11 @@ impl Grid {
                 height: c.h,
             })
             .collect();
-        tracks(&regions, self.nc, num(d, self.size, "width")?, true)
+        tracks(&regions, self.nc, Some(num(d, self.size, "width")?), true)
     }
 }
 
-fn grid(d: &XmlDoc, table: usize) -> Result<Grid> {
+fn grid(d: &XmlDoc, table: usize, rows: bool) -> Result<Grid> {
     let nr = num(d, table, "rowCnt")? as usize;
     let nc = num(d, table, "colCnt")? as usize;
     if !(1..=LIMIT).contains(&nr)
@@ -109,7 +109,7 @@ fn grid(d: &XmlDoc, table: usize) -> Result<Grid> {
         return Err(unsupported("table grid limits or spacing"));
     }
     let size = one(d, table, "sz")?;
-    for a in ["widthRelTo", "heightRelTo"] {
+    for a in [if rows { "heightRelTo" } else { "widthRelTo" }] {
         if attr(d, size, a)?.value != "ABSOLUTE" {
             return Err(unsupported("relative table extent"));
         }
@@ -336,7 +336,7 @@ pub(crate) fn check(
     if !(1..=LIMIT).contains(&count) {
         return Err(fail("count outside 1..=1024"));
     }
-    let g = grid(d, table)?;
+    let g = grid(d, table, rows)?;
     let lines = if rows { g.nr } else { g.nc };
     let mut cuts: Vec<Splice> = vec![];
     let mut remap = Remap {

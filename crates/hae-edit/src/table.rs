@@ -86,13 +86,18 @@ struct Grid {
     table: usize,
     sz: usize,
     cells: Vec<Cell>,
-    widths: Vec<u32>,
-    heights: Vec<u32>,
+    cols: usize,
+    rows: usize,
 }
-pub(crate) fn axis(cells: &[Cell], count: usize, total: u32, horizontal: bool) -> Result<Vec<u32>> {
+pub(crate) fn axis(
+    cells: &[Cell],
+    count: usize,
+    total: Option<u32>,
+    horizontal: bool,
+) -> Result<Vec<u32>> {
     let mut positions = vec![None; count + 1];
     positions[0] = Some(0i64);
-    positions[count] = Some(i64::from(total));
+    positions[count] = total.map(i64::from);
     for _ in 0..=count {
         let mut progress = false;
         for c in cells {
@@ -140,11 +145,6 @@ fn grid(d: &XmlDoc, table: usize) -> Result<Grid> {
         return Err(shape("nonzero cellSpacing is unsupported"));
     }
     let sz = child(d, table, "sz")?;
-    if d.el(sz).attr_value("widthRelTo") != Some("ABSOLUTE")
-        || d.el(sz).attr_value("heightRelTo") != Some("ABSOLUTE")
-    {
-        return Err(shape("relative table dimensions are unsupported"));
-    }
     let mut occupied = BTreeSet::new();
     let mut cells = Vec::new();
     let mut row = 0;
@@ -195,15 +195,35 @@ fn grid(d: &XmlDoc, table: usize) -> Result<Grid> {
     if row != rows || occupied.len() != rows * cols {
         return Err(shape("incomplete table grid"));
     }
-    let widths = axis(&cells, cols, number(d, sz, "width")?, true)?;
-    let heights = axis(&cells, rows, number(d, sz, "height")?, false)?;
     Ok(Grid {
         table,
         sz,
         cells,
-        widths,
-        heights,
+        cols,
+        rows,
     })
+}
+fn grid_axis(d: &XmlDoc, g: &Grid, horizontal: bool) -> Result<Vec<u32>> {
+    let rel = if horizontal {
+        "widthRelTo"
+    } else {
+        "heightRelTo"
+    };
+    if d.el(g.sz).attr_value(rel) != Some("ABSOLUTE") {
+        return Err(shape("relative requested table dimension is unsupported"));
+    }
+    // hp:sz.height is a placement extent, not the sum of cell minima.
+    let extent = if horizontal {
+        Some(number(d, g.sz, "width")?)
+    } else {
+        None
+    };
+    axis(
+        &g.cells,
+        if horizontal { g.cols } else { g.rows },
+        extent,
+        horizontal,
+    )
 }
 fn total(values: &[u32]) -> Result<u32> {
     let sum = values
@@ -303,14 +323,38 @@ fn resize(
     command: &str,
 ) -> Result<()> {
     let doc = d.doc.doc_of(table);
-    let tw = total(&widths)?;
-    let th = total(&heights)?;
+    let tw = if widths.is_empty() {
+        number(doc, g.sz, "width")?
+    } else {
+        total(&widths)?
+    };
+    let th = if heights.is_empty() {
+        number(doc, g.sz, "height")?
+    } else {
+        total(&heights)?
+    };
     let mut cuts = Vec::new();
     let mut changed_cells = Vec::new();
     for c in &g.cells {
-        let w = total(&widths[c.col..c.col + c.cs])?;
-        let h = total(&heights[c.row..c.row + c.rs])?;
-        minimum(w, h, margins(doc, g, c)?)?;
+        let w = if widths.is_empty() {
+            c.w
+        } else {
+            total(&widths[c.col..c.col + c.cs])?
+        };
+        let h = if heights.is_empty() {
+            c.h
+        } else {
+            total(&heights[c.row..c.row + c.rs])?
+        };
+        let m = margins(doc, g, c)?;
+        // An unchanged minimum may equal its margins in a native document.
+        if !widths.is_empty() && w != c.w && u64::from(m[0]) + u64::from(m[1]) >= u64::from(w)
+            || !heights.is_empty() && h != c.h && u64::from(m[2]) + u64::from(m[3]) >= u64::from(h)
+        {
+            return Err(bad(
+                "requested cell dimension must exceed effective margins",
+            ));
+        }
         if w != c.w || h != c.h {
             let n = d
                 .doc
@@ -321,11 +365,19 @@ fn resize(
             d.doc.check_editable(n)?;
             changed_cells.push(n.id.clone());
         }
-        put(doc, c.sz, "width", w, &mut cuts)?;
-        put(doc, c.sz, "height", h, &mut cuts)?;
+        if !widths.is_empty() {
+            put(doc, c.sz, "width", w, &mut cuts)?;
+        }
+        if !heights.is_empty() {
+            put(doc, c.sz, "height", h, &mut cuts)?;
+        }
     }
-    put(doc, g.sz, "width", tw, &mut cuts)?;
-    put(doc, g.sz, "height", th, &mut cuts)?;
+    if !widths.is_empty() {
+        put(doc, g.sz, "width", tw, &mut cuts)?;
+    }
+    if !heights.is_empty() {
+        put(doc, g.sz, "height", th, &mut cuts)?;
+    }
     let intent = Intent::TableGeometry {
         command: command.into(),
         entry: table.entry.clone(),
@@ -348,16 +400,12 @@ pub(crate) fn tracks(
 ) -> Result<()> {
     let table = d.node(target, Some(Kind::Table))?;
     let g = grid(d.doc.doc_of(&table), table.el)?;
+    let old = grid_axis(d.doc.doc_of(&table), &g, columns)?;
+    let requested = dimensions(values, uniform, old.len())?;
     let (w, h) = if columns {
-        (
-            dimensions(values, uniform, g.widths.len())?,
-            g.heights.clone(),
-        )
+        (requested, vec![])
     } else {
-        (
-            g.widths.clone(),
-            dimensions(values, uniform, g.heights.len())?,
-        )
+        (vec![], requested)
     };
     resize(
         d,
@@ -409,8 +457,17 @@ pub(crate) fn cell_size(
     if cell.rs != 1 || cell.cs != 1 {
         return Err(unsupported("merged_cell_size_unsupported","use table track commands to resize a merged region; direct merged cell size is unsupported"));
     }
-    let mut w = g.widths.clone();
-    let mut h = g.heights.clone();
+    let doc = d.doc.doc_of(&table);
+    let mut w = if width.is_some() {
+        grid_axis(doc, &g, true)?
+    } else {
+        vec![]
+    };
+    let mut h = if height.is_some() {
+        grid_axis(doc, &g, false)?
+    } else {
+        vec![]
+    };
     if let Some(v) = width {
         w[cell.col] = v;
     }

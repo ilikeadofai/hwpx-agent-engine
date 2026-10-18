@@ -615,17 +615,24 @@ impl Document {
                 });
             }
             Kind::Table => {
-                let reason = self.table_geometry_block_reason(n);
-                add("table.setColumnWidths", reason.clone());
-                add("table.setRowHeights", reason.clone());
-                let structure = reason.or_else(|| self.table_structure_block_reason(n));
-                for name in [
-                    "table.insertRow",
-                    "table.deleteRow",
-                    "table.insertColumn",
-                    "table.deleteColumn",
+                add(
+                    "table.setColumnWidths",
+                    self.table_geometry_block_reason(n, Some(true)),
+                );
+                add(
+                    "table.setRowHeights",
+                    self.table_geometry_block_reason(n, Some(false)),
+                );
+                for (name, columns) in [
+                    ("table.insertRow", false),
+                    ("table.deleteRow", false),
+                    ("table.insertColumn", true),
+                    ("table.deleteColumn", true),
                 ] {
-                    add(name, structure.clone());
+                    let reason = self
+                        .table_geometry_block_reason(n, Some(columns))
+                        .or_else(|| self.table_structure_block_reason(n));
+                    add(name, reason);
                 }
             }
             Kind::Cell => {
@@ -635,7 +642,7 @@ impl Document {
                     .find(|&i| is_hp(xml.el(i).ns.as_deref()) && xml.el(i).local == "tbl")
                     .and_then(|i| self.nodes.iter().find(|m| m.entry == n.entry && m.el == i));
                 let geometry = owner.map_or(Some("table_geometry_unsupported".into()), |t| {
-                    self.table_geometry_block_reason(t)
+                    self.table_geometry_block_reason(t, None)
                 });
                 let merged = self
                     .cell_addr(n)
@@ -817,7 +824,7 @@ impl Document {
 
     /// Discovery preconditions only; the request planner checks the full grid,
     /// resource selection, parameter bounds and effective margin minima.
-    fn table_geometry_block_reason(&self, n: &Node) -> Option<String> {
+    fn table_geometry_block_reason(&self, n: &Node, columns: Option<bool>) -> Option<String> {
         let doc = self.doc_of(n);
         let bad = || Some("table_geometry_unsupported".into());
         if doc.el(n.el).attr_value("cellSpacing") != Some("0") {
@@ -833,10 +840,16 @@ impl Document {
                 return bad();
             }
         }
-        for a in ["widthRelTo", "heightRelTo"] {
-            if child_attr(doc, n.el, "sz", a).as_deref() != Some("ABSOLUTE") {
-                return bad();
-            }
+        let absolute = |a| child_attr(doc, n.el, "sz", a).as_deref() == Some("ABSOLUTE");
+        // cell.setSize may request either axis; exact arguments are checked by
+        // the planner. Track/structure commands have a known requested axis.
+        let supported = match columns {
+            Some(true) => absolute("widthRelTo"),
+            Some(false) => absolute("heightRelTo"),
+            None => absolute("widthRelTo") || absolute("heightRelTo"),
+        };
+        if !supported {
+            return bad();
         }
         if doc
             .descendants(n.el)
