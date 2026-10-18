@@ -166,3 +166,42 @@ fn equation_gate_rejects_invalid_requests_independently() {
     };
     assert!(gate(&property_state(), &[invalid]).is_err());
 }
+
+#[test]
+fn equation_preview_is_independently_required_and_stale_is_reported() {
+    for (preview, want, stale) in [
+        (
+            format!("before {OLD} after").into_bytes(),
+            b"before x < y & z after".to_vec(),
+            false,
+        ),
+        (
+            format!("{OLD} {OLD}").into_bytes(),
+            format!("{OLD} {OLD}").into_bytes(),
+            true,
+        ),
+        (
+            b"no script projection".to_vec(),
+            b"no script projection".to_vec(),
+            true,
+        ),
+        (vec![255, 254], vec![255, 254], true),
+    ] {
+        let mut before = PackageState::from_archive(&original());
+        before.set("Preview/PrvText.txt", preview.clone().into());
+        let source = Archive::open(bytes(&before), &Limits::default()).unwrap();
+        let mut after = script_state();
+        after.set("Preview/PrvText.txt", want.clone().into());
+        let r = verify_archive(&source, &bytes(&after), &[op()], &Limits::default()).unwrap();
+        assert_eq!(r.prv_text_stale, stale);
+        after.set(
+            "Preview/PrvText.txt",
+            b"unrequested projection".to_vec().into(),
+        );
+        assert!(verify_archive(&source, &bytes(&after), &[op()], &Limits::default()).is_err());
+        if !stale {
+            after.set("Preview/PrvText.txt", preview.into());
+            assert!(verify_archive(&source, &bytes(&after), &[op()], &Limits::default()).is_err());
+        }
+    }
+}

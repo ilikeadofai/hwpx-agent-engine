@@ -210,9 +210,12 @@ fn form_fill_dry_run_and_undo_keep_byte_identical_documents() {
         false,
     );
     assert!(applied.ok, "{:?}", applied.diagnostics);
-    assert_ne!(export(&mut exec, &h.0.join("applied.hwpx")), original);
+    let edited = export(&mut exec, &h.0.join("applied.hwpx"));
+    assert_ne!(edited, original);
     assert!(exec.call("history.undo", json!({}), Some(1), false).ok);
     assert_eq!(export(&mut exec, &h.0.join("undo.hwpx")), original);
+    assert!(exec.call("history.redo", json!({}), Some(2), false).ok);
+    assert_eq!(export(&mut exec, &h.0.join("redo.hwpx")), edited);
 }
 
 #[test]

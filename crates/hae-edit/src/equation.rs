@@ -135,6 +135,9 @@ pub(crate) fn set(
         if old == s {
             return Ok(());
         }
+        // PrvText may contain the decoded equation script rather than the
+        // paragraph model's object placeholder. Use the unique-old-text rule.
+        d.prv.push((old, s.into()));
         if se.end.is_some() {
             cuts.push((se.inner(), escape_text(s).into_bytes()));
         } else {

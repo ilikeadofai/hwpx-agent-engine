@@ -486,3 +486,80 @@ fn equation_versions_and_registry_discovery_are_consistent() {
     }
     h.exact();
 }
+
+#[test]
+fn equation_script_preview_unique_absent_duplicate_empty_and_non_utf8() {
+    const OLD: &str = "{a} over {b}  TIMES  {c} over {d} = {ac} over {bd}";
+    for (preview, index, expected, stale) in [
+        (
+            format!("before {OLD} after").into_bytes(),
+            0,
+            b"before x < y & z after".to_vec(),
+            false,
+        ),
+        (
+            format!("{OLD}\n{OLD}").into_bytes(),
+            0,
+            format!("{OLD}\n{OLD}").into_bytes(),
+            true,
+        ),
+        (b"Equation 1: ".to_vec(), 0, b"Equation 1: ".to_vec(), true),
+        (b"empty script".to_vec(), 1, b"empty script".to_vec(), true),
+        (vec![0xff, 0xfe], 0, vec![0xff, 0xfe], true),
+    ] {
+        let a = hae_zip::Archive::open(INPUT.to_vec(), &Limits::default()).unwrap();
+        let mut state = hae_package::PackageState::from_archive(&a);
+        state.set("Preview/PrvText.txt", preview.into());
+        let source = hae_zip::write(&a, &hae_package::zip_plan(&a, &state).unwrap()).unwrap();
+        let mut h = Harness::new();
+        q(&mut h.exec, "document.close", json!({}));
+        fs::write(h.dir.join("custom.hwpx"), &source).unwrap();
+        q(
+            &mut h.exec,
+            "document.open",
+            json!({"path":h.dir.join("custom.hwpx")}),
+        );
+        let id = h.id(index);
+        let r = ok(h.edit(
+            "equation.setScript",
+            json!({"target":id,"script":"x < y & z"}),
+            0,
+            false,
+        ));
+        assert_eq!(r["stale"]["prvText"], stale, "{r}");
+        let edited = h.bytes();
+        let out = hae_zip::Archive::open(edited.clone(), &Limits::default()).unwrap();
+        assert_eq!(
+            &**out.get("Preview/PrvText.txt").unwrap().payload(),
+            &expected
+        );
+        ok(h.edit("history.undo", json!({}), 1, false));
+        assert_eq!(h.bytes(), source);
+        ok(h.edit("history.redo", json!({}), 2, false));
+        assert_eq!(h.bytes(), edited);
+    }
+}
+
+#[test]
+fn equation_properties_preserve_preview_and_exact_redo() {
+    let mut h = Harness::new();
+    let id = h.id(0);
+    let r = ok(h.edit(
+        "equation.setProperties",
+        json!({"target":id,"props":{"baseLine":77}}),
+        0,
+        false,
+    ));
+    assert_eq!(r["stale"]["prvText"], false);
+    let edited = h.bytes();
+    let a = hae_zip::Archive::open(edited.clone(), &Limits::default()).unwrap();
+    let b = hae_zip::Archive::open(INPUT.to_vec(), &Limits::default()).unwrap();
+    assert_eq!(
+        a.raw_data("Preview/PrvText.txt"),
+        b.raw_data("Preview/PrvText.txt")
+    );
+    ok(h.edit("history.undo", json!({}), 1, false));
+    h.exact();
+    ok(h.edit("history.redo", json!({}), 2, false));
+    assert_eq!(h.bytes(), edited);
+}

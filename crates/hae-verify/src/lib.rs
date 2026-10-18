@@ -432,6 +432,20 @@ fn verify_inner(
                         .ancestors(target)
                         .find(|&i| hp(doc.el(i), "p"))
                         .ok_or_else(|| unsupported("equation lacks paragraph"))?;
+                    let source = doc
+                        .el(target)
+                        .children
+                        .iter()
+                        .copied()
+                        .find(|&i| hp(doc.el(i), "script"))
+                        .ok_or_else(|| unsupported("equation lacks script"))?;
+                    let old: String = doc
+                        .el(source)
+                        .items
+                        .iter()
+                        .filter_map(hae_xml::Item::text)
+                        .collect();
+                    preview.push((old, script.clone()));
                     anchor(&mut anchors, entry, &doc, para)?;
                     material = true;
                 }

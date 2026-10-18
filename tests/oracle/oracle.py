@@ -62,6 +62,7 @@ class Node:
     opening: bytes = b''
     closing: bytes = b''
     allowed: set = field(default_factory=set)
+    added_attrs: set = field(default_factory=set)
     text_changed: bool = False
     generated: bool = False
     changed_gaps: bool = False
@@ -295,7 +296,12 @@ def compare_node(expected, actual, location):
     need(len(expected.children) == len(actual.children), 'STRUCTURE_CHANGED', location)
     need(expected.text == actual.text, 'TEXT_CHANGED', location)
     if not expected.generated:
-        left, right = masked_open(expected, expected.allowed), masked_open(actual, expected.allowed)
+        opening = copy.copy(actual)
+        for name in expected.added_attrs:
+            pattern = rb'\s' + name.encode() + rb'="[^"]*"'
+            opening.opening, count = re.subn(pattern, b'', opening.opening)
+            need(count == 1, 'LEXICAL_CHANGED', 'added attribute token must be unique')
+        left, right = masked_open(expected, expected.allowed), masked_open(opening, expected.allowed)
         if expected.changed_gaps or expected.expanded:
             if expected.expanded:
                 left = re.sub(rb'\s*/>$', b'>', left)
@@ -730,24 +736,92 @@ def preview_text(package):
     return '\n'.join(lines)
 
 
-def update_preview(original, expected, edits):
+def update_preview(original, expected, edits, material=False):
     """Only replace uniquely occurring, nonblank old paragraph text in UTF-8.
 
     Otherwise retain the old preview bytes (stale), as the design requires.
     Never synthesize a transcript from the candidate document.
     """
     name = 'Preview/PrvText.txt'
-    if not edits or name not in original.payload:
-        return
+    if name not in original.payload:
+        return False
     try:
         preview = original.payload[name].decode('utf-8')
     except UnicodeDecodeError:
-        return
+        return material
+    stale = False
     for old, new in edits:
         old, new = (value.replace('\t', ' ').replace('\n', ' ') for value in (old, new))
-        if old != new and old.strip() and preview.count(old) == 1:
+        if old == new:
+            continue
+        if old.strip() and preview.count(old) == 1:
             preview = preview.replace(old, new, 1)
+        else:
+            stale = True
     expected.payload[name] = preview.encode('utf-8')
+    return stale
+
+
+def xml_char(c):
+    n = ord(c)
+    return n in (9, 10, 13) or 32 <= n <= 0xd7ff or 0xe000 <= n <= 0xfffd or 0x10000 <= n <= 0x10ffff
+
+
+def equation_change(node, op):
+    """Derive equation bytes from source + request, never candidate values."""
+    need(hp(node, 'equation'), 'INVALID_TARGET', 'equation target required')
+    if op['op'] == 'equation.setScript':
+        value = op['script']
+        need(isinstance(value, str) and value.strip() and all(xml_char(c) for c in value),
+             'INVALID_REQUEST', 'nonempty XML script required')
+        need(not any(c == chr(92) or c == '"' or ord(c) < 32 or 127 <= ord(c) <= 159 for c in value)
+             and '<!' not in value and '<?' not in value, 'UNSUPPORTED', 'unverified script notation')
+        depth = 0
+        for c in value:
+            depth += (c == '{') - (c == '}')
+            need(depth >= 0, 'UNSUPPORTED', 'unbalanced script')
+        need(depth == 0, 'UNSUPPORTED', 'unbalanced script')
+        script = one([n for n in node.children if hp(n, 'script')], 'unique script required')
+        need(not script.attrs and not script.children and not re.search(rb'<', b''.join(script.gaps)),
+             'UNSUPPORTED', 'opaque script')
+        old = script.text
+        if old == value:
+            return False, None
+        script.text = value
+        script.gaps = [xml_text(value)]
+        script.changed_gaps = True
+        script.expanded = not script.closing
+        return True, (old, value)
+    props = op['props']
+    names = {'baseLine', 'baseUnit', 'textColor', 'font', 'version', 'lineMode'}
+    need(isinstance(props, dict) and props and props.keys() <= names,
+         'INVALID_REQUEST', 'unknown or empty equation properties')
+    changed = False
+    for key, value in props.items():
+        if value is None:
+            continue
+        if key in ('baseLine', 'baseUnit'):
+            need(type(value) is int and (0 if key == 'baseLine' else 1) <= value <= 4294967295,
+                 'INVALID_REQUEST', 'invalid equation number')
+            value = str(value)
+        else:
+            need(isinstance(value, str) and value.strip() and all(xml_char(c) and not (ord(c) < 32 or 127 <= ord(c) <= 159) for c in value),
+                 'INVALID_REQUEST', 'invalid equation string')
+            if key == 'textColor':
+                need(re.fullmatch(r'#[0-9a-fA-F]{6}', value), 'INVALID_REQUEST', 'invalid equation color')
+            if key == 'lineMode':
+                need(value in ('CHAR', 'LINE'), 'INVALID_REQUEST', 'invalid lineMode')
+        if node.attrs.get(key) != value:
+            changed = True
+            if key in node.added_attrs:
+                node.attrs[key] = value
+            elif key in node.attrs:
+                node.set_attr(key, value)
+            else:
+                node.attrs[key] = value
+                node.added_attrs.add(key)
+    need(any(v is not None for v in props.values()), 'INVALID_REQUEST', 'empty equation properties')
+    return changed, None
 
 
 def expected_state(original, candidate, request):
@@ -779,6 +853,8 @@ def expected_state(original, candidate, request):
             'cell.setText': ((), ('text','paragraphs','controls')),
             'paragraph.format': ((), ('alignment', 'lineSpacingPercent')),
             'image.replace': (('image',), ()),
+            'equation.setScript': (('script',), ()),
+            'equation.setProperties': (('props',), ()),
         }
         need(kind in requirements, 'INVALID_REQUEST', 'unknown operation')
         required, optional = requirements[kind]
@@ -788,6 +864,24 @@ def expected_state(original, candidate, request):
              and path and all(type(i) is int and i >= 0 for i in path), 'INVALID_TARGET', 'entry/path must identify section element')
         root = expected.xml[entry].root
         target = root.at(path)
+        if kind.startswith('equation.'):
+            changed, pair = equation_change(target, op)
+            if changed:
+                if pair is not None:
+                    preview_edits.append(pair)
+                intent = {'op': kind, 'entry': entry, 'path': path,
+                          ('script' if kind.endswith('setScript') else 'props'): op.get('script', op.get('props'))}
+                intents.append(intent)
+                changes.append({'op': kind, 'entry': entry, 'path': path})
+                parent_path = path[:-1]
+                while parent_path and not hp(root.at(parent_path), 'p'):
+                    parent_path = parent_path[:-1]
+                need(parent_path and hp(root.at(parent_path), 'p'), 'UNSUPPORTED', 'equation lacks paragraph')
+                anchor = anchors.setdefault(entry, {'first': parent_path[0], 'nested': []})
+                anchor['first'] = min(anchor['first'], parent_path[0])
+                if len(parent_path) > 1:
+                    anchor['nested'].append(root.at(parent_path))
+            continue
         # Each operation owns a distinct target paragraph or picture in this initial oracle.
         paras = cell_paragraphs(target) if kind == 'cell.setText' else [target]
         para = paras[0]
@@ -913,11 +1007,12 @@ def expected_state(original, candidate, request):
                     need(i == len(para.children) - 1, 'UNSUPPORTED', 'cache must be final paragraph child')
                     para.remove(i)
                     cache_count += 1
-    update_preview(original, expected, preview_edits)
+    prv_stale = update_preview(original, expected, preview_edits, bool(changes))
     if 'intents' in request:
         need(request['intents'] == intents, 'INTENT_MISMATCH', 'reported Intent does not equal independently derived applied intents')
     return expected, {'changes': changes, 'expectedIntents': intents, 'cacheRemovals': cache_count,
-                      'addedMedia': sorted(new_images), 'addedStyles': sorted(new_styles)}
+                      'addedMedia': sorted(new_images), 'addedStyles': sorted(new_styles),
+                      'prvTextStale': prv_stale, 'thumbnailStale': bool(changes) and any(n.lower() == 'preview/prvimage.png' for n in original.names)}
 
 
 def check(original, candidate, request):
