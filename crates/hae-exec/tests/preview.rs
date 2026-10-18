@@ -97,6 +97,7 @@ fn unconfigured_adapter_keeps_returning_renderer_unavailable() {
 }
 
 #[test]
+#[ignore = "requires optional rhwp renderer; scripts/check.sh runs this when available"]
 fn preview_returns_png_and_full_metadata() {
     let (mut exec, _o, id) = executor("gyehoek-reference.hwpx");
     let (ad, _f) = adapter(|_| {});
@@ -135,6 +136,7 @@ fn preview_returns_png_and_full_metadata() {
 }
 
 #[test]
+#[ignore = "requires optional rhwp renderer; scripts/check.sh runs this when available"]
 fn svg_is_opt_in_and_checked() {
     let (mut exec, _o, _id) = executor("ref_empty.hwpx");
     let (ad, _f) = adapter(|_| {});
@@ -154,6 +156,7 @@ fn svg_is_opt_in_and_checked() {
 }
 
 #[test]
+#[ignore = "requires optional rhwp renderer; scripts/check.sh runs this when available"]
 fn page_limit_is_a_partial_result_with_diagnostic() {
     let (mut exec, _o, _id) = executor("research-school-plan-reference.hwpx");
     let (ad, _f) = adapter(|c| c.limits.max_preview_pages = 5);
@@ -213,6 +216,7 @@ fn render_failure_never_changes_document_state() {
 }
 
 #[test]
+#[ignore = "requires optional rhwp renderer; scripts/check.sh runs this when available"]
 fn preview_after_an_edit_is_tied_to_the_new_revision() {
     let (mut exec, _o, _id) = executor("gyehoek-reference.hwpx");
     let (ad, _f) = adapter(|_| {});
