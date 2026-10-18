@@ -110,7 +110,6 @@ python3 -m unittest discover -s tests/oracle
 로컬 한컴 게이트(2026-10-18, hoffice-hwp 11.20.0.989 offscreen): `tests/fixtures/editing/equations.hwpx`에 `equation.setScript`와 `equation.setProperties`를 적용해 `document.export`한 산출물 1건이 PASS(생존)했습니다. 이는 "열렸는가"만 본 결과이며 Windows 한컴오피스 2024의 조판·화면 일치를 뜻하지 않습니다.
 
 ## 6. 0.3 좁은 편집 명령의 독립 검증
-
 - `paragraph.setStyle`: 원본에서 지정한 문단들의 구조 경로를 해석하고 기존 header 스타일 ID를 확인한 뒤 `styleIDRef` 값만 독립 계산합니다. 다른 문단·속성·스타일 정의 변경은 거절합니다.
 - `image.fit`: 원본/앞 단계의 독립 계산 상태에서 내장 PNG/JPEG 크기를 읽어 `75 HWPUNIT/px`, 프레임 맞춤·중앙 자르기·표시 크기·원본 사각형·배율 행렬을 재계산합니다. 요청에 없는 기하·다른 그림·미디어·manifest 변경, 행렬 또는 `isEmbeded` 손실을 거절합니다. `orgSz` 좌표계는 유지하며 `imgRect.pt2 == orgSz`, `sz == curSz`를 강제합니다. `cover`만 원본보다 작은 clip을 허용합니다.
 - `header.setText`: 편집기가 고른 문단을 받지 않고 구역·종류·인덱스로 직접 찾습니다. 제어 요소를 포함한 문단과 텍스트 조각이 없는 문단은 거절합니다. 기존 텍스트 교체 검증과 줄 배치 캐시·PrvText 규칙을 적용하고 다른 머리말·꼬리말·본문 변경을 거절합니다.
@@ -153,3 +152,28 @@ python3 -m unittest discover -s tests/oracle
 6. 마지막에 기대 패키지와 후보를 항목 바이트 단위로 대조하는 것은 기존과 같습니다(미편집 항목은 원시 압축 바이트까지).
 
 시험: `crates/hae-verify/tests/table_structure.rs`가 편집기 없이 후보 4종(행/열 삽입·삭제)을 바이트 계약대로 손으로 만들어 수용을 확인하고, `rowCnt`·`colCnt`·표 크기·새 셀 주소·밀린 셀 주소 미갱신, 새 셀의 글·테두리·`header`·`name` 오류, 잘못된 위치·행 수, 캐시 미삭제/과삭제, 다른 표 변경, 엉뚱한 행/열 삭제, 병합 셀 삭제·분할 삽입 요청 등 30건 가까운 변조를 거절하는지 봅니다. 한컴 열기 게이트는 [표 구조 편집 한컴 게이트](table-structure-hancom-gate-2026-10-18.md)에 있습니다.
+
+## 7. OWPML 사전 대조 조회 (`document.validate`, 0.4)
+
+이 문서의 §1~§6은 **저장 관문**이다(후보를 거절할 수 있고, 실패하면 파일을 쓰지 않는다).
+`document.validate`는 관문이 아니라 **조회**다. 열린 문서를 읽어 한컴의 공개 OWPML 모델
+(`hancom-io/hwpx-owpml-model`, Apache-2.0)의 요소·속성 이름과 대조하고, 참조 무결성·자원
+카운트·패키지 필수 항목·미사용 자원을 보고만 한다. 문서·`revision`·이력·nodeId를 바꾸지 않으며,
+열기에 성공한 문서를 이 명령 때문에 거절하지 않는다. 호출 경로에 `verify_*`가 끼지 않는다.
+
+- 사전은 `crates/hae-model/data/owpml-dictionary.json`(생성 스크립트 `scripts/owpml_dictionary.py`)이고
+  `crates/hae-model/src/owpml.rs`가 로드한다. 이름만 추출하며 모델 코드를 복사하지 않는다.
+  출처 파일·추출 규칙·심각도 근거는 [document-validate-2026-10-19.md](document-validate-2026-10-19.md)에 있다.
+- 보고 코드·reason과 심각도는 [진단 코드](diagnostic-codes.md) §0.4에 있다. `error`는 패키지·header
+  불변식(필수 항목 누락, `itemCnt`/`fontCnt`/`secCnt` 불일치, 중복 id)에만 쓴다. 사전에 없는 이름은
+  `warning`/`info`인데, 실측에서 한컴이 쓴 실제 서식에 `hh:layoutCompatibility`의 자식 5종과
+  `opf:version`이 있었기 때문이다. 같은 이유로 `hp:p@styleIDRef`가 header에 없는 문서도 `warning`이다.
+- `4294967295`는 미해결 참조로 세지 않는다. 모델이 참조를 `(UINT)-1`로 초기화하는 값이고 코퍼스
+  10개 중 6개가 `hh:paraHead@charPrIDRef`에 쓴다. `style.list`의 기존 `unresolvedReferenceCount`는
+  이 표식을 구분하지 않으므로 두 명령의 수가 다를 수 있다 — 합치면 "정의 없는 참조"의 총 발생 수다.
+- 한계(§3과 같은 성격): 공식 XSD/KS X 6101 적합성 검증이 아니고, 속성 **값**·자식 순서·필수 자식은
+  보지 않는다. 모델은 2023 스냅샷이라 새 요소를 모를 수 있다. 한컴 조판 호환 판정도 아니다.
+- 시험: `crates/hae-exec/tests/document_validate.rs`(명령 수준 17건, 문서 불변은 `document.export`
+  전후 바이트 동일로 확인), `crates/hae-model/src/validate_tests.rs`(사전 fingerprint·이름·별칭,
+  손으로 만든 `PackageInfo`로 필수 항목, 인자 거절, 스캔 한도 등 8건). 변조 거절 시험은 없다 —
+  거절하는 명령이 아니기 때문이다.

@@ -246,6 +246,9 @@ pub struct Limits {
     pub max_text_export_bytes: u64,
     /// Largest number of paragraphs `hwp5.inspect` will enumerate in one HWP5 file.
     pub max_hwp5_paragraphs: u64,
+    /// Largest number of XML element visits `document.validate` performs
+    /// (element/attribute comparison plus reference scanning).
+    pub max_validate_elements: u64,
 }
 
 impl Default for Limits {
@@ -265,6 +268,7 @@ impl Default for Limits {
             renderer_timeout_secs: 60,
             max_text_export_bytes: 16 * MIB,
             max_hwp5_paragraphs: 1_000_000,
+            max_validate_elements: 1_000_000,
         }
     }
 }

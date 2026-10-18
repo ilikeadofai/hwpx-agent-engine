@@ -750,6 +750,45 @@ pub struct MutationResultShape {
     pub history_evicted: bool,
 }
 
+/// Parameters of `document.validate` (read-only OWPML dictionary check).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DocumentValidateParams {
+    /// NodeId of a section, table, cell or paragraph; the element and attribute
+    /// comparison is limited to that subtree. Reference integrity, resource
+    /// definitions, counts and package members stay document-wide.
+    #[serde(default)]
+    pub scope: Option<String>,
+    /// Cursor from a previous reply's `nextCursor`.
+    #[serde(default)]
+    pub cursor: Option<String>,
+    /// Page size (default 100, 1..=500).
+    #[schemars(range(min = 1, max = 500))]
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// Examples kept per finding (default 5, 1..=50).
+    #[schemars(range(min = 1, max = 50))]
+    #[serde(default)]
+    pub max_examples: Option<usize>,
+}
+
+/// Result of `document.validate`: paged findings plus a machine-readable
+/// summary and what the scan actually covered.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentValidateResultShape {
+    pub document_id: String,
+    pub revision: u64,
+    pub scope: Option<String>,
+    pub summary: hae_model::validate::Summary,
+    pub checked: hae_model::validate::Checked,
+    pub items: Vec<hae_model::validate::Finding>,
+    pub total: usize,
+    pub next_cursor: Option<String>,
+    /// True when the scan stopped adding new findings ([`hae_model::validate::MAX_FINDINGS`]).
+    pub truncated: bool,
+}
+
 /// Result of the four table structure commands (batch results carry the same
 /// objects per step in `structure`). In `dryRun` the created `nodeId`s are
 /// null because the candidate is discarded.
@@ -962,6 +1001,7 @@ pub enum ParsedCommand {
     DocumentOpen(DocumentOpenParams),
     DocumentInspect(DocumentInspectParams),
     DocumentStats(DocumentStatsParams),
+    DocumentValidate(DocumentValidateParams),
     SectionList(SectionListParams),
     NoteList(NoteListParams),
     DocumentClose(EmptyParams),
@@ -1124,7 +1164,11 @@ mod schema_tests {
     fn descriptor_schema_version_is_the_registry_contract_not_the_package_version() {
         assert_eq!(REGISTRY_SCHEMA_VERSION, "0.3.0");
         let list = command_list();
-        assert_eq!(list.len(), 57);
+        // The count is not the contract; this test only asserts the version
+        // string is shared by every descriptor. Keep it derived so adding a
+        // command never breaks the assertion (the user-guide index test in
+        // `tests/documentation.rs` checks that the number is documented).
+        assert_eq!(list.len(), COMMAND_NAMES.len());
         assert!(list
             .iter()
             .all(|d| d.schema_version == REGISTRY_SCHEMA_VERSION));
@@ -1140,6 +1184,7 @@ mod schema_tests {
             ("document_open", [false, true, false, false]),
             ("document_inspect", [true, false, true, false]),
             ("document_stats", [true, false, true, false]),
+            ("document_validate", [true, false, true, false]),
             ("section_list", [true, false, true, false]),
             ("note_list", [true, false, true, false]),
             ("document_close", [false, true, false, false]),
@@ -1415,6 +1460,14 @@ define_commands! {
         mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
         stage1: true, reason: None,
         params: DocumentStatsParams, output: DocumentStatsResult,
+    },
+    DocumentValidate {
+        name: "document.validate", cli: "document-validate", mcp: "document_validate",
+        summary: "Compare the document with the public OWPML element/attribute dictionary and report unknown elements/attributes, unresolved charPr/paraPr/style/borderFill references, missing package members, count mismatches (itemCnt/fontCnt/secCnt), duplicate ids and unused resources as paged findings with severity and code; never modifies the document",
+        category: Query,
+        mutates: false, doc: true, ver: false, seq: false, dry: false, hist: false,
+        stage1: true, reason: None,
+        params: DocumentValidateParams, output: DocumentValidateResultShape,
     },
     SectionList {
         name: "section.list",

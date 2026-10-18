@@ -13,10 +13,12 @@ pub mod equation;
 pub mod export_text;
 pub mod fields;
 pub mod links;
+pub mod owpml;
 pub mod para;
 pub mod query;
 pub mod resource_query;
 pub mod trackchange;
+pub mod validate;
 
 use hae_diag::{Code, EngineError, Limits, Result, Stage};
 use hae_package::{PackageInfo, PackageState, XmlMap, NS_HC, NS_HH, NS_HP, NS_HP10, NS_HS};
@@ -831,3 +833,5 @@ fn references_invalid(info: &PackageInfo, xml: &XmlMap) -> bool {
 mod export_text_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod validate_tests;

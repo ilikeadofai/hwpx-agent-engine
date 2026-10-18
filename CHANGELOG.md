@@ -9,6 +9,22 @@
 
 ## [Unreleased]
 
+### 추가
+
+- `document.validate`(카탈로그 MT-13): 열린 문서를 한컴의 공개 OWPML 모델
+  (`hancom-io/hwpx-owpml-model`, Apache-2.0)의 요소·속성 이름과 대조하고, 참조 무결성
+  (`charPrIDRef`·`paraPrIDRef`·`styleIDRef`·`nextStyleIDRef`·`borderFillIDRef`), 패키지 필수 항목,
+  `itemCnt`/`fontCnt`/`secCnt` 불일치, 중복 자원 id, 안 쓰이는 자원을 `code`·`severity`·`reason`·
+  `count`·`examples`로 보고한다. 읽기 전용(`category: Query`, `mutatesContent:false`)이며
+  `expectedVersion`·요청 순번·이력이 없다. `scope`·`cursor`·`maxExamples` 지원.
+  사전은 `crates/hae-model/data/owpml-dictionary.json`(생성: `scripts/owpml_dictionary.py`),
+  근거·실측·한컴 게이트는 `docs/decisions/document-validate-2026-10-19.md`와
+  `docs/decisions/document-validate-hancom-open-2026-10-19.md`에 있다.
+- `Limits::max_validate_elements`(기본 1,000,000): `document.validate`가 훑는 XML 요소 방문 한도.
+  넘으면 `RESOURCE_LIMIT`(`reason: validate_scan_limit`)으로 거절하고 부분 결과를 돌려주지 않는다.
+- `crates/hae-exec/tests/documentation.rs`: `docs/user-guide.md` 부록 색인(명령 수·이름·MCP 도구
+  이름·분류·문서 변경 여부)을 레지스트리와 대조하는 시험.
+
 ## [0.3.0] - 2026-10-18
 
 기능 계약은 [0.3 설계서](docs/superpowers/specs/2026-10-18-hwpx-engine-0.3-design.md)다.

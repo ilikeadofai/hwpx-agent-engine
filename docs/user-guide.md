@@ -22,6 +22,7 @@
 - **구역 용지·여백·쪽 번호·표시 설정 (0.3, `section.*`)**: 기존 구역 하나의 용지 방향·크기·제본 방식·여백, 쪽 시작 방식과 시작 번호, 첫 쪽 머리말·꼬리말·쪽 번호 숨김과 테두리·채우기 표시, 격자를 조회하고(`section_get_page`) 지정한 항목만 바꿉니다(`section_set_page`, `section_set_page_numbering`, `section_set_visibility`). 조회 값은 XML에 명시된 것만 `explicit`으로, 없는 값은 `unspecified`로 구분해 알려 주며 상속·기본값을 추측하지 않습니다. 자세한 내용은 아래 0.3절 「구역 용지·여백·쪽 번호·표시 설정」을 보세요.
 - **Markdown·HTML로 내보내기 (`document_export_text`)**: 문서(또는 한 구역)를 읽기 전용으로 변환해 새 `.md`/`.html` 파일로 씁니다. 문서·`revision`·되돌리기 이력은 바뀌지 않습니다(아래 ⑧).
 - **누름틀(필드) 조회와 값 채우기 (`field_list`·`field_set_text`, 0.3)**: 공문서 서식의 누름틀(`CLICK_HERE`)·하이퍼링크(`HYPERLINK`) 필드를 찾아 이름·ID·Command 원문·현재 값·채우기 가능 여부를 조회하고, 필드 마커와 서식을 그대로 둔 채 표시 텍스트만 채웁니다.
+- **OWPML 사전 기반 문서 검사 (`document_validate`, 0.4)**: 문서를 읽어 한컴의 공개 OWPML 모델(요소·속성 이름)과 대조하고, 알 수 없는 요소·속성, 미해결 `charPrIDRef`·`paraPrIDRef`·`styleIDRef`·`borderFillIDRef` 참조, 패키지 필수 항목 누락, `itemCnt`/`fontCnt`/`secCnt` 불일치, 중복 자원 id, 안 쓰이는 자원을 `severity`·`code`와 함께 보고합니다(아래 0.4절).
 - **구형 `.hwp`(HWP5) 읽기 전용 조회 (`hwp5_inspect`, 0.3)**: HWPX와 별개 crate(`hae-hwp5`)로 구형 HWP5 바이너리를 직접 열어 버전·압축·암호화 여부, 구역·문단·글자 수와 문단별 텍스트 앞부분을 돌려줍니다. 열린 문서가 필요 없고 파일을 바꾸지 않습니다(아래 0.3절 「구형 .hwp(HWP5) 읽기 전용 조회」).
 - **되돌리기·다시 실행 및 미리보기**: 작업 전 가상 적용(`dryRun`), 변경 내역 비교(`document_diff`), 실행 취소(`history_undo`)·다시 실행(`history_redo`), 외부 렌더러 연동을 통한 PNG/SVG 미리보기(`document_preview`)를 지원합니다.
 
@@ -468,7 +469,7 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 
 문서를 직접 바꾸지 않는 보조 명령들입니다. 명령 이름은 점 표기(`document.diff`), MCP 도구 이름은 밑줄 표기(`document_diff`)입니다.
 
-- **명령 목록 (`command.list` / `command_list`)**: 인자가 없습니다. 등록된 57개 명령 각각의 이름·MCP 도구 이름·분류·요약, `requiresDocument`·`requiresExpectedVersion`·`supportsDryRun`·`recordsHistory` 같은 정책, 입력·출력 JSON Schema, 설정상 사용 가능 여부(`available`)를 돌려줍니다. 각 항목의 `schemaVersion`은 레지스트리 계약 버전(`0.3.0`)이며 엔진 버전과 별개입니다. `available`은 렌더러 설정 같은 실행 환경에서의 가용성이고, 개별 문단·표에서 편집이 되는지는 `element_query`·`element_get`의 `edits[명령].available`이 알려 줍니다. CLI에서는 `hae run --command command.list --params '{}'`로 같은 목록을 얻습니다.
+- **명령 목록 (`command.list` / `command_list`)**: 인자가 없습니다. 등록된 58개 명령 각각의 이름·MCP 도구 이름·분류·요약, `requiresDocument`·`requiresExpectedVersion`·`supportsDryRun`·`recordsHistory` 같은 정책, 입력·출력 JSON Schema, 설정상 사용 가능 여부(`available`)를 돌려줍니다. 각 항목의 `schemaVersion`은 레지스트리 계약 버전(`0.3.0`)이며 엔진 버전과 별개입니다. `available`은 렌더러 설정 같은 실행 환경에서의 가용성이고, 개별 문단·표에서 편집이 되는지는 `element_query`·`element_get`의 `edits[명령].available`이 알려 줍니다. CLI에서는 `hae run --command command.list --params '{}'`로 같은 목록을 얻습니다.
 - **명령 하나 설명 (`command.describe` / `command_describe`)**: `{"command":"text.replace"}`처럼 이름을 주면 그 명령의 입력·출력 Schema와 `dryRun`·이력 정책을 돌려줍니다. 인자를 만들기 전에 확인하는 용도입니다.
 - **일괄 실행 (`command.batch` / `command_batch`)**: `{"documentId":"doc-1","expectedVersion":3,"steps":[{"command":"text.replace","params":{...}},{"command":"paragraph.format","params":{...}}]}`처럼 편집 단계를 순서대로 줍니다. 전체가 한 번의 `revision`·되돌리기 단위이고, 한 단계라도 실패하면 앞 단계까지 포함해 아무것도 바뀌지 않으며 오류의 `detail.failedStep`이 실패한 단계를 가리킵니다. `dryRun: true`로 먼저 시험할 수 있습니다. 단계 안의 `params`에는 문서 ID나 `expectedVersion`을 넣지 않습니다.
 - **스냅샷 만들기 (`document.snapshot` / `document_snapshot`)**: `{"documentId":"doc-1","label":"교체 전"}`(`label`은 선택). 현재 상태를 세션 안에 보관하고 `snapshotId`와 `revision`을 돌려줍니다. 문서와 이력은 바뀌지 않으며, 세션 메모리 한도를 넘으면 `RESOURCE_LIMIT`로 거절합니다. 스냅샷은 세션이 끝나면 사라지고 `.hwpwork`에 저장되지 않습니다.
@@ -983,6 +984,72 @@ entry의 바이트가 같다는 이유로 동일 미디어 참조로 간주하�
 external은 null로 남기되 ZIP payload가 있으면 해시는 제공합니다.
 
 
+## 0.4 OWPML 사전 기반 문서 검사 (`document.validate`)
+
+`document.validate` (MCP `document_validate`, CLI `document-validate`)는 열린 문서를 **읽어서**
+한컴의 공개 OWPML 모델(`hancom-io/hwpx-owpml-model`, Apache-2.0)의 요소·속성 이름과 대조하고,
+HAE만 알 수 있는 참조·카운트·패키지 사실을 함께 보고합니다. 문서를 **절대 바꾸지 않습니다**
+(`category: Query`, `mutatesContent:false`, `readOnlyHint:true`). `expectedVersion`도 요청 순번도
+필요 없고, 부르기 전후의 `document.export` 바이트가 같습니다.
+
+```json
+{"command":"document.validate","params":{"limit":100}}
+{"command":"document.validate","params":{"scope":"구역 또는 문단 nodeId","maxExamples":10}}
+```
+
+### 무엇을 보는가
+
+| 보고 코드 | 심각도 | 내용 |
+|---|---|---|
+| `unknown_element` | warning | OWPML 모델이 이름을 모르는 요소(이름·개수·예시 경로) |
+| `unknown_attribute` | info | 모델이 그 요소에서 읽지 않는 속성 |
+| `unknown_namespace` | info | 모델이 다루지 않는 namespace, 또는 모델이 이름을 하나도 두지 않은 namespace(`hp10`, `hwpml/2016/meta/pkg#` 등) |
+| `unresolved_reference` | warning | `charPrIDRef`·`paraPrIDRef`·`styleIDRef`·`nextStyleIDRef`·`borderFillIDRef` 값이 header 정의에 없음(값별 1행, 개수·예시 포함) |
+| `unset_reference` | info | 값이 `4294967295` — 모델이 `(UINT)-1`로 초기화하는 "참조 없음" 표식. dangling으로 세지 않는다는 사실을 알려 줍니다 |
+| `missing_package_item` | error | `mimetype`·`META-INF/container.xml`·rootfile(`content.hpf`)·section·header 누락. header 파트가 아예 없는 패키지는 warning |
+| `count_mismatch` | error | `hh:charProperties@itemCnt` 같은 선언 개수와 실제 자식 수 불일치, `hh:head@secCnt`와 구역 수 불일치 |
+| `duplicate_resource_id` | error | header에 같은 종류·같은 id의 자원이 두 번 이상 정의됨 |
+| `unused_resource` | info | 정의됐지만 문서 어디에서도 참조되지 않는 `charPr`·`paraPr`·`style`·`borderFill`(종류별 1행) |
+
+- **사전에 없는 이름을 오류라고 부르지 않습니다.** 실제 한컴 문서에도 모델에 없는 요소가 있습니다
+  (`hh:layoutCompatibility`의 자식들). 그래서 `warning`/`info`로 보고하고, `error`는 패키지·header
+  불변식에만 씁니다. 반대로 검사를 약화시키지도 않습니다 — 이름·개수·예시를 모두 보고하고,
+  `itemCnt`/`secCnt`·중복 id·필수 패키지 항목은 그대로 오류입니다.
+- `4294967295`는 미해결로 세지 않습니다. 참고로 `style.list`의 `unresolvedReferenceCount`는 이 표식을
+  구분하지 않는 기존 집계이므로 같은 문서에서 10처럼 보일 수 있습니다. 두 수를 합치면 "정의 없는
+  참조"의 총 발생 수입니다(`unresolved_reference`의 `count` + `unset_reference`의 `count`).
+
+### 읽는 법
+
+- `items[]`는 **집계된** 발견입니다. 같은 이름·같은 대상은 1행으로 묶고 `count`에 발생 횟수를,
+  `examples[]`에 `{entry, path, nodeId?}`(문서 순서, 최대 `maxExamples`)를 담습니다.
+- `summary`가 결론입니다: `errors`/`warnings`/`infos`(행 수), `findings`, `issues`(발생 수 합),
+  `byCode[]`(코드별 행 수·발생 수). 페이징 없이 `summary`만 읽어도 됩니다.
+- `checked`가 **무엇을 실제로 비교했는지** 알려 줍니다: `xmlEntries`, `elements`, `attributes`,
+  `references`, `namespaces[]`, `packageItems[]`, `header`, `referenceIntegrity`,
+  `resourceDefinitions`, `dictionary`(모델 프로젝트·revision·요소 수·fingerprint).
+  header 파트가 없으면 `referenceIntegrity:false`이고 참조 검사를 하지 않습니다(모든 참조를
+  dangling으로 오탐하지 않기 위해).
+- `total`·`nextCursor`는 다른 조회와 같습니다. `limit`은 1~500(기본 100), `maxExamples`는 1~50
+  (기본 5). 같은 revision·같은 인자면 결과 순서도 같습니다.
+- `truncated:true`는 서로 다른 발견이 2048개에 도달해 새 행 추가를 멈췄다는 뜻입니다. 그때 각 행의
+  `count`도 중단 지점까지의 값입니다.
+- `scope`(임의 nodeId)는 **요소·속성·namespace 대조만** 그 부분 트리로 좁힙니다. 참조·자원·카운트·
+  중복·미사용·패키지 검사는 문서 전체 속성이므로 scope가 있어도 그대로 하고 `"scope":"document"`로
+  표시합니다.
+- 스캔이 `max_validate_elements`(기본 1,000,000 XML 요소 방문)를 넘으면 부분 결과 대신
+  `RESOURCE_LIMIT`(`reason: validate_scan_limit`)으로 거절합니다.
+
+### 한계
+
+- **공식 XSD/KS X 6101 적합성 검증이 아닙니다.** 이름 수준 대조이며 속성 **값**·자식 순서·필수
+  자식은 보지 않습니다. 모델은 2023 스냅샷입니다.
+- **한컴 호환 판정이 아닙니다.** 이 검사에서 오류 0이라고 한컴이 같은 모양으로 조판한다는 뜻이
+  아닙니다(Windows 한컴 실기 검증은 별도).
+- 저장 관문(`hae-verify`)은 그대로입니다. 이 명령은 진단만 하고 고치지 않습니다. 자세한 근거와
+  실측은 [문서 검사 결정 기록](../decisions/document-validate-2026-10-19.md)에 있습니다.
+
+
 ## 누름틀·하이퍼링크 필드 조회와 텍스트 채우기 (0.3)
 
 `field.list` (MCP `field_list`, CLI의 `--command field.list`)는 문서의 필드를 읽기 전용으로 조회합니다. `expectedVersion` 없이 호출하며 선택 `scope`에 문단·표·셀·구역 nodeId를 주면 해당 영역과 교차하는 필드만 나옵니다. 각 항목의 `nodeId`는 **시작 마커를 담은 문단**이며, `paragraphIds`에는 다문단 필드가 걸친 문단이 나옵니다.
@@ -1033,9 +1100,9 @@ external은 null로 남기되 ZIP payload가 있으면 해시는 제공합니다
 
 ---
 
-## 부록. 명령 57개 색인
+## 부록. 명령 58개 색인
 
-`hae run --command command.list --params '{}'`로 얻은 57개 명령 전체입니다. 「문서를 바꿈」이 「예」인 명령만 현재 상태를 편집합니다(이력 명령 `history.undo`·`history.redo`도 문서 상태를 복원하므로 「예」). 「아니오」인 명령 중 `document.exportText`, `document.export`, `project.save`는 문서가 아니라 새 파일을 만듭니다. 분류는 `command.list`의 `category`를 풀어 쓴 것이며, 같은 이름의 내부 정책과 인자는 `command.describe`로 확인합니다.
+`hae run --command command.list --params '{}'`로 얻은 58개 명령 전체입니다. 「문서를 바꿈」이 「예」인 명령만 현재 상태를 편집합니다(이력 명령 `history.undo`·`history.redo`도 문서 상태를 복원하므로 「예」). 「아니오」인 명령 중 `document.exportText`, `document.export`, `project.save`는 문서가 아니라 새 파일을 만듭니다. 「문서를 바꿈」이 「아니오」여도 `document.validate`는 문서를 읽고 아무것도 쓰지 않습니다. 분류는 `command.list`의 `category`를 풀어 쓴 것이며, 같은 이름의 내부 정책과 인자는 `command.describe`로 확인합니다.
 
 | 명령 | MCP 도구 | 분류 | 문서를 바꿈 | 설명 위치 |
 |---|---|---|---|---|
@@ -1048,6 +1115,7 @@ external은 null로 남기되 ZIP payload가 있으면 해시는 제공합니다
 | `document.open` | `document_open` | 문서 열기·닫기 | 아니오 | ① |
 | `document.inspect` | `document_inspect` | 조회 | 아니오 | ② |
 | `document.stats` | `document_stats` | 조회 | 아니오 | ②-2 |
+| `document.validate` | `document_validate` | 조회 | 아니오 | 0.4 |
 | `section.list` | `section_list` | 조회 | 아니오 | ②-3 |
 | `note.list` | `note_list` | 조회 | 아니오 | ②-4 |
 | `document.close` | `document_close` | 문서 열기·닫기 | 아니오 | ⑤-2 |

@@ -18,12 +18,12 @@ AI 에이전트와 사람이 같은 명령으로 기존 `.hwpx` 문서를 안전
 - **한컴오피스 없이 동작**:
   한컴오피스·SDK·COM 설치 없이 전 경로가 독립 실행됩니다.
 
-## 2. 할 수 있는 것 (0.3 명령 57개)
+## 2. 할 수 있는 것 (0.4 명령 58개)
 
-단일 레지스트리에 등록된 57개 명령을 모든 인터페이스가 공유합니다([0.3 설계서 §2·§3](docs/superpowers/specs/2026-10-18-hwpx-engine-0.3-design.md)).
+단일 레지스트리에 등록된 58개 명령을 모든 인터페이스가 공유합니다([0.3 설계서 §2·§3](docs/superpowers/specs/2026-10-18-hwpx-engine-0.3-design.md)).
 
-- **조회 (11개)**:
-  `document.inspect`(구조 개요·편집 가능 여부), `document.stats`(요소·글자 수 통계), `element.query`, `element.get`, `section.list`, `style.list`(`header.xml` 스타일·글자/문단 모양·테두리 조회), `note.list`(각주·미주), `link.list`(하이퍼링크), `trackchange.list`(변경 추적 표식·작성자), `bookmark.list`(책갈피), `memo.list`(메모)
+- **조회 (12개)**:
+  `document.inspect`(구조 개요·편집 가능 여부), `document.stats`(요소·글자 수 통계), `element.query`, `element.get`, `section.list`, `style.list`(`header.xml` 스타일·글자/문단 모양·테두리 조회), `note.list`(각주·미주), `link.list`(하이퍼링크), `trackchange.list`(변경 추적 표식·작성자), `bookmark.list`(책갈피), `memo.list`(메모), `document.validate`(OWPML 사전 대조 문서 검사)
 - **텍스트 편집 (2개)**:
   `text.replace`(자소 범위 교체, 길이 0 위치 삽입, `controls:"preserve"` 개체 보존 교체), `text.replaceAll`(문서·범위 전체 정확 일치 일괄 교체)
 - **서식 (3개)**:
@@ -119,7 +119,7 @@ codex mcp add hwpx-engine \
   표준 입출력 한 줄 JSON 요청·응답 서버입니다.
   단일 요청 1 MiB·응답 4 MiB 상한과 `writerId`·`requestSequence` 순서·재전송 검사를 적용합니다.
 - **MCP (`hae-mcp`)**:
-  stdio JSON-RPC 2.0 서버입니다. 57개 명령을 개별 도구(`text_replace` 등)와 `outputSchema`·4종 annotations로 노출합니다.
+  stdio JSON-RPC 2.0 서버입니다. 58개 명령을 개별 도구(`text_replace` 등)와 `outputSchema`·4종 annotations로 노출합니다.
   세션형 리비전(`2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05`)과 요청별 `_meta`·`server/discover`를 사용하는 `2026-07-28` 리비전을 지원합니다.
 
 ## 6. 검증 상태

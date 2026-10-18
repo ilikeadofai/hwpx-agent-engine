@@ -14,6 +14,13 @@ fn fixture_path(rel: &str) -> PathBuf {
     root().join(rel).canonicalize().expect("fixture must exist")
 }
 
+/// The stage-4 input lives under the gitignored `spikes/work/`, so a fresh
+/// worktree does not have it. Like `editable_documents.rs`, such a test skips
+/// instead of failing; tests over `tests/fixtures/corpus` never skip.
+fn local_fixture(rel: &str) -> Option<PathBuf> {
+    root().join(rel).canonicalize().ok()
+}
+
 struct Tmp(PathBuf);
 impl Tmp {
     fn new(tag: &str) -> Tmp {
@@ -39,7 +46,10 @@ fn open_session(doc_path: &Path) -> (Tmp, SessionExecutor) {
 
 #[test]
 fn test_document_stats_full_document() {
-    let doc = fixture_path("spikes/work/stage4-e2e/inputs/04_complex.hwpx");
+    let Some(doc) = local_fixture("spikes/work/stage4-e2e/inputs/04_complex.hwpx") else {
+        eprintln!("SKIP: optional local input 04_complex.hwpx absent");
+        return;
+    };
     let (_tmp, mut exec) = open_session(&doc);
 
     let r = exec.call("document.stats", json!({}), None, false);
@@ -66,7 +76,10 @@ fn test_document_stats_full_document() {
 
 #[test]
 fn test_document_stats_scoped_to_section() {
-    let doc = fixture_path("spikes/work/stage4-e2e/inputs/04_complex.hwpx");
+    let Some(doc) = local_fixture("spikes/work/stage4-e2e/inputs/04_complex.hwpx") else {
+        eprintln!("SKIP: optional local input 04_complex.hwpx absent");
+        return;
+    };
     let (_tmp, mut exec) = open_session(&doc);
 
     let qr = exec.call("element.query", json!({"kind": "section"}), None, false);
@@ -92,7 +105,10 @@ fn test_document_stats_scoped_to_section() {
 
 #[test]
 fn test_document_stats_scoped_to_table() {
-    let doc = fixture_path("spikes/work/stage4-e2e/inputs/04_complex.hwpx");
+    let Some(doc) = local_fixture("spikes/work/stage4-e2e/inputs/04_complex.hwpx") else {
+        eprintln!("SKIP: optional local input 04_complex.hwpx absent");
+        return;
+    };
     let (_tmp, mut exec) = open_session(&doc);
 
     let qr = exec.call("element.query", json!({"kind": "table"}), None, false);
@@ -115,7 +131,10 @@ fn test_document_stats_scoped_to_table() {
 
 #[test]
 fn test_document_stats_scoped_to_paragraph() {
-    let doc = fixture_path("spikes/work/stage4-e2e/inputs/04_complex.hwpx");
+    let Some(doc) = local_fixture("spikes/work/stage4-e2e/inputs/04_complex.hwpx") else {
+        eprintln!("SKIP: optional local input 04_complex.hwpx absent");
+        return;
+    };
     let (_tmp, mut exec) = open_session(&doc);
 
     let qr = exec.call(
@@ -143,7 +162,10 @@ fn test_document_stats_scoped_to_paragraph() {
 
 #[test]
 fn test_document_stats_invalid_scope_not_found() {
-    let doc = fixture_path("spikes/work/stage4-e2e/inputs/04_complex.hwpx");
+    let Some(doc) = local_fixture("spikes/work/stage4-e2e/inputs/04_complex.hwpx") else {
+        eprintln!("SKIP: optional local input 04_complex.hwpx absent");
+        return;
+    };
     let (_tmp, mut exec) = open_session(&doc);
 
     let r = exec.call(
@@ -158,7 +180,10 @@ fn test_document_stats_invalid_scope_not_found() {
 
 #[test]
 fn test_document_stats_invalid_scope_kind() {
-    let doc = fixture_path("spikes/work/stage4-e2e/inputs/04_complex.hwpx");
+    let Some(doc) = local_fixture("spikes/work/stage4-e2e/inputs/04_complex.hwpx") else {
+        eprintln!("SKIP: optional local input 04_complex.hwpx absent");
+        return;
+    };
     let (_tmp, mut exec) = open_session(&doc);
 
     let qr = exec.call("element.query", json!({"kind": "equation"}), None, false);
@@ -195,7 +220,10 @@ fn test_section_list_returns_all_sections_and_spine_order() {
 
 #[test]
 fn test_section_list_explicit_paper_and_column_settings() {
-    let doc = fixture_path("spikes/work/stage4-e2e/inputs/04_complex.hwpx");
+    let Some(doc) = local_fixture("spikes/work/stage4-e2e/inputs/04_complex.hwpx") else {
+        eprintln!("SKIP: optional local input 04_complex.hwpx absent");
+        return;
+    };
     let (_tmp, mut exec) = open_session(&doc);
 
     let r = exec.call("section.list", json!({}), None, false);
@@ -284,7 +312,10 @@ fn test_section_list_cursor_pagination() {
 
 #[test]
 fn test_note_list_returns_footnotes_and_endnotes_with_references() {
-    let doc = fixture_path("spikes/work/stage4-e2e/inputs/04_complex.hwpx");
+    let Some(doc) = local_fixture("spikes/work/stage4-e2e/inputs/04_complex.hwpx") else {
+        eprintln!("SKIP: optional local input 04_complex.hwpx absent");
+        return;
+    };
     let (_tmp, mut exec) = open_session(&doc);
 
     let r = exec.call("note.list", json!({}), None, false);
@@ -323,7 +354,10 @@ fn test_note_list_returns_footnotes_and_endnotes_with_references() {
 
 #[test]
 fn test_note_list_filter_by_kind() {
-    let doc = fixture_path("spikes/work/stage4-e2e/inputs/04_complex.hwpx");
+    let Some(doc) = local_fixture("spikes/work/stage4-e2e/inputs/04_complex.hwpx") else {
+        eprintln!("SKIP: optional local input 04_complex.hwpx absent");
+        return;
+    };
     let (_tmp, mut exec) = open_session(&doc);
 
     let r_fn = exec.call("note.list", json!({"kind": "footnote"}), None, false);
@@ -341,7 +375,10 @@ fn test_note_list_filter_by_kind() {
 
 #[test]
 fn test_note_list_cursor_pagination() {
-    let doc = fixture_path("spikes/work/stage4-e2e/inputs/04_complex.hwpx");
+    let Some(doc) = local_fixture("spikes/work/stage4-e2e/inputs/04_complex.hwpx") else {
+        eprintln!("SKIP: optional local input 04_complex.hwpx absent");
+        return;
+    };
     let (_tmp, mut exec) = open_session(&doc);
 
     let r1 = exec.call("note.list", json!({"limit": 1}), None, false);
@@ -378,7 +415,10 @@ fn test_note_list_empty_for_document_without_notes() {
 
 #[test]
 fn test_readonly_commands_preserve_document_and_export_bytes_identically() {
-    let doc = fixture_path("spikes/work/stage4-e2e/inputs/04_complex.hwpx");
+    let Some(doc) = local_fixture("spikes/work/stage4-e2e/inputs/04_complex.hwpx") else {
+        eprintln!("SKIP: optional local input 04_complex.hwpx absent");
+        return;
+    };
     let (tmp, mut exec) = open_session(&doc);
 
     let out1 = tmp.0.join("export1.hwpx");
@@ -415,15 +455,21 @@ fn test_print_real_document_summaries() {
     let docs = [
         (
             "04_complex.hwpx",
-            fixture_path("spikes/work/stage4-e2e/inputs/04_complex.hwpx"),
+            local_fixture("spikes/work/stage4-e2e/inputs/04_complex.hwpx"),
         ),
         (
             "research-school-plan-reference.hwpx",
-            fixture_path("tests/fixtures/corpus/research-school-plan-reference.hwpx"),
+            Some(fixture_path(
+                "tests/fixtures/corpus/research-school-plan-reference.hwpx",
+            )),
         ),
     ];
 
     for (name, path) in docs {
+        let Some(path) = path else {
+            eprintln!("SKIP {name}: optional local input absent");
+            continue;
+        };
         println!("==================================================");
         println!("DOCUMENT: {}", name);
         println!("==================================================");

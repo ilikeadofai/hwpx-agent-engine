@@ -986,6 +986,44 @@ impl SessionExecutor {
                 })?;
                 Ok((val, Vec::new()))
             }
+            ParsedCommand::DocumentValidate(p) => {
+                let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
+                if let Some(ev) = req.expected_version {
+                    if ev != s.revision {
+                        return Err(EngineError::new(
+                            Code::VersionConflict,
+                            Stage::Query,
+                            "expectedVersion mismatch on document.validate",
+                        ));
+                    }
+                }
+                let doc = &s.current.doc;
+                let max_examples = p
+                    .max_examples
+                    .unwrap_or(hae_model::validate::DEFAULT_EXAMPLES);
+                let report = doc.validate(p.scope.as_deref(), max_examples)?;
+                let total = report.items.len();
+                let extra = json!({
+                    "scope": p.scope,
+                    "summary": report.summary,
+                    "checked": report.checked,
+                    "truncated": report.truncated,
+                });
+                let result = crate::queries::page(
+                    doc,
+                    crate::queries::PageRequest {
+                        revision: s.revision,
+                        selector: json!(["document.validate", p.scope, p.max_examples]),
+                        cursor: p.cursor.as_deref(),
+                        limit: p.limit,
+                        budget: Self::query_budget(&self.limits),
+                    },
+                    total,
+                    report.items.into_iter().map(Ok),
+                    extra,
+                )?;
+                Ok((result, Vec::new()))
+            }
             ParsedCommand::SectionList(p) => {
                 let s = Self::require_doc_mut(&mut self.open_doc, req.document_id.as_deref())?;
                 if let Some(ev) = req.expected_version {

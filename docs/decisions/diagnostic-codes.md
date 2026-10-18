@@ -5,7 +5,7 @@
 | 코드 | 설계서 | 단계 | 뜻 |
 |---|---|---|---|
 | PACKAGE_REJECTED | §11 | 1 | 열기 단계 패키지 거절. reason에 사유 |
-| RESOURCE_LIMIT | §8·§11 | 1 | 한도 초과(크기·항목 수·해제량·깊이·화소·메모리·이력). document.exportText는 결과가 Limits.max_text_export_bytes(기본 16 MiB)를 넘으면 reason:text_export_too_large와 detail.{limit,limitBytes,producedBytes}로 거절 text.replaceAll은 바꿀 수 있는 일치가 maxMatches를 넘으면 commit 전에 이 코드로 거절하고 detail.maxMatches를 담음 hwp5.inspect는 해제 누적이 max_inflate_total, 컨테이너 항목이 max_entries, 문단 수가 max_hwp5_paragraphs(기본 1,000,000)를 넘으면 거절 |
+| RESOURCE_LIMIT | §8·§11 | 1 | 한도 초과(크기·항목 수·해제량·깊이·화소·메모리·이력). document.validate는 방문한 XML 요소가 `max_validate_elements`(기본 1,000,000)를 넘으면 reason:validate_scan_limit으로 거절하고 부분 결과를 돌려주지 않음 document.exportText는 결과가 Limits.max_text_export_bytes(기본 16 MiB)를 넘으면 reason:text_export_too_large와 detail.{limit,limitBytes,producedBytes}로 거절 text.replaceAll은 바꿀 수 있는 일치가 maxMatches를 넘으면 commit 전에 이 코드로 거절하고 detail.maxMatches를 담음 hwp5.inspect는 해제 누적이 max_inflate_total, 컨테이너 항목이 max_entries, 문단 수가 max_hwp5_paragraphs(기본 1,000,000)를 넘으면 거절 |
 | STATE_INVARIANT_ERROR | §4 | 1 | commit 전 정규 상태와 파생물 불일치 |
 | PROJECT_INTEGRITY_ERROR | §5 | 1 | .hwpwork 무결성 검사 실패 |
 | PROJECT_LOCKED | §5·§11 | 1 | 프로젝트 잠금 실패 |
@@ -92,6 +92,27 @@ batch 롤백 뒤 현재 문서에서 재조회한다. 코드는 추가하지 않
 ### 수식 편집 reason (0.3)
 
 새 최상위 진단 코드는 추가하지 않습니다. `INVALID_REQUEST`는 빈 script/props, XML 금지 문자, 잘못된 속성 값/limit/cursor에 사용합니다. `UNSUPPORTED`의 `equation_script_notation`은 새 script의 확인되지 않은 역슬래시/큰따옴표/제어·markup 표기 또는 맞지 않는 중괄호, `equation_script_shape`는 원본 script의 누락/중복, `equation_script_markup`은 원본 script의 CDATA·주석·PI·자식 요소·속성을 뜻합니다. stale cursor는 `VERSION_CONFLICT`, 변조 후보는 `VERIFY_FAILED`입니다.
+
+## 0.4 문서 검사(`document.validate`) 결과 코드
+
+`hae-diag::Code` enum은 늘리지 않습니다. 이 명령의 `items[].code`·`items[].severity`·`items[].reason`은 **결과 필드**다(렌더러 진단과 같은 성격). 엔진 오류는 기존 코드를 씁니다: 인자 오류(빈/범위 밖 `limit`·`maxExamples`, 잘못된 cursor)는 `INVALID_REQUEST`, 다른 revision·selector의 커서는 `VERSION_CONFLICT`, 없는 `scope` nodeId는 `TARGET_NOT_FOUND`, XML 요소 방문이 `Limits::max_validate_elements`를 넘으면 `RESOURCE_LIMIT`(`reason: validate_scan_limit`, `detail.{limit,limitElements,visitedElements}`; 부분 결과를 돌려주지 않고 거절).
+
+설계·근거(코퍼스 실측과 심각도 결정): [document-validate-2026-10-19.md](document-validate-2026-10-19.md).
+
+| 결과 코드 | severity | reason | 조건 |
+|---|---|---|---|
+| `unknown_element` | warning | `element_not_in_owpml_model` | 사전이 모르는 요소 이름(사전이 채워진 namespace 안) |
+| `unknown_attribute` | info | `attribute_not_in_owpml_model` | 모델이 그 요소 이름에서 읽지 않는 속성 |
+| `unknown_namespace` | info | `namespace_not_in_owpml_model` | 모델이 다루지 않는 namespace, 또는 모델이 선언만 하고 이름을 두지 않은 namespace |
+| `missing_package_item` | error | `mimetype_absent`·`mimetype_not_first`·`mimetype_value_mismatch`·`container_absent`·`rootfile_absent`·`section_absent`·`section_entry_absent`·`header_entry_absent` | 현재 패키지에 필수 항목이 없음 |
+| `missing_package_item` | warning | `header_absent` | header 파트가 아예 없음. 참조·자원 검사를 하지 않고 `checked.referenceIntegrity:false`로 알림 |
+| `unresolved_reference` | warning | `reference_not_in_header` | `charPrIDRef`·`paraPrIDRef`·`styleIDRef`·`nextStyleIDRef`·`borderFillIDRef` 값이 header 정의에 없음(값별 1행) |
+| `unset_reference` | info | `reference_unset_sentinel` | 참조 값이 `4294967295`(`(UINT)-1`). dangling으로 세지 않음 |
+| `count_mismatch` | error | `item_cnt_mismatch`·`font_cnt_mismatch`·`sec_cnt_mismatch` | 선언 카운트와 실제 자식 수 또는 구역 수 불일치 |
+| `duplicate_resource_id` | error | `duplicate_id_in_header` | 같은 종류의 자원 id가 header에 두 번 이상 정의됨 |
+| `unused_resource` | info | `no_reference_in_document` | 정의됐지만 아무 속성도 참조하지 않는 `charPr`·`paraPr`·`style`·`borderFill`(종류별 1행) |
+
+`severity` 값은 `error`/`warning`/`info` 셋이다. `summary.byCode[]`가 코드별 행 수(`findings`)와 발생 수(`issues`)를 담고, `checked`가 실제 비교 범위(`xmlEntries`·`elements`·`attributes`·`references`·`namespaces`·`packageItems`·`dictionary`)를 담는다. 항목별로 다른 reason 문자열을 만들지 않는다 — 위 표가 전부다.
 
 ### 0.3 좁은 편집 명령 사유 (기존 코드 사용)
 

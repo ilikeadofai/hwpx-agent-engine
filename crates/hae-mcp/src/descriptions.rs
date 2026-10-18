@@ -205,6 +205,10 @@ fn document_stats() -> &'static str {
     "Return document-wide or scoped summary metrics across structural elements (sections, paragraphs, tables, cells, pictures, equations), controls (fields, footnotes, endnotes, memos), and total extended grapheme cluster character count. When `scope` is supplied (nodeId of section, table, cell, or paragraph), counts only elements within that subtree. Read-only; does not modify the document or increment revision."
 }
 
+fn document_validate() -> &'static str {
+    "Compare the open document (`documentId`) with Hancom's public OWPML model dictionary and report what the model would not recognise: `unknown_element` (warning) and `unknown_attribute` (info) with namespace, prefix, count and example paths; `unknown_namespace` (info) for namespaces the model declares but leaves empty (e.g. `hwpml/2016/meta/pkg#`); `unresolved_reference` (warning) for `charPrIDRef`/`paraPrIDRef`/`styleIDRef`/`nextStyleIDRef`/`borderFillIDRef` values the header does not define; `unset_reference` (info) for the model's `4294967295` sentinel; `missing_package_item` (error; a headerless package is a warning) for absent mimetype/container.xml/rootfile/section/header members; `count_mismatch` (error) for `itemCnt`/`fontCnt`/`secCnt` that disagree with the elements present; `duplicate_resource_id` (error); and `unused_resource` (info) for defined-but-unreferenced resources. Each item carries `code`, `severity`, `reason`, aggregated `count`, up to `maxExamples` (default 5, 1..=50) `examples` ({entry, path, nodeId?}) and `detail`; `summary` repeats the totals by severity and code so a caller can read the verdict without paging. `checked` reports how much was compared (entries, elements, attributes, references, namespaces, package members) and the dictionary revision/fingerprint. Optional `scope` (any nodeId) limits only the element/attribute comparison to that subtree; reference, resource, count and package checks stay document-wide. This is a description, not a verdict on Hancom compatibility: names missing from the model are warnings/infos because real documents contain them, and an error here means a package/header invariant HAE also enforces when saving. Never modifies the document, its `revision`, or history; pass `cursor`/`limit` (max 500) to page and `RESOURCE_LIMIT` (`reason: validate_scan_limit`) if the scan exceeds `max_validate_elements`."
+}
+
 fn section_list() -> &'static str {
     "List document sections in spine order with paragraph counts and paper/column settings (orientation, width, height, margins, column count, and page start number). Reports exact XML attributes and marks missing/inherited settings as unspecified without guessing. Supports cursor pagination (`limit`, `cursor`). Read-only; does not modify the document or increment revision."
 }
@@ -228,6 +232,7 @@ pub const TABLE: &[(&str, Describe)] = &[
     ("document.open", document_open),
     ("document.inspect", document_inspect),
     ("document.stats", document_stats),
+    ("document.validate", document_validate),
     ("section.list", section_list),
     ("note.list", note_list),
     ("document.close", document_close),
