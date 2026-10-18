@@ -1,0 +1,82 @@
+# CI for the HWPX agent engine. No secrets are used; the default read-only token is enough.
+name: CI
+
+on:
+  push:
+    branches: [main, "wip/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  linux:
+    name: ubuntu (fmt, clippy, tests without renderer, oracle)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned to match rust-toolchain.toml and workspace rust-version.
+      - uses: dtolnay/rust-toolchain@1.93.1
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Integration tests start the sibling hae-raster worker through the real bubblewrap
+      # sandbox. Ubuntu 24.04 runners restrict unprivileged user namespaces by default.
+      - name: Install bubblewrap and allow user namespaces
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          bwrap --ro-bind / / --unshare-all true
+
+      # scripts/check.sh runs, in order: cargo fmt --check, clippy -D warnings,
+      # build of hae-raster, scripts/tests (python unittest) and cargo test --workspace.
+      # There is no rhwp binary in CI (spikes/vendor is not tracked), so check.sh prints
+      # "RENDERER: unavailable" and explicitly SKIPs the 13 real renderer tests
+      # (4 executor preview + 9 adapter). A green run does not prove rendering.
+      - name: scripts/check.sh (renderer unavailable)
+        env:
+          HAE_RHWP: ${{ github.workspace }}/spikes/vendor/rhwp-src/target/release/rhwp
+        run: bash scripts/check.sh
+
+      - name: Python oracle
+        run: python3 -m unittest discover -s tests/oracle
+
+      # Not run here: scripts/evaluate_mcp.py drives a real stdio hae-mcp with the real rhwp
+      # renderer, bubblewrap and the NanumGothic font (document_preview before/after), none of
+      # which exist on a hosted runner. Run it locally; the result belongs to the release gate.
+
+  windows:
+    name: windows (build only)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    # Not yet confirmed: no Windows toolchain was available when this workflow was written.
+    # Locally only `cargo check --workspace --target x86_64-pc-windows-gnu` passed (the
+    # mingw dlltool/linker needed for a real build is missing there), see
+    # docs/superpowers/plans/2026-10-18-0.3-feature-backlog.md (Windows build milestone, 7e008c1).
+    # Remove continue-on-error once this job has been green on a real runner.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.93.1
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Build only. Windows has no sandboxed preview (renderer isolation fails closed with
+      # RENDERER_UNAVAILABLE(sandbox_unverified)), and the Windows tests were only
+      # compile-checked so far, so they are not run here.
+      - name: cargo build --workspace
+        run: cargo build --workspace
