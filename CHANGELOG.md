@@ -42,6 +42,36 @@
 - 시험 비의존성 수정: `annotations`·`readonly_queries`가 저장소 밖(`spikes/work/`) 로컬
   입력이 없으면 SKIP한다(`tables.rs`와 같은 규칙). 레지스트리 시험이 명령 수를 상수 대신
   `COMMAND_NAMES`와 비교한다.
+- **미리보기 도구 자동 탐색**: `HAE_RHWP`가 없어도 실행 파일 옆, `../bin`, 개발 트리
+  (`spikes/vendor/rhwp-src/target/{release,debug}`), `PATH` 순서로 `rhwp`를 찾는다.
+  `HAE_BWRAP`·`HAE_FONT_DIR`·`HAE_RASTER`도 같은 원칙으로 기본값을 찾는다. 명시한 환경 변수는
+  항상 최우선이며 값이 그대로 쓰인다. 탐색은 `HAE_RENDERER_DISCOVERY=0`으로 끌 수 있다.
+- **진단 개선**: `doctor`가 도구별 `path`·`source`(고른 규칙)·`searched`(살펴본 후보와 판정)·
+  `guidance`와 `checks.discovery`·`checks.platformIsolation`을 보고한다.
+  `RENDERER_UNAVAILABLE`의 주요 사유 메시지에 해결 방법 한 줄이 들어가고,
+  `renderer_not_configured`의 `detail`에 살펴본 후보 목록이 실린다.
+- **Windows opt-in 미리보기**: `HAE_ALLOW_UNSANDBOXED_PREVIEW=1`(기본값은 거절)로만 격리 없이
+  실행하며, 결과에 `SANDBOX_UNVERIFIED` 경고와 `metadata.sandbox`(강제/미강제 목록,
+  `jobObject.applied:false`)를 남긴다. PNG는 제공하지 않는다(`PNG_UNAVAILABLE`).
+- 문서: [플랫폼별 격리 보장](docs/decisions/renderer-isolation-platforms.md).
+
+### 변경
+
+- 미리보기 실패 메시지의 해결 안내(`renderer_missing`, `sandbox_unverified`,
+  `raster_worker_missing`, `raster_worker_not_configured`).
+- 기존 "렌더러 미설정" 시험은 `HAE_RENDERER_DISCOVERY=0`을 명시해 결정적으로 만들었다.
+- `crates/hae-exec/tests/preview.rs`, `crates/hae-mcp/tests/{renderer_env,protocol_conformance}.rs`,
+  `crates/hae-cli|hae-jsonl/tests/renderer_env.rs`를 Unix 전용으로 표시해 Windows 크로스
+  `cargo check --tests`가 통과한다(동작 변화 없음).
+
+### 하지 않은 것
+
+- Linux 격리 계약(bwrap·`prlimit`·자기 점검)은 바꾸지 않았다. `HAE_ALLOW_UNSANDBOXED_PREVIEW`는
+  Linux에서 무시된다.
+- `metadata.coverage`는 `unknown`을 유지한다. 렌더러가 그리지 못한 요소를 보고하지 않으므로
+  실제 값을 계산할 근거가 없다(사유는 [어댑터 메모](docs/decisions/stage3-adapter-notes.md)).
+- Windows Job Object 상한(메모리·프로세스 수·CPU 시간)은 적용하지 않았다. `unsafe_code = "forbid"`
+  아래에서 FFI가 필요하기 때문이며, 값만 선언하고 `applied:false`로 보고한다.
 
 ## [0.3.0] - 2026-10-18
 

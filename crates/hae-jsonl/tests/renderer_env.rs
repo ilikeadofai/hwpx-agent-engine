@@ -1,6 +1,9 @@
-//! Renderer wiring through the `hae-jsonl` server: `HAE_RHWP` enables
-//! `document.preview` over the transport, and without it the preview fails
-//! with `RENDERER_UNAVAILABLE(renderer_not_configured)`.
+#![cfg(unix)]
+
+//! Renderer wiring through the `hae-jsonl` server: discovery (or `HAE_RHWP`)
+//! enables `document.preview` over the transport, and with discovery disabled
+//! and no renderer the preview fails with
+//! `RENDERER_UNAVAILABLE(renderer_not_configured)`.
 //!
 //! The rendering test needs the rhwp renderer and bubblewrap; when either is
 //! missing it prints a note and skips instead of failing.
@@ -64,6 +67,12 @@ struct Server {
 
 impl Server {
     fn start(dir: &Path, rhwp: Option<&Path>) -> Server {
+        Server::start_with(dir, rhwp, None)
+    }
+
+    /// `discovery` sets `HAE_RENDERER_DISCOVERY` for the server process, so a
+    /// test can pin the search off and keep the unconfigured path deterministic.
+    fn start_with(dir: &Path, rhwp: Option<&Path>, discovery: Option<&str>) -> Server {
         let fonts = dir.join("test-fonts");
         fs::create_dir_all(&fonts).unwrap();
         let mut cmd = Command::new(HAE_JSONL);
@@ -81,6 +90,14 @@ impl Server {
             }
             None => {
                 cmd.env_remove("HAE_RHWP");
+            }
+        }
+        match discovery {
+            Some(v) => {
+                cmd.env("HAE_RENDERER_DISCOVERY", v);
+            }
+            None => {
+                cmd.env_remove("HAE_RENDERER_DISCOVERY");
             }
         }
         let mut child = cmd.spawn().expect("spawn hae-jsonl");
@@ -176,7 +193,8 @@ fn preview_renders_page_one_when_hae_rhwp_is_set() {
 #[test]
 fn preview_without_hae_rhwp_reports_renderer_not_configured() {
     let temp = TempDir::new("unconfigured");
-    let mut server = Server::start(temp.path(), None);
+    // Discovery off keeps this deterministic: only explicit variables count.
+    let mut server = Server::start_with(temp.path(), None, Some("0"));
     let doc = open_corpus(&mut server, temp.path());
     let preview = server.request("document.preview", json!({ "pages": [1] }), Some(&doc));
     assert_eq!(preview["ok"], json!(false), "preview: {preview}");
@@ -187,5 +205,7 @@ fn preview_without_hae_rhwp_reports_renderer_not_configured() {
         json!("renderer_not_configured"),
         "{preview}"
     );
+    let message = diag["message"].as_str().unwrap_or_default();
+    assert!(message.contains("HAE_RHWP"), "{message}");
     assert_eq!(server.finish().0, 0);
 }

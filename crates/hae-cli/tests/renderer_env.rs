@@ -1,12 +1,17 @@
+#![cfg(unix)]
+
 //! Renderer wiring through the `hae` binary: `HAE_RHWP` enables
-//! `document.preview` in a script session, and without it the preview fails
-//! with `RENDERER_UNAVAILABLE(renderer_not_configured)`.
+//! `document.preview` in a script session, the documented discovery order
+//! enables it without any variable, and with discovery disabled and no
+//! renderer the preview fails with
+//! `RENDERER_UNAVAILABLE(renderer_not_configured)`.
 //!
-//! The rendering test needs the rhwp renderer and bubblewrap; when either is
-//! missing it prints a note and skips instead of failing.
+//! The rendering tests need the rhwp renderer and bubblewrap; when either is
+//! missing they print a note and skip instead of failing.
 
 use serde_json::{json, Value};
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -83,6 +88,18 @@ fn run_script(
     script: &Path,
     rhwp: Option<&Path>,
 ) -> (i32, Vec<Value>, String) {
+    run_script_with(input, output, script, rhwp, None)
+}
+
+/// `run_script` with control over the discovery switch, so the search can be
+/// pinned off for deterministic unconfigured-path assertions.
+fn run_script_with(
+    input: &Path,
+    output: &Path,
+    script: &Path,
+    rhwp: Option<&Path>,
+    discovery: Option<&str>,
+) -> (i32, Vec<Value>, String) {
     let fonts = TempDir::new("fonts");
     let mut cmd = Command::new(HAE);
     cmd.env("HAE_FONT_DIR", fonts.path())
@@ -100,6 +117,9 @@ fn run_script(
         None => {
             cmd.env_remove("HAE_RHWP");
         }
+    }
+    if let Some(v) = discovery {
+        cmd.env("HAE_RENDERER_DISCOVERY", v);
     }
     let out = cmd.output().expect("run hae script");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -158,7 +178,10 @@ fn preview_renders_page_one_when_hae_rhwp_is_set() {
 #[test]
 fn preview_without_hae_rhwp_reports_renderer_not_configured() {
     let (_temp, input, output, script) = prepare("unconfigured");
-    let (code, responses, _stderr) = run_script(&input, &output, &script, None);
+    // Discovery off: only explicit variables are used, so an unset HAE_RHWP
+    // deterministically means "unconfigured" even when a development-tree
+    // renderer happens to be built next to the repository.
+    let (code, responses, stderr) = run_script_with(&input, &output, &script, None, Some("0"));
     assert_ne!(code, 0, "preview failure must exit non-zero: {responses:?}");
     assert_eq!(responses[0]["ok"], json!(true), "open still succeeds");
     let preview = &responses[1];
@@ -169,5 +192,100 @@ fn preview_without_hae_rhwp_reports_renderer_not_configured() {
         diag["reason"],
         json!("renderer_not_configured"),
         "{preview}"
+    );
+    // The message says what to do, not only that something is missing.
+    let message = diag["message"].as_str().unwrap_or_default();
+    assert!(message.contains("HAE_RHWP"), "{message}");
+    assert!(message.contains("HAE_RENDERER_DISCOVERY"), "{message}");
+    // With the search off, no candidate was examined.
+    assert_eq!(
+        diag["detail"]["searched"].as_array().map(Vec::len),
+        Some(0),
+        "{preview}"
+    );
+    assert_eq!(diag["detail"]["tool"], json!("rhwp"), "{preview}");
+    // And the server logged the fix line on stderr, never on stdout.
+    assert!(stderr.contains("HAE_RHWP"), "{stderr}");
+}
+
+/// Without `HAE_RHWP`, discovery finds the renderer in the in-tree location
+/// below the working directory and actually renders a page inside the sandbox.
+/// (`PATH` and sibling rules are covered by the discovery unit tests, which can
+/// inject the search inputs; here the working directory is the only rule a test
+/// can pin deterministically.)
+#[test]
+fn discovery_finds_an_in_tree_renderer_without_hae_rhwp() {
+    if !Path::new(BWRAP).is_file() {
+        eprintln!("skipping discovery_finds_an_in_tree_renderer_without_hae_rhwp: {BWRAP} missing");
+        return;
+    }
+    let (temp, input, output, script) = prepare("discovery-devtree");
+    // SVG only: the PNG worker beside the `hae` binary may not be built when
+    // this test file runs on its own.
+    fs::write(
+        &script,
+        serde_json::to_string(&json!([
+            {"command": "document.open", "params": {"path": input.join(CORPUS)}},
+            {"command": "document.preview",
+             "params": {"pages": [1], "includePng": false, "includeSvg": true}}
+        ]))
+        .expect("serialize script"),
+    )
+    .expect("write script");
+    let work = temp.path().join("work");
+    let dev = work.join("spikes/vendor/rhwp-src/target/release");
+    fs::create_dir_all(&dev).unwrap();
+    let fake = dev.join("rhwp");
+    fs::write(
+        &fake,
+        "#!/usr/bin/sh\n\
+         if [ \"$1\" = \"--version\" ]; then echo 'rhwp vdiscovery'; exit 0; fi\n\
+         if [ \"$1\" = dump-pages ]; then echo '{\"pages\":[{}]}'; exit 0; fi\n\
+         printf '<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\"/>' > /out/p.svg\n\
+         N=$(wc -c < /out/p.svg)\n\
+         echo \"{\\\"format\\\":\\\"svg\\\",\\\"pageCount\\\":1,\\\"pages\\\":[{\\\"page\\\":0,\\\"path\\\":\\\"/out/p.svg\\\",\\\"bytes\\\":$N}]}\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut cmd = Command::new(HAE);
+    let fonts = TempDir::new("fonts");
+    cmd.env("HAE_FONT_DIR", fonts.path())
+        .env("HAE_BWRAP", BWRAP)
+        .env_remove("HAE_RHWP")
+        .current_dir(&work)
+        .arg("script")
+        .arg("--input-root")
+        .arg(&input)
+        .arg("--output-root")
+        .arg(&output)
+        .arg(&script);
+    let out = cmd.output().expect("run hae script");
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    let responses: Vec<Value> =
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).expect("envelopes");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "renderer found by discovery\nresponses: {responses:?}\nstderr: {stderr}"
+    );
+    let preview = &responses[1];
+    assert_eq!(preview["ok"], json!(true), "preview: {preview}\n{stderr}");
+    assert_eq!(preview["result"]["status"], json!("rendered"), "{preview}");
+    assert_eq!(preview["result"]["pageCount"], json!(1));
+    // The discovered copy is the fake, not any other build of the tree.
+    assert_eq!(
+        preview["result"]["metadata"]["renderer"]["version"],
+        json!("rhwp vdiscovery")
+    );
+    assert!(
+        preview["result"]["pages"][0]["svg"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("<svg"),
+        "the discovered renderer must have produced the page: {preview}"
+    );
+    assert!(
+        !stderr.contains("preview renderer not configured"),
+        "discovery must have configured the renderer: {stderr}"
     );
 }

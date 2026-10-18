@@ -276,6 +276,7 @@ fn an_existing_file_is_never_overwritten() {
     assert_eq!(names, ["fresh.md", "keep.md"]);
 }
 
+#[cfg(unix)] // the symlink escape needs Unix symlinks
 #[test]
 fn paths_outside_the_output_root_are_refused_and_nothing_is_written() {
     let dirs = Dirs::new();

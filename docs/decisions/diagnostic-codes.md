@@ -66,7 +66,29 @@ HWP5(`hwp5.inspect`)의 reason은 `malformed_compound_file`(MS-CFB 헤더·FAT·
 | `PAGE_CONTENT_ARTIFACT` | 쪽 본문을 설정된 출력 루트 아래 파일로 전달함. |
 | `RENDERER_UNTRUSTED_CONTENT` | rhwp 매니페스트가 문서 내용을 신뢰할 수 없다고 표시함. |
 | `RENDERER_STDERR` | 배치 코드로 해석되지 않은 비어 있지 않은 stderr 줄의 개수를 알림. |
+| `SANDBOX_UNVERIFIED` | (경고) 렌더러가 검증된 격리 없이 실행됨(`HAE_ALLOW_UNSANDBOXED_PREVIEW` opt-in, Windows). 결과 metadata의 `sandbox.verified:false`·`enforcement[]`와 함께 읽는다. |
+| `PNG_UNAVAILABLE` | (경고) PNG 래스터 작업이 이 플랫폼에서 제공되지 않아 SVG만 반환함(결과 `status`는 `partial`). |
 | `NOTES_TRUNCATED` | 진단 수 한도로 추가 진단을 생략함. |
+
+## 0.4 렌더러 탐색과 플랫폼 게이트 (2026-10-19)
+
+새 엔진 코드(`hae-diag::Code`)는 추가하지 않는다. `RENDERER_UNAVAILABLE`의 reason 집합도 그대로다
+(`renderer_not_configured`, `renderer_missing`, `sandbox_unverified`, `raster_worker_missing`,
+`raster_worker_not_configured`, `spawn_failed`, `timeout`, `cancelled`, `output_limit`,
+`render_failed`, `invalid_output`, `memory_limit`). 바뀐 것은 다음뿐이다.
+
+- **탐색**: `HAE_RHWP`가 있으면 항상 그 값을 쓴다. 없으면 실행 파일 옆 → `../bin` → 개발 트리
+  `spikes/vendor/rhwp-src/target/{release,debug}` → `PATH` 순서로 찾는다(`HAE_BWRAP`는
+  `/usr/bin/bwrap` 등 기본값 뒤 `PATH`, `HAE_FONT_DIR`는 시스템·사용자 글꼴 폴더,
+  `HAE_RASTER`는 실행 파일 옆과 `../bin`). 탐색을 끄려면 `HAE_RENDERER_DISCOVERY=0`.
+- **reason별 해결 안내**: `renderer_not_configured`·`renderer_missing`·`sandbox_unverified`·
+  `raster_worker_missing`·`raster_worker_not_configured` 메시지에 "무엇을 하면 되는지" 한 줄이
+  들어간다. `renderer_not_configured`의 `detail`에는 `{tool, searched[]}`(살펴본 후보 경로와
+  규칙·판정)가 실린다.
+- **새 reason 없음**: Windows에서 opt-in이 없을 때의 거절은 기존 `sandbox_unverified`를 그대로
+  쓴다. opt-in 실행의 경고는 위 표의 문자열 코드 `SANDBOX_UNVERIFIED`다.
+- **플랫폼 보장**: [renderer-isolation-platforms.md](renderer-isolation-platforms.md)의 표를 따른다.
+  Linux 계약은 바뀌지 않았고, `HAE_ALLOW_UNSANDBOXED_PREVIEW`는 Windows에서만 존중된다.
 
 ## 2026-10-17 편집 가능성·범위 재시도 계약
 

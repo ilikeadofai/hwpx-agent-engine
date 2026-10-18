@@ -62,3 +62,10 @@
 - Windows에서 보장하지 않는 항목: bubblewrap namespace·mount 격리, 네트워크 차단, 읽기 전용 입력/시스템 트리, 격리된 임시·출력 공간, `prlimit` 기반 주소 공간 상한, Unix process-group을 통한 자식 트리 종료, POSIX `0700` 임시 디렉터리 권한. Windows 기본 ACL이나 다른 OS 기능이 위 보장을 대신한다고 주장하지 않는다. 제품 미리보기는 실행되지 않으므로 그 경로에서 임시 작업 디렉터리도 만들지 않는다.
 - 기능 제한: Windows에서는 SVG 프리뷰, PNG 프리뷰/`hae-raster`, 렌더러 기반 쪽 정보(`page_info`)를 사용할 수 없다. Windows 크로스 `cargo check`는 컴파일 가능성을 확인할 뿐 실제 렌더링, 격리, 한컴 호환성을 검증하지 않는다. Linux에서 `cargo test -p hae-render-rhwp`를 실행하면 `windows_preview_refuses_to_start_without_verified_renderer_isolation`은 `#[cfg(windows)]` 때문에 실행되지 않는다.
 - Windows 프리뷰를 다시 허용하려면 별도 격리 설계와 Windows에서의 실측·시험이 먼저 필요하다. 현재 결과는 Windows 격리 동등성이나 보안 수준을 주장하지 않는다.
+
+### 6-1. 0.4 기능 3호 이후 (2026-10-19)
+
+- Linux 구현과 보장은 그대로다. 이 변경은 경로 탐색(`discovery.rs`)과 진단 문구, 그리고 Windows 전용 opt-in을 추가했다.
+- **Windows 기본값은 여전히 거절**이다(`sandbox_unverified`). 위 §6의 "거절은 렌더러/래스터 워커 입력을 stage하기 전에 발생한다"도 그대로다. 다만 `HAE_ALLOW_UNSANDBOXED_PREVIEW=1`을 **명시적으로** 설정하면 격리 없이 실행하는 경로가 생겼고, 그 결과에는 항상 `SANDBOX_UNVERIFIED` 경고와 `metadata.sandbox.verified:false`가 붙는다. 그 경로에서도 PNG(`hae-raster`)는 제공되지 않는다(래스터 작업자는 Linux 전용이며 Windows에서 직접 실행하면 거절한다). 라이브러리 API `page_info`(렌더러 기반 쪽 정보)는 같은 게이트를 지나므로 opt-in 경로에서 함께 실행된다 — 현재 사용자 명령은 아니다.
+- 이 opt-in은 **컴파일만 확인**했다(`cargo clippy --workspace --all-targets --target x86_64-pc-windows-gnu -- -D warnings`). Windows에서 실행·측정한 값은 없다. 메모리·프로세스 수·CPU 시간 상한은 Job Object backend가 없어 **적용하지 않는다**(워크스페이스 `unsafe_code = "forbid"` 때문에 FFI 사용 불가). 선언값만 `unsandboxed::job_object_limits()`에 두고 결과에 `applied:false`로 표시한다.
+- 보장/미보장의 전체 대조와 다시 열기 위한 조건은 [renderer-isolation-platforms.md](renderer-isolation-platforms.md)에 있다.

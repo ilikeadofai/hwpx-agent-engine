@@ -499,13 +499,19 @@ impl RasterStage {
         if worker.as_os_str().is_empty() {
             return Err(unavailable(
                 "raster_worker_not_configured",
-                "no raster worker configured (set HAE_RASTER or AdapterConfig::raster_path)",
+                "no raster worker configured: build `cargo build -p hae-render-rhwp --bin \
+                 hae-raster` and place `hae-raster` beside this application, or set HAE_RASTER to \
+                 its path",
             ));
         }
         let missing = |e: std::io::Error| {
             unavailable(
                 "raster_worker_missing",
-                format!("raster worker {}: {e}", worker.display()),
+                format!(
+                    "raster worker {}: {e}; set HAE_RASTER to an existing executable or build it \
+                     beside this application (`cargo build -p hae-render-rhwp --bin hae-raster`)",
+                    worker.display()
+                ),
             )
         };
         let mut src = fs::File::open(worker).map_err(missing)?;
