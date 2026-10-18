@@ -14,6 +14,7 @@
 - **문단 텍스트 범위 교체 (`text_replace`)**: 한 문단의 `[start, end)` grapheme 범위를 바꾸거나 지우며, 길이 0 범위에 새 글을 삽입합니다. `controls: "preserve"`로 개체를 보존하면서 범위 안 텍스트만 바꿀 수 있습니다.
 - **문서 전체 바꾸기 (`text_replace_all`)**: 문서 전체(또는 `scope`로 고른 표·셀·문단 아래)에서 같은 글자를 정확히 찾아 한 번에 바꿉니다. 개체·탭·줄바꿈을 가로지르거나 자소 경계가 맞지 않는 일치는 바꾸지 않고 건너뛴 위치를 알려 줍니다. 전체가 한 번의 되돌리기 단위입니다.
 - **문단 서식 변경 (`paragraph_format`)**: 문단의 정렬 방식(왼쪽·가운데·오른쪽·양쪽·배분·나눔 정렬)과 백분율 줄간격(`1%~1000%`, 정수 `1`~`1000`)을 바꿉니다. 문서 전체 스타일은 건드리지 않고 대상 문단에만 적용합니다.
+- **글자 서식 변경 (`text_format`)**: 문단 안의 자소 범위만 굵게·기울임·밑줄·취소선·글자 크기(`100`~`100000` HWPUNIT)·글자색(`#RRGGBB`)으로 바꿉니다. 값이 같은 기존 글자 모양을 재사용하거나 하나를 새로 만들어 붙이고, 범위 밖 글자의 모양은 그대로 둡니다.
 - **표 셀 텍스트 교체 (`cell_set_text`)**: 병합 기준 셀을 포함해 기존 셀의 텍스트를 바꿉니다. 문단 하나는 `text`, 여러 문단은 정확한 기존 문단 수의 `paragraphs` 배열을 줍니다.
 - **그림 교체 (`image_replace`)**: 기존 그림의 위치·크기·캡션을 그대로 유지한 채, 정적 PNG 또는 JPEG 이미지 파일로 교체합니다.
 - **되돌리기·다시 실행 및 미리보기**: 작업 전 가상 적용(`dryRun`), 변경 내역 비교(`document_diff`), 실행 취소(`history_undo`)·다시 실행(`history_redo`), 외부 렌더러 연동을 통한 PNG/SVG 미리보기(`document_preview`)를 지원합니다.
@@ -313,6 +314,25 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
 }
 ```
 - **응답**: 성공하면 버전이 `afterVersion: 2`로 올라갑니다.
+
+### ④-2 글자 서식 (`text_format`)
+문단 안의 글자 범위만 굵게 하고 색을 바꿉니다. `text_replace`와 같은 대상 규약을 쓰므로 `target`(문단 `nodeId`)과 자소 `range`를 주고, `props`에 바꿀 항목만 넣습니다. 문단 전체 서식인 `paragraph_format`과 달리 **글자 자체**의 모양을 다룹니다.
+
+```json
+{
+  "documentId": "doc-1",
+  "expectedVersion": 2,
+  "target": "node-p1",
+  "range": { "start": 0, "end": 4 },
+  "props": { "bold": true, "textColor": "#FF0000" }
+}
+```
+
+- **`props` 항목**: `bold`, `italic`, `underline`, `strikeout`(참·거짓), `heightHwpunit`(글자 크기, `100`~`100000`), `textColor`(`"#RRGGBB"`). 한 번에 여러 개를 줄 수 있고, 최소 하나는 있어야 합니다.
+- **동작**: 값이 완전히 같은 기존 글자 모양이 있으면 **재사용**하고, 없으면 `header.xml`에 `charPr`를 **하나 새로 만들어** 붙입니다. 한 번 호출에 새로 생기는 모양은 최대 하나입니다. 범위가 걸친 run은 쪼개져서 **범위 안 글자만** 새 모양을 갖고, 범위 밖 글자는 원래 모양을 유지합니다.
+- **거절되는 경우**: 길이가 0인 범위(`INVALID_RANGE`), 문단 밖을 벗어난 범위, 범위가 CDATA·주석·처리 명령을 가로지르는 경우(`UNSUPPORTED_CONTENT_IN_RANGE`), 범위 안에 필드 시작·끝 표식이 있는 경우(`field_boundary_in_range`), 해석할 수 없는 외부 namespace 요소를 품은 문단(`contains_opaque`).
+- **`controls: "preserve"`**: `text_replace`와 같은 규칙으로 개체·탭을 그대로 두고 글자만 바꿉니다. 다만 `preserve`가 문단 잠금을 풀어 주지는 않습니다.
+- **응답**: 성공하면 버전이 `afterVersion`으로 올라갑니다. `resourceChanges`에 이번 호출이 글자 모양을 `{"action":"added","kind":"charPr","resourceId":"4"}`로 **새로 만들었는지** `{"action":"reused",...}`로 **재사용했는지**가 담깁니다. 한 호출에 새로 생기는 모양은 최대 하나이고, 같은 `props`를 다른 범위에 다시 주면 같은 `resourceId`를 재사용합니다.
 
 ### ⑤ 실행 취소 (`history_undo`)와 다시 실행 (`history_redo`)
 방금 바꾼 문단 서식이 마음에 들지 않아 직전 상태로 되돌립니다. 되돌리기 역시 문서 상태를 바꾸는 작업이므로 현재 버전(`2`)을 `expectedVersion`으로 보냅니다.
