@@ -57,6 +57,12 @@ cargo build --release
 - `target/release/hae`: 명령 스크립트 파일을 한 번에 실행하는 **CLI 도구**
 - `target/release/hae-raster`: PNG 변환을 격리된 별도 프로세스에서 실행하는 작업 파일. 사용자용 실행 파일과 같은 폴더에 두거나 `HAE_RASTER`로 지정합니다.
 
+### Windows에서 빌드할 때
+
+- `x86_64-pc-windows-gnu` 툴체인은 rustup 설치만으로는 빌드되지 않습니다. 의존성 `windows-sys`·`getrandom`이 import library를 만들 때 MinGW-w64 binutils의 `dlltool.exe`와 이것이 부르는 어셈블러 `as.exe`가 필요합니다. rustup 툴체인에 들어 있는 `self-contained\dlltool.exe`만 PATH에 넣으면 `as`가 없어 `dlltool.exe: CreateProcess`로 실패합니다. MinGW-w64 binutils의 `bin` 폴더를 빌드하는 셸의 PATH에 넣으면 빌드됩니다. 만든 실행 파일은 실행할 때 MinGW가 필요 없습니다.
+- `x86_64-pc-windows-msvc` 툴체인은 Visual Studio Build Tools(MSVC 링커와 Windows SDK)가 필요하며, 이 조합의 빌드는 아직 확인하지 않았습니다.
+- 경로 인자와 `--input-root`·`--output-root`는 역슬래시를 쓰는 드라이브 경로(예: `C:\data`)만 받습니다. `C:/data`나 `\\?\C:\data`는 거절합니다. 두 루트를 생략하면 기본값 `/tmp`가 쓰이는데 Windows에서는 올바른 경로가 아니므로, 파일이 필요 없는 명령도 두 루트를 지정해야 합니다.
+
 ---
 
 ## 3. 실행 환경 설정 (MCP 클라이언트 및 CLI)
