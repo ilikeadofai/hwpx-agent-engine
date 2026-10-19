@@ -18,9 +18,9 @@ AI 에이전트와 사람이 같은 명령으로 기존 `.hwpx` 문서를 안전
 - **한컴오피스 없이 동작**:
   한컴오피스·SDK·COM 설치 없이 전 경로가 독립 실행됩니다.
 
-## 2. 할 수 있는 것 (0.4 명령 61개)
+## 2. 할 수 있는 것 (0.4 명령 65개)
 
-단일 레지스트리에 등록된 61개 명령을 모든 인터페이스가 공유합니다([0.3 설계서 §2·§3](docs/superpowers/specs/2026-10-18-hwpx-engine-0.3-design.md)).
+단일 레지스트리에 등록된 65개 명령을 모든 인터페이스가 공유합니다([0.3 설계서 §2·§3](docs/superpowers/specs/2026-10-18-hwpx-engine-0.3-design.md)).
 
 - **조회 (12개)**:
   `document.inspect`(구조 개요·편집 가능 여부), `document.stats`(요소·글자 수 통계), `document.validate`(공개 OWPML 사전 대조 — 알 수 없는 요소·속성, 미해결 참조, 카운트 불일치를 오류·경고·정보로 보고), `element.query`, `element.get`, `section.list`, `style.list`(`header.xml` 스타일·글자/문단 모양·테두리 조회), `note.list`(각주·미주), `link.list`(하이퍼링크), `trackchange.list`(변경 추적 표식·작성자), `bookmark.list`(책갈피), `memo.list`(메모), `document.validate`(OWPML 사전 대조 문서 검사)
@@ -28,16 +28,16 @@ AI 에이전트와 사람이 같은 명령으로 기존 `.hwpx` 문서를 안전
   `text.replace`(자소 범위 교체, 길이 0 위치 삽입, `controls:"preserve"` 개체 보존 교체), `text.replaceAll`(문서·범위 전체 정확 일치 일괄 교체)
 - **서식 (3개)**:
   `text.format`(자소 범위 굵게·기울임·밑줄·취소선·크기·글자색, `charPr` 재사용·단일 추가), `paragraph.format`(정렬·백분율 줄간격), `paragraph.setStyle`(기존 `styleIDRef` 변경)
-- **표 (10개)**:
-  `table.get`(격자·병합·셀 조회), `cell.setText`(단일·다문단 `paragraphs`·병합 기준 셀), `cell.setFormat`(기존 `borderFill`·배경색·여백), `cell.setSize`(비병합 셀 열·행 크기), `table.setColumnWidths`, `table.setRowHeights`, `table.insertRow`, `table.deleteRow`, `table.insertColumn`, `table.deleteColumn`
-- **수식 (4개)**:
-  `equation.list`, `equation.get`, `equation.setScript`(일반 텍스트 수식 스크립트 교체), `equation.setProperties`(`baseLine`·`textColor`·`font`·`baseUnit`·`lineMode`·`version`)
+- **표 (12개)**:
+  `table.get`(격자·병합·셀 조회), `table.insert`(새 직사각형 표), `table.delete`(표 부분 트리 삭제), `cell.setText`(단일·다문단 `paragraphs`·병합 기준 셀), `cell.setFormat`(기존 `borderFill`·배경색·여백), `cell.setSize`(비병합 셀 열·행 크기), `table.setColumnWidths`, `table.setRowHeights`, `table.insertRow`, `table.deleteRow`, `table.insertColumn`, `table.deleteColumn`
+- **수식 (5개)**:
+  `equation.list`, `equation.get`, `equation.insert`(새 네이티브 HWP 수식), `equation.setScript`(일반 텍스트 수식 스크립트 교체), `equation.setProperties`(`baseLine`·`textColor`·`font`·`baseUnit`·`lineMode`·`version`)
 - **필드·양식 (3개)**:
   `field.list`, `field.setText`(`CLICK_HERE`·`HYPERLINK` 표시 텍스트 채우기), `form.fill`(라벨 셀 오른쪽·아래 빈 셀 일괄 채우기)
 - **쪽 설정·머리말 (5개)**:
   `section.getPage`, `section.setPage`(기존 용지 방향·크기·여백), `section.setPageNumbering`(쪽 시작 방식·번호), `section.setVisibility`(첫 쪽 머리말·꼬리말·쪽번호·테두리·채우기 표시), `header.setText`(기존 머리말·꼬리말 직접 문단 텍스트 교체)
-- **그림 (3개)**:
-  `picture.list`, `image.replace`(기존 프레임 유지 정적 PNG/JPEG 교체), `image.fit`(`contain`·`cover`·`stretch` 비율·자르기 맞춤)
+- **그림 (4개)**:
+  `picture.list`, `image.insert`(새 정적 PNG/JPEG와 미디어 등록), `image.replace`(기존 프레임 유지 정적 PNG/JPEG 교체), `image.fit`(`contain`·`cover`·`stretch` 비율·자르기 맞춤)
 - **생성 (3개)**:
   `document.create`(최소 HWPX를 처음부터 만들기), `paragraph.insert`(기준 문단 앞·뒤에 문단 추가 — 문단 모양·글자 모양 복제, 새 nodeId), `paragraph.delete`(표·개체·필드가 든 문단과 구역 속성 문단은 거절)
 - **내보내기·저장 (3개)**:
@@ -53,7 +53,7 @@ AI 에이전트와 사람이 같은 명령으로 기존 `.hwpx` 문서를 안전
 
 - **표·문단 구조 생성은 일부만 가능**:
   새 문서(`document.create`), 본문 문단 추가·삭제(`paragraph.insert`·`paragraph.delete`), 기존 표 안의 빈 행·열 삽입(`table.insertRow`·`insertColumn`)까지 지원합니다.
-  다만 표·그림·수식·구역·머리말·꼬리말을 **새로 만들지는** 못하고, 문단·셀을 합치거나 나누는 작업과 도형·차트·OLE 편집도 지원하지 않습니다.
+  새 표·그림·수식은 구역 직속 문단 앞·뒤에 독립 문단으로 삽입합니다. 구역·머리말·꼬리말 새 생성, 문단·셀 합치기·나누기, 도형·차트·OLE 편집은 지원하지 않습니다. 객체 생성의 인자와 제약은 [사용 안내](docs/user-guide.md#새-표그림수식과-표-삭제)에 있습니다.
 - **읽기 전용 문서와 HWP5 편집 불가**:
   암호화 문서는 열기를 거절합니다. 전자서명·변경 추적 문서는 조회와 무편집 내보내기만 허용합니다.
   구형 `.hwp`(HWP5)는 `hwp5.inspect` 조회만 지원하며 편집·HWPX 변환 저장은 하지 않습니다.
@@ -125,7 +125,7 @@ codex mcp add hwpx-engine \
   표준 입출력 한 줄 JSON 요청·응답 서버입니다.
   단일 요청 1 MiB·응답 4 MiB 상한과 `writerId`·`requestSequence` 순서·재전송 검사를 적용합니다.
 - **MCP (`hae-mcp`)**:
-  stdio JSON-RPC 2.0 서버입니다. 61개 명령을 개별 도구(`text_replace` 등)와 `outputSchema`·4종 annotations로 노출합니다.
+  stdio JSON-RPC 2.0 서버입니다. 65개 명령을 개별 도구(`text_replace` 등)와 `outputSchema`·4종 annotations로 노출합니다.
   세션형 리비전(`2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05`)과 요청별 `_meta`·`server/discover`를 사용하는 `2026-07-28` 리비전을 지원합니다.
 
 ## 6. 검증 상태

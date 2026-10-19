@@ -35,15 +35,19 @@ mod char_format;
 mod contract;
 mod create;
 mod equation;
+mod equation_insert;
 mod fields;
 mod fit;
 mod form_fill;
 mod format;
 mod image;
+mod image_insert;
 mod narrow;
+mod object_structure;
 mod paragraph_structure;
 mod section;
 mod table;
+mod table_insert;
 mod table_structure;
 mod text;
 
@@ -110,12 +114,14 @@ type Anchors = BTreeMap<String, (usize, BTreeSet<Vec<usize>>)>;
 pub(crate) enum PathRemap {
     Table(table_structure::Remap),
     Paragraphs(paragraph_structure::Remap),
+    Objects(object_structure::Remap),
 }
 impl PathRemap {
     fn map(&self, path: &[usize]) -> Option<Vec<usize>> {
         match self {
             Self::Table(r) => r.map(path),
             Self::Paragraphs(r) => r.map(path),
+            Self::Objects(r) => r.map(path),
         }
     }
 }
@@ -487,6 +493,17 @@ fn verify_inner(
                 }
                 untracked_text |= outcome.text_changed;
                 remaps.push((entry.to_string(), PathRemap::Paragraphs(outcome.remap)));
+                material = true;
+            }
+            VerifyOperation::TableInsert { .. }
+            | VerifyOperation::TableDelete { .. }
+            | VerifyOperation::ImageInsert { .. }
+            | VerifyOperation::EquationInsert { .. } => {
+                let outcome =
+                    object_structure::check(&mut expected, entry, &doc, target, op, limits)?;
+                anchor(&mut anchors, entry, &doc, outcome.anchor_el)?;
+                untracked_text |= outcome.text_changed;
+                remaps.push((entry.to_string(), PathRemap::Objects(outcome.remap)));
                 material = true;
             }
             VerifyOperation::EquationSetScript { script, .. } => {

@@ -323,6 +323,14 @@ const TABLE_STRUCTURE_COMMANDS: [&str; 6] = [
 /// Node-set commands for a paragraph's container (0.4).
 const PARAGRAPH_STRUCTURE_COMMANDS: [&str; 2] = ["paragraph.insert", "paragraph.delete"];
 
+/// Object commands that place one new object on a carrier paragraph (0.4 object
+/// creation). The carrier must be a top-level paragraph, so they are advertised
+/// only on section paragraphs.
+const OBJECT_INSERT_COMMANDS: [&str; 3] = ["table.insert", "image.insert", "equation.insert"];
+
+/// Object command that removes one table's subtree from its carrier paragraph.
+const TABLE_DELETE_COMMAND: &str = "table.delete";
+
 /// Elements a deleted paragraph may contain; anything else (pictures,
 /// equations, fields, shapes, notes, section properties, tables) is refused
 /// because its cross references are unverified
@@ -617,6 +625,9 @@ impl Document {
                 for name in PARAGRAPH_STRUCTURE_COMMANDS {
                     add(name, self.paragraph_command_block_reason(name, n));
                 }
+                for name in OBJECT_INSERT_COMMANDS {
+                    add(name, self.object_insert_block_reason(n));
+                }
                 let e = edits.get_mut("text.replace").unwrap();
                 if e.available
                     && !spans.text_spans.iter().any(|span| span.start < span.end)
@@ -650,6 +661,10 @@ impl Document {
                 for name in TABLE_STRUCTURE_COMMANDS {
                     add(name, self.table_command_block_reason(name, n));
                 }
+                add(
+                    TABLE_DELETE_COMMAND,
+                    self.object_delete_block_reason(TABLE_DELETE_COMMAND, n),
+                );
             }
             Kind::Cell => {
                 add(
@@ -1093,6 +1108,46 @@ impl Document {
             .filter(|&c| is_hp(doc.el(c).ns.as_deref()) && doc.el(c).local == "run")
             .any(|r| doc.el(r).attr("charPrIDRef").is_some());
         (!has_template).then(|| "paragraph_template_unsupported".into())
+    }
+
+    /// Source preconditions for `table.insert`/`image.insert`/`equation.insert`
+    /// (object creation), shared with the editor gate. Only top-level section
+    /// paragraphs are carriers; nested positions are refused with a stable
+    /// reason instead of being silently advertised. The carrier clones the
+    /// target's first `hp:run`, so the paragraph template rule also applies.
+    /// Position-, size- and content-dependent refusals are per-request.
+    pub fn object_insert_block_reason(&self, n: &Node) -> Option<String> {
+        let doc = self.doc_of(n);
+        if !is_hp(doc.el(n.el).ns.as_deref()) || doc.el(n.el).local != "p" {
+            return Some("object_scope_unsupported".into());
+        }
+        if doc.el(n.el).parent != Some(doc.root()) {
+            return Some("object_scope_unsupported".into());
+        }
+        self.paragraph_template_block_reason(n)
+    }
+
+    /// Source preconditions for `table.delete`: the table's carrier paragraph
+    /// must be a top-level section paragraph. A table nested inside a cell is
+    /// refused because its removal path cannot be mapped safely.
+    pub fn object_delete_block_reason(&self, command: &str, n: &Node) -> Option<String> {
+        if command != "table.delete" {
+            return None;
+        }
+        let doc = self.doc_of(n);
+        if !is_hp(doc.el(n.el).ns.as_deref()) || doc.el(n.el).local != "tbl" {
+            return Some("object_delete_scope_unsupported".into());
+        }
+        let Some(carrier) = doc
+            .ancestors(n.el)
+            .find(|&i| is_hp(doc.el(i).ns.as_deref()) && doc.el(i).local == "p")
+        else {
+            return Some("object_delete_scope_unsupported".into());
+        };
+        if doc.el(carrier).parent != Some(doc.root()) {
+            return Some("object_delete_nested_unsupported".into());
+        }
+        None
     }
 
     /// Content rule for `paragraph.delete` (design §5.3): text carriers and

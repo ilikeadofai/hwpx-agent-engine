@@ -227,13 +227,69 @@ impl ParagraphRemap {
     }
 }
 
+/// Declared node-set change for an inserted or removed object
+/// (`table.insert`/`image.insert`/`equation.insert`/`table.delete`,
+/// docs/decisions/report-object-creation-plan.md).
+///
+/// Unlike [`ParagraphRemap`] this declaration never widens an existing scope
+/// rule: `scope` is the stable path of the container whose structural children
+/// move (the section root `[]` for a top-level carrier paragraph, or the
+/// carrier paragraph's own path when the object is removed from it) and
+/// `children` maps its old child positions onto new ones (`None`: removed).
+/// Exactly the identity elements listed in `created` may appear (path + kind)
+/// and only the subtrees rooted at `removed` may disappear, so the gate never
+/// admits an arbitrary new table, picture, equation or opaque element.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ObjectRemap {
+    pub entry: String,
+    /// Stable path of the container whose structural children move.
+    pub scope: Vec<usize>,
+    /// Old structural child position of the container → new position (`None`: removed).
+    pub children: Vec<Option<usize>>,
+    /// Exact new identity elements (after path + kind) this change creates.
+    pub created: Vec<(Vec<usize>, Kind)>,
+    /// Roots (before path) of the old subtrees this change removes.
+    pub removed: Vec<Vec<usize>>,
+}
+
+impl ObjectRemap {
+    /// Path an old node is expected to have after the change; `None` if removed.
+    pub fn map(&self, path: &[usize]) -> Option<Vec<usize>> {
+        let n = self.scope.len();
+        if path.len() <= n || path[..n] != self.scope[..] {
+            return Some(path.to_vec());
+        }
+        let mut out = path[..n].to_vec();
+        out.push((*self.children.get(path[n])?)?);
+        out.extend_from_slice(&path[n + 1..]);
+        Some(out)
+    }
+
+    fn contains(&self, path: &[usize]) -> bool {
+        path.len() > self.scope.len() && path[..self.scope.len()] == self.scope[..]
+    }
+
+    fn creates_at(&self, path: &[usize], kind: Kind) -> bool {
+        self.created.iter().any(|(p, k)| p == path && *k == kind)
+    }
+
+    /// An old node is removable only when it sits below a declared removal root.
+    fn removes_at(&self, path: &[usize]) -> bool {
+        self.removed
+            .iter()
+            .any(|root| path.len() >= root.len() && path[..root.len()] == root[..])
+    }
+}
+
 /// What a structure edit declares to the commit gate. 0.3 opened the contract
 /// for one table's rows/columns; 0.4 adds a paragraph sequence without widening
-/// what may be created (`Paragraph` only).
+/// what may be created (`Paragraph` only); object commands add an explicitly
+/// enumerated carrier/object subtree ([`ObjectRemap`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NodeRemap {
     Table(TableRemap),
     Paragraphs(ParagraphRemap),
+    Objects(ObjectRemap),
 }
 
 impl NodeRemap {
@@ -241,6 +297,7 @@ impl NodeRemap {
         match self {
             Self::Table(r) => &r.entry,
             Self::Paragraphs(r) => &r.entry,
+            Self::Objects(r) => &r.entry,
         }
     }
 
@@ -249,6 +306,7 @@ impl NodeRemap {
         match self {
             Self::Table(r) => r.map(path),
             Self::Paragraphs(r) => r.map(path),
+            Self::Objects(r) => r.map(path),
         }
     }
 
@@ -256,16 +314,43 @@ impl NodeRemap {
         match self {
             Self::Table(r) => r.contains(path),
             Self::Paragraphs(r) => r.contains(path),
+            Self::Objects(r) => r.contains(path),
         }
     }
 
-    /// Kinds this declaration may create inside its scope.
+    /// Kinds this declaration may create inside its scope (0.3/0.4 scopes only).
     fn creates(&self, kind: Kind) -> bool {
         match self {
             Self::Table(_) => matches!(kind, Kind::Cell | Kind::Paragraph),
             Self::Paragraphs(_) => kind == Kind::Paragraph,
+            Self::Objects(_) => false,
         }
     }
+
+    /// Is removing an old identity element at `path`/`kind` authorized?
+    fn authorizes_removed(&self, path: &[usize], kind: Kind) -> bool {
+        match self {
+            Self::Objects(r) => r.contains(path) && r.removes_at(path),
+            _ => self.contains(path) && self.creates(kind),
+        }
+    }
+
+    /// Is creating a new identity element at `path`/`kind` authorized?
+    fn authorizes_created(&self, path: &[usize], kind: Kind) -> bool {
+        match self {
+            Self::Objects(r) => r.creates_at(path, kind),
+            _ => self.contains(path) && self.creates(kind),
+        }
+    }
+}
+
+/// Stable paths and kinds of every identity element, in document order. The
+/// editor uses this to declare the exact [`ObjectRemap::created`] set.
+pub fn identity_paths(doc: &XmlDoc) -> Vec<(Vec<usize>, Kind)> {
+    identity_elements(doc)
+        .into_iter()
+        .map(|(i, k)| (stable_path(doc, i), k))
+        .collect()
 }
 
 /// Ids created and removed by a structure change, in document order.
@@ -298,7 +383,7 @@ fn structural_ids(
                 }
             }
             None => {
-                if !change.contains(&path) || !change.creates(n.kind) {
+                if !change.authorizes_removed(&path, n.kind) {
                     return Err(inv(format!(
                         "structure change removes {} {} outside its declared scope",
                         n.kind.as_str(),
@@ -323,7 +408,7 @@ fn structural_ids(
                 )))
             }
             None => {
-                if !change.contains(&path) || !change.creates(k) {
+                if !change.authorizes_created(&path, k) {
                     return Err(inv(format!(
                         "undeclared new {} element at {:?}",
                         k.as_str(),

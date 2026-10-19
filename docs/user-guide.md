@@ -28,7 +28,7 @@
 - **되돌리기·다시 실행 및 미리보기**: 작업 전 가상 적용(`dryRun`), 변경 내역 비교(`document_diff`), 실행 취소(`history_undo`)·다시 실행(`history_redo`), 외부 렌더러 연동을 통한 PNG/SVG 미리보기(`document_preview`)를 지원합니다.
 
 ### 하지 않는 것 및 한계 (0.3 기준 제외 범위)
-- **전체 HWP/HWPX 기능 지원 아님**: 0.4는 **새 문서 하나와 기존 구역·표 셀 안의 새 문단**을 만들 수 있고, 문단을 이어서 지울 수 있습니다. 그 밖에 문단 나누기·합치기·이동, 다른 구역이나 다른 문서에서 복사, 셀 병합·분할, 병합 셀을 가르는 행·열 삽입과 병합 셀이 걸린 행·열 삭제, 표 자체의 생성·삭제, 수식·그림·도형·필드·스타일 정의 새로 만들기, 각주·미주·글상자 안 문단의 추가·삭제는 지원하지 않습니다. 새로 만들 수 있는 노드는 `paragraph.insert`의 문단과 0.3 표 명령의 빈 셀·문단, 그리고 `document.create`가 만드는 문서 전체뿐입니다. 구형 `.hwp`(HWP5 바이너리)는 읽기 전용 조회(`hwp5.inspect`)만 지원하며 편집·쓰기·HWPX 변환은 지원하지 않습니다.
+- **전체 HWP/HWPX 기능 지원 아님**: 새 문서·문단과 새 직사각형 표·그림·네이티브 수식을 만들고 표 자체를 삭제할 수 있습니다. 새 객체 삽입은 구역 직속 문단 앞·뒤의 독립 문단으로 한정합니다. 문단 나누기·합치기·이동, 다른 문서에서 복사, 셀 병합·분할, 병합 셀을 가르는 행·열 구조 변경, 구역·도형·필드·스타일 정의 새 생성, 각주·미주·글상자 안 문단의 추가·삭제는 지원하지 않습니다. 구형 `.hwp`(HWP5 바이너리)는 `hwp5.inspect` 읽기 전용 조회만 제공합니다.
 - **읽기 전용 문서**: 암호화된 문서는 열지 않으며, 전자서명이나 변경 추적(Track Changes)이 들어 있는 문서는 열어서 내용을 조회하거나 무편집 상태로 내보내는 것만 허용하고 편집은 거절합니다. 변경 추적 표시와 작성자는 `trackchange_list`로 확인합니다.
 - **외부 렌더러 별도 준비 필요**: 이 엔진에는 미리보기 렌더러가 내장되어 있지 않습니다. `document_preview`는 별도의 `rhwp` 실행 파일과 `bubblewrap`(`bwrap`) 샌드박스 도구, 읽을 수 있는 글꼴 폴더가 필요합니다. 환경 변수(`HAE_RHWP`, `HAE_BWRAP`, `HAE_FONT_DIR`, `HAE_RASTER`)를 지정하면 **항상 그 값을 쓰고**, 지정하지 않으면 실행 파일 옆·`../bin`·저장소의 개발 트리·`PATH` 순서로 스스로 찾습니다. 찾지 못하면 실행하지 않고 `RENDERER_UNAVAILABLE`로 거절하며 해결 방법을 함께 알려 줍니다(WSL이 아닌 Windows는 기본적으로 거절입니다: [플랫폼별 격리 보장](decisions/renderer-isolation-platforms.md)).
 - **엔진 구현 완료 범위와 Windows 한컴오피스 실기 호환성(단계 4 예정)의 구분**: 현재 엔진의 파일 편집·보존 검증·격리 미리보기 기능은 구현되어 있으나, 수정된 문서를 실제 Windows 한컴오피스(한글)에서 열었을 때의 실기 호환성 및 조판 대조 검증(단계 4)은 별도 확인 대상입니다. `document_preview`가 만드는 SVG/PNG 이미지와 쪽 번호는 외부 렌더러(`rhwp`)가 어림잡아 계산한 **추정치**이므로 실제 Windows 한컴오피스의 줄바꿈·쪽 나눔·표현 범위와 100% 일치한다고 보장하지 않습니다.
@@ -1103,9 +1103,47 @@ external은 null로 남기되 ZIP payload가 있으면 해시는 제공합니다
 
 ---
 
-## 부록. 명령 61개 색인
+## 새 표·그림·수식과 표 삭제
 
-`hae run --command command.list --params '{}'`로 얻은 61개 명령 전체입니다. 「문서를 바꿈」이 「예」인 명령만 현재 상태를 편집합니다(이력 명령 `history.undo`·`history.redo`도 문서 상태를 복원하므로 「예」). 「아니오」인 명령 중 `document.exportText`, `document.export`, `document.create`, `project.save`는 문서가 아니라 새 파일을 만듭니다. 「문서를 바꿈」이 「아니오」여도 `document.validate`는 문서를 읽고 아무것도 쓰지 않습니다. 분류는 `command.list`의 `category`를 풀어 쓴 것이며, 같은 이름의 내부 정책과 인자는 `command.describe`로 확인합니다.
+구역 직속 문단의 `nodeId`를 먼저 조회하고, 그 문단의 `before` 또는 `after` 위치에 독립 문단과 새 객체를 만듭니다. 원문에 같은 종류의 객체가 없어도 됩니다. 첫 문단이 구역 속성(`secPr`)을 소유하면 그 문단 앞에는 삽입할 수 없습니다. 표 셀·각주·글상자 안을 기준으로 한 새 객체 삽입은 지원하지 않습니다.
+
+다음은 각 명령의 `params` 예시입니다. MCP 도구 이름은 각각 `table_insert`, `image_insert`, `equation_insert`, `table_delete`이며 `expectedVersion`을 현재 버전으로 지정합니다. CLI·JSONL에서는 점이 들어간 명령 이름을 씁니다.
+
+```json
+{"target":"기준 문단 nodeId","position":"after","rows":2,"columns":2,"width":28000,"rowHeight":2400,"cells":[["방법","결과"],["정확값","1/3"]]}
+```
+
+`table.insert`는 병합 없는 직사각형 표를 만듭니다. `cells`는 생략하거나 빈 배열로 주면 빈 셀이고, 내용을 지정하면 정확히 `rows`행, 각 행은 `columns`개의 문자열이어야 합니다. 최대 1024셀입니다. 열 너비는 전체 `width`를 나눠 합이 정확히 일치하게 배정하고, 각 행의 최소 높이는 `rowHeight`로 기록합니다. 기존 헤더의 문단·글자 모양·스타일·테두리를 참조합니다. 보이는 테두리 정의가 없으면 기본 테두리를 사용하므로 선이 보이지 않을 수 있습니다. 없는 스타일·테두리 정의를 임의 생성하지 않습니다.
+
+```json
+{"target":"[그림1] 캡션 문단 nodeId","position":"before","path":"/허용된/입력폴더/figure1.png","width":28000,"height":14000}
+```
+
+`image.insert`는 정적 PNG/JPEG를 입력 루트에서 한 번 읽고 검증한 뒤, 원본 바이트 그대로 새 미디어 항목으로 등록합니다. 기존 그림의 교체가 아니므로 기존 그림 노드가 필요하지 않습니다. `width`·`height`는 표시 크기이고, 원본 화소와 원본 바이트는 보존합니다. 종횡비를 유지하려면 두 표시 치수를 같은 비율로 정합니다. 각 캡션의 ID를 확인해 여섯 이미지를 개별 삽입하거나 한 `command.batch`에 묶을 수 있습니다.
+
+```json
+{"target":"수식 앞 문단 nodeId","position":"after","script":"int _ 0 ^ 1 x ^ 2 dx = 1 over 3","width":20000,"height":2400}
+```
+
+`equation.insert`는 HWP 전용 스크립트를 가진 네이티브 수식 개체를 만듭니다. `a over b`, `sqrt {x}`, `sum _ {i=1} ^ {N} x _ i` 같은 HWP 문법을 사용합니다. 기존 편집 명령과 같은 제한에 따라 역슬래시·따옴표 escape, 마크업·제어 문자, 불균형 중괄호 표기는 거절합니다. LaTeX를 자동 번역하지 않습니다. 상자 크기는 명시한 요청값이며 실제 글리프 측정이나 한컴 조판 보장값이 아닙니다. 새 수식의 속성을 바꾸려면 생성된 수식 ID를 조회한 다음 `equation.setProperties`를 호출합니다.
+
+치수 단위는 모두 HWPUNIT(1/7200인치)입니다. 그림·수식의 `width`와 `height`, 표의 `width`와 `rowHeight`는 각각 `1..=1_000_000`이며 각 열 너비도 양수여야 합니다. 긴 셀 내용의 실제 높이와 페이지 나눔은 문서 프로그램이 재계산합니다.
+
+```json
+{"target":"삭제할 표 nodeId"}
+```
+
+`table.delete`는 선택한 표의 부분 트리와 그 안의 셀·문단을 지웁니다. 표를 담은 바깥 문단과 구역 설정, 표 밖의 글·형제 객체는 유지합니다. 기존 미디어는 사용되지 않게 되어도 삭제하지 않습니다. 표를 담던 빈 문단과 안내 문구를 정리하려면 삭제 후 다시 조회해 `paragraph.delete` 또는 `text.replace`를 별도로 사용합니다. 구역 속성 소유 문단 자체는 삭제하지 않습니다.
+
+새 객체 작업도 `dryRun`, 버전 검사, 배치 실패 원자성, Undo/Redo, 독립 저장 검증을 따릅니다. 새 노드 ID는 적용 후 조회하며, 기존 문서 노드를 대상으로 한 배치의 뒤 단계는 앞 단계가 이동시킨 경로를 따라갑니다. 하나의 배치 안에서 앞 단계가 새로 만든 노드를 아직 없는 ID로 참조할 수는 없습니다. `.hwpwork` 저장·재열기는 새 ID도 유지합니다.
+
+그림은 캡션 앞의 별도 문단에 들어갑니다. 그림과 캡션을 항상 같은 쪽에 유지하는 기능은 제공하지 않으므로 프리뷰와 문서 프로그램에서 페이지 나눔을 확인합니다. 객체 삽입마다 패키지 XML을 다시 분석하고 이미지 입력도 단계별로 검증합니다. 큰 문서에 많은 객체를 넣는 배치는 비용이 커질 수 있으므로 적당한 단위로 나누어 실행합니다.
+
+지도교사 이름·실험 수치 등 누락된 사실은 입력으로 받아야 합니다. 객체 생성은 내용의 정확성이나 실제 연구 수행을 확인하는 기능이 아닙니다. 검증 계획·구현 경계는 [보고서 객체 생성 계획](decisions/report-object-creation-plan.md), 이전 스크립트 출처는 [워크벤치 참고 기록](decisions/new-node-prior-art.md)에 있습니다.
+
+## 부록. 명령 65개 색인
+
+`hae run --command command.list --params '{}'`로 얻은 65개 명령 전체입니다. 「문서를 바꿈」이 「예」인 명령만 현재 상태를 편집합니다(이력 명령 `history.undo`·`history.redo`도 문서 상태를 복원하므로 「예」). 「아니오」인 명령 중 `document.exportText`, `document.export`, `document.create`, `project.save`는 문서가 아니라 새 파일을 만듭니다. 「문서를 바꿈」이 「아니오」여도 `document.validate`는 문서를 읽고 아무것도 쓰지 않습니다. 분류는 `command.list`의 `category`를 풀어 쓴 것이며, 같은 이름의 내부 정책과 인자는 `command.describe`로 확인합니다.
 
 | 명령 | MCP 도구 | 분류 | 문서를 바꿈 | 설명 위치 |
 |---|---|---|---|---|
@@ -1134,6 +1172,10 @@ external은 null로 남기되 ZIP payload가 있으면 해시는 제공합니다
 | `table.deleteColumn` | `table_delete_column` | 편집 | 예 | ④-4 |
 | `paragraph.insert` | `paragraph_insert` | 편집 | 예 | ④-5 |
 | `paragraph.delete` | `paragraph_delete` | 편집 | 예 | ④-5 |
+| `table.insert` | `table_insert` | 편집 | 예 | 새 객체 생성 |
+| `table.delete` | `table_delete` | 편집 | 예 | 새 객체 생성 |
+| `equation.insert` | `equation_insert` | 편집 | 예 | 새 객체 생성 |
+| `image.insert` | `image_insert` | 편집 | 예 | 새 객체 생성 |
 | `link.list` | `link_list` | 조회 | 아니오 | 링크와 변경 추적 |
 | `trackchange.list` | `trackchange_list` | 조회 | 아니오 | 링크와 변경 추적 |
 | `bookmark.list` | `bookmark_list` | 조회 | 아니오 | 책갈피·메모 |

@@ -208,6 +208,45 @@ pub enum VerifyOperation {
         #[serde(default = "one")]
         count: usize,
     },
+    /// Insert one rectangular table on a new carrier paragraph (0.4 object
+    /// creation). All dimensions are explicit HWPUNIT; `cells` is empty or
+    /// exactly `rows * columns` strings in row-major order.
+    #[serde(rename = "table.insert")]
+    TableInsert {
+        entry: String,
+        path: Vec<usize>,
+        position: String,
+        rows: u32,
+        columns: u32,
+        width: u32,
+        row_height: u32,
+        #[serde(default)]
+        cells: Vec<Vec<String>>,
+    },
+    /// Remove only the table at `path`'s XML subtree (0.4 object creation).
+    #[serde(rename = "table.delete")]
+    TableDelete { entry: String, path: Vec<usize> },
+    /// Insert one picture on a new carrier paragraph plus its new media and
+    /// manifest item (0.4). `bytes` are the frozen request image bytes.
+    #[serde(rename = "image.insert")]
+    ImageInsert {
+        entry: String,
+        path: Vec<usize>,
+        position: String,
+        bytes: Vec<u8>,
+        width: u32,
+        height: u32,
+    },
+    /// Insert one native equation on a new carrier paragraph (0.4).
+    #[serde(rename = "equation.insert")]
+    EquationInsert {
+        entry: String,
+        path: Vec<usize>,
+        position: String,
+        script: String,
+        width: u32,
+        height: u32,
+    },
     #[serde(rename = "equation.setScript")]
     EquationSetScript {
         entry: String,
@@ -381,6 +420,10 @@ impl VerifyOperation {
             | Self::CellSetSize { entry, path, .. }
             | Self::ParagraphInsert { entry, path, .. }
             | Self::ParagraphDelete { entry, path, .. }
+            | Self::TableInsert { entry, path, .. }
+            | Self::TableDelete { entry, path, .. }
+            | Self::ImageInsert { entry, path, .. }
+            | Self::EquationInsert { entry, path, .. }
             | Self::EquationSetScript { entry, path, .. }
             | Self::EquationSetProperties { entry, path, .. }
             | Self::SectionSetPage { entry, path, .. }

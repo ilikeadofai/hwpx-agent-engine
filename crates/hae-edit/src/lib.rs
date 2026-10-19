@@ -6,16 +6,20 @@
 
 mod char_format;
 mod equation;
+mod equation_insert;
 mod fields;
 mod fit;
 mod form_fill;
 mod format;
 mod image;
+mod image_insert;
 mod narrow;
+mod object_structure;
 mod paragraph_structure;
 mod replace_all;
 mod section;
 mod table;
+mod table_insert;
 mod table_structure;
 mod text;
 
@@ -186,6 +190,38 @@ pub enum EditOp {
         target: String,
         count: Option<usize>,
     },
+    /// Insert one rectangular table on a new carrier paragraph before/after
+    /// `target` (0.4 object creation). All dimensions are explicit HWPUNIT.
+    TableInsert {
+        target: String,
+        position: String,
+        rows: u32,
+        columns: u32,
+        width: u32,
+        row_height: u32,
+        cells: Vec<Vec<String>>,
+    },
+    /// Remove only the `target` table's XML subtree (0.4 object creation).
+    TableDelete {
+        target: String,
+    },
+    /// Insert one native equation on a new carrier paragraph (0.4).
+    EquationInsert {
+        target: String,
+        position: String,
+        script: String,
+        width: u32,
+        height: u32,
+    },
+    /// Insert one picture on a new carrier paragraph (0.4). `image` is the
+    /// frozen, fully validated input.
+    ImageInsert {
+        target: String,
+        position: String,
+        image: ImageBytes,
+        width: u32,
+        height: u32,
+    },
 }
 
 impl EditOp {
@@ -215,7 +251,11 @@ impl EditOp {
             | EditOp::CellSetParagraphs { target, .. }
             | EditOp::ImageReplace { target, .. }
             | EditOp::ParagraphInsert { target, .. }
-            | EditOp::ParagraphDelete { target, .. } => target,
+            | EditOp::ParagraphDelete { target, .. }
+            | EditOp::TableInsert { target, .. }
+            | EditOp::TableDelete { target, .. }
+            | EditOp::EquationInsert { target, .. }
+            | EditOp::ImageInsert { target, .. } => target,
             EditOp::TextReplaceAll { scope, .. } | EditOp::FormFill { scope, .. } => {
                 scope.as_deref().unwrap_or("")
             }
@@ -366,6 +406,15 @@ pub enum Intent {
         position: Option<String>,
         count: usize,
     },
+    /// One entry per object step (`table.insert`/`table.delete`/`image.insert`/
+    /// `equation.insert`, 0.4). `path` is the container whose children moved.
+    #[serde(rename = "object.structure")]
+    ObjectStructure {
+        command: String,
+        entry: String,
+        path: Vec<usize>,
+        position: Option<String>,
+    },
 }
 
 /// A node created by a table structure edit. Cells carry their new address.
@@ -409,6 +458,20 @@ pub struct ParagraphReport {
     pub removed: Vec<String>,
 }
 
+/// What one object step created and removed (0.4 object creation). The new
+/// nodes are the meaningful report: the carrier paragraph, the object and (for
+/// a table) its cells and their paragraphs.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ObjectReport {
+    pub command: String,
+    pub entry: String,
+    /// `before` | `after` for inserts, `None` for `table.delete`.
+    pub position: Option<&'static str>,
+    pub created: Vec<CreatedNode>,
+    pub removed: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceChange {
@@ -444,6 +507,8 @@ pub struct Applied {
     pub structure: Vec<StructureReport>,
     /// One report per paragraph structure step, in step order (0.4).
     pub paragraph: Vec<ParagraphReport>,
+    /// One report per object step, in step order (0.4).
+    pub objects: Vec<ObjectReport>,
 }
 
 /// Work-in-progress state while applying a batch.
@@ -461,6 +526,7 @@ pub(crate) struct Draft {
     pub form_fill: Vec<FormFillReport>,
     pub structure: Vec<StructureReport>,
     pub paragraph: Vec<ParagraphReport>,
+    pub objects: Vec<ObjectReport>,
     /// Text appeared or vanished without a PrvText line to edit (deleted table
     /// cells, new paragraph text, deleted paragraphs).
     pub prv_extra: bool,
@@ -528,6 +594,22 @@ impl Draft {
         Ok(delta)
     }
 
+    /// Commit an already-spliced entry plus any other state changes (a media
+    /// entry appended by an object builder) through the structure-aware gate.
+    pub fn commit_node_change_state(
+        &mut self,
+        entry: &str,
+        new: &XmlDoc,
+        mut state: hae_package::PackageState,
+        change: &NodeRemap,
+    ) -> Result<StructureDelta> {
+        state.set(entry, new.bytes().clone());
+        let stale = self.doc.stale_layout.clone();
+        let (doc, delta) = self.doc.rebuild_node_structure(state, stale, change)?;
+        self.doc = doc;
+        Ok(delta)
+    }
+
     pub fn node(&self, id: &str, kind: Option<Kind>) -> Result<Node> {
         let n = self.doc.require(id, kind)?.clone();
         self.doc.check_editable(&n)?;
@@ -589,6 +671,7 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
         form_fill: Vec::new(),
         structure: Vec::new(),
         paragraph: Vec::new(),
+        objects: Vec::new(),
         prv_extra: false,
     };
     for (i, op) in ops.iter().enumerate() {
@@ -755,6 +838,58 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
             EditOp::ParagraphDelete { target, count } => {
                 paragraph_structure::delete(&mut d, "paragraph.delete", target, *count)
             }
+            EditOp::TableInsert {
+                target,
+                position,
+                rows,
+                columns,
+                width,
+                row_height,
+                cells,
+            } => object_structure::insert_table(
+                &mut d,
+                "table.insert",
+                target,
+                position,
+                *rows,
+                *columns,
+                *width,
+                *row_height,
+                cells,
+            ),
+            EditOp::TableDelete { target } => {
+                object_structure::delete_table(&mut d, "table.delete", target)
+            }
+            EditOp::EquationInsert {
+                target,
+                position,
+                script,
+                width,
+                height,
+            } => object_structure::insert_equation(
+                &mut d,
+                "equation.insert",
+                target,
+                position,
+                script,
+                *width,
+                *height,
+            ),
+            EditOp::ImageInsert {
+                target,
+                position,
+                image,
+                width,
+                height,
+            } => object_structure::insert_image(
+                &mut d,
+                "image.insert",
+                target,
+                position,
+                image,
+                *width,
+                *height,
+            ),
         };
         r.map_err(|mut e| {
             if ops.len() > 1 {
@@ -781,6 +916,7 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
             form_fill: d.form_fill,
             structure: Vec::new(),
             paragraph: Vec::new(),
+            objects: Vec::new(),
         });
     }
     let prv_extra = d.prv_extra;
@@ -803,6 +939,7 @@ pub fn apply(doc: &Document, ops: &[EditOp]) -> Result<Applied> {
         form_fill: d.form_fill,
         structure: d.structure,
         paragraph: d.paragraph,
+        objects: d.objects,
     })
 }
 

@@ -418,6 +418,46 @@ pub struct ParagraphDeleteParams {
     pub target: String,
     pub count: Option<usize>,
 }
+/// `table.insert`: one new carrier paragraph and a rectangular HWPUNIT table.
+/// `cells` is omitted/empty for a blank grid or exactly `rows * columns`
+/// strings in row-major order (at most 1024 cells).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TableInsertParams {
+    pub target: String,
+    pub position: String,
+    pub rows: u32,
+    pub columns: u32,
+    pub width: u32,
+    pub row_height: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cells: Option<Vec<Vec<String>>>,
+}
+/// `table.delete`: remove only the target table's XML subtree.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TableDeleteParams {
+    pub target: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EquationInsertParams {
+    pub target: String,
+    pub position: String,
+    pub script: String,
+    pub width: u32,
+    pub height: u32,
+}
+/// `image.insert`: read `path` once under the input root and freeze the bytes.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ImageInsertParams {
+    pub target: String,
+    pub position: String,
+    pub path: String,
+    pub width: u32,
+    pub height: u32,
+}
 /// `document.create` needs no open document: it builds a new package and
 /// publishes it under the output root.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -846,6 +886,22 @@ pub struct ParagraphStructureResultShape {
     pub paragraph: Vec<Value>,
 }
 
+/// Result of the object commands (`table.insert`/`table.delete`/`image.insert`/
+/// `equation.insert`). In `dryRun` the created `nodeId`s are null because the
+/// candidate is discarded.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ObjectStructureResultShape {
+    pub outcome: String,
+    pub before_version: u64,
+    pub after_version: u64,
+    pub changed_ids: Vec<String>,
+    pub history_evicted: bool,
+    /// Per step: `command`, `entry`, `position` (inserts only), `created`
+    /// [{nodeId, kind, row, col}] and `removed` [nodeId].
+    pub objects: Vec<Value>,
+}
+
 /// Result of `document.create`: a new file under the output root.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -1070,6 +1126,10 @@ pub enum ParsedCommand {
     TableDeleteColumn(TableDeleteColumnParams),
     ParagraphInsert(ParagraphInsertParams),
     ParagraphDelete(ParagraphDeleteParams),
+    TableInsert(TableInsertParams),
+    TableDelete(TableDeleteParams),
+    EquationInsert(EquationInsertParams),
+    ImageInsert(ImageInsertParams),
     LinkList(LinkListParams),
     TrackChangeList(TrackChangeListParams),
     BookmarkList(BookmarkListParams),
@@ -1211,6 +1271,30 @@ fn schema_json<T: JsonSchema>() -> Value {
             "type":"string","description":"Text of the new paragraphs; omitted means empty paragraphs. No tabs or line breaks."
         });
     }
+    if matches!(
+        schema["title"].as_str(),
+        Some("TableInsertParams" | "EquationInsertParams" | "ImageInsertParams")
+    ) {
+        for key in ["width", "height", "rowHeight"] {
+            if schema["properties"].get(key).is_some() {
+                schema["properties"][key] =
+                    serde_json::json!({"type":"integer","minimum":1,"maximum":1000000});
+            }
+        }
+        schema["properties"]["position"] =
+            serde_json::json!({"type":"string","enum":["before","after"]});
+    }
+    if schema["title"] == "TableInsertParams" {
+        schema["properties"]["rows"] =
+            serde_json::json!({"type":"integer","minimum":1,"maximum":1024});
+        schema["properties"]["columns"] =
+            serde_json::json!({"type":"integer","minimum":1,"maximum":1024});
+        schema["properties"]["cells"] = serde_json::json!({
+            "type":"array","maxItems":1024,
+            "items":{"type":"array","items":{"type":"string"}},
+            "description":"Empty/omitted for a blank grid, or exactly rows * columns cell strings in row-major order."
+        });
+    }
     if schema["title"] == "DocumentCreateParams" {
         schema["properties"]["paragraphs"] = serde_json::json!({
             "type":"array","maxItems":65535,"items":{"type":"string"},
@@ -1318,6 +1402,10 @@ mod schema_tests {
             ("project_save", [false, true, false, false]),
             ("paragraph_insert", [false, true, false, false]),
             ("paragraph_delete", [false, true, false, false]),
+            ("table_insert", [false, true, false, false]),
+            ("table_delete", [false, true, false, false]),
+            ("equation_insert", [false, true, false, false]),
+            ("image_insert", [false, true, false, false]),
             ("document_create", [false, false, false, false]),
             ("document_export", [false, false, false, false]),
             // Query category, but it publishes a new file: not read-only/idempotent.
@@ -1662,6 +1750,30 @@ define_commands! {
         summary: "Delete `count` (default 1) paragraphs from `target` on; removes their nodes (Undo restores the same nodeIds); refuses paragraphs holding tables, objects, fields, notes or section properties and refuses emptying a container", category: Mutation,
         mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
         stage1: true, reason: None, params: ParagraphDeleteParams, output: ParagraphStructureResultShape,
+    },
+    TableInsert {
+        name: "table.insert", cli: "table-insert", mcp: "table_insert",
+        summary: "Insert one rectangular table on a new carrier paragraph before/after a top-level `target`; explicit rows, columns and positive HWPUNIT width/rowHeight (<=1000000), optional exact rows*columns `cells` (<=1024); uses existing header resources only; creates new carrier/table/cell/paragraph nodes with new nodeIds; refuses nested anchors and a `before` insert over the section-properties paragraph", category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None, params: TableInsertParams, output: ObjectStructureResultShape,
+    },
+    TableDelete {
+        name: "table.delete", cli: "table-delete", mcp: "table_delete",
+        summary: "Remove only the target table's XML subtree from its carrier paragraph; preserves the carrier paragraph, section properties, sibling content and every existing media entry; removes the table/cell/paragraph nodes (Undo restores the same nodeIds); refuses a table nested inside a cell", category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None, params: TableDeleteParams, output: ObjectStructureResultShape,
+    },
+    EquationInsert {
+        name: "equation.insert", cli: "equation-insert", mcp: "equation_insert",
+        summary: "Insert one native HWP equation on a new carrier paragraph before/after a top-level `target`; explicit script (bounded HWP notation, never Unicode/LaTeX substitution) and positive HWPUNIT width/height (<=1000000); no existing equation is required; creates a new carrier-paragraph node and equation node with new nodeIds; refuses nested anchors", category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None, params: EquationInsertParams, output: ObjectStructureResultShape,
+    },
+    ImageInsert {
+        name: "image.insert", cli: "image-insert", mcp: "image_insert",
+        summary: "Insert one picture on a new carrier paragraph before/after a top-level `target`; reads `path` once under the input root and freezes the validated PNG/JPEG bytes; positive HWPUNIT width/height (<=1000000); appends one media entry and manifest item without modifying existing media; no existing picture is required; creates a new carrier-paragraph node and picture node with new nodeIds; refuses nested anchors", category: Mutation,
+        mutates: true, doc: true, ver: true, seq: true, dry: true, hist: true,
+        stage1: true, reason: None, params: ImageInsertParams, output: ObjectStructureResultShape,
     },
     LinkList {
         name: "link.list",

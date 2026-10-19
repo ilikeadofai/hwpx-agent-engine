@@ -6,14 +6,15 @@ use crate::registry::{
     command_describe, command_list, BatchStepParam, BookmarkListParams, CellSetFormatParams,
     CellSetSizeParams, CellSetTextParams, CommandBatchParams, CommandDescriptor,
     DocumentCreateParams, DocumentDiffParams, DocumentExportParams, DocumentExportTextParams,
-    DocumentOpenParams, DocumentPreviewParams, EquationSetPropertiesParams,
+    DocumentOpenParams, DocumentPreviewParams, EquationInsertParams, EquationSetPropertiesParams,
     EquationSetScriptParams, ExportTextFormat, FormFillParams, HeaderSetTextParams,
     Hwp5FileHeaderShape, Hwp5InspectParams, Hwp5InspectResultShape, Hwp5ParagraphShape,
-    Hwp5SectionShape, ImageFitParams, ImageReplaceParams, LineSpacingParam, LinkListParams,
-    MemoListParams, ParagraphDeleteParams, ParagraphFormatParams, ParagraphInsertParams,
-    ParagraphSetStyleParams, ParsedCommand, ProjectSaveParams, SectionSetPageNumberingParams,
-    SectionSetPageParams, SectionSetVisibilityParams, SnapshotCreateParams, SnapshotReleaseParams,
-    TableDeleteColumnParams, TableDeleteRowParams, TableInsertColumnParams, TableInsertRowParams,
+    Hwp5SectionShape, ImageFitParams, ImageInsertParams, ImageReplaceParams, LineSpacingParam,
+    LinkListParams, MemoListParams, ParagraphDeleteParams, ParagraphFormatParams,
+    ParagraphInsertParams, ParagraphSetStyleParams, ParsedCommand, ProjectSaveParams,
+    SectionSetPageNumberingParams, SectionSetPageParams, SectionSetVisibilityParams,
+    SnapshotCreateParams, SnapshotReleaseParams, TableDeleteColumnParams, TableDeleteParams,
+    TableDeleteRowParams, TableInsertColumnParams, TableInsertParams, TableInsertRowParams,
     TableSetColumnWidthsParams, TableSetRowHeightsParams, TextFormatParams, TextReplaceAllParams,
     TextReplaceParams, TrackChangeListParams,
 };
@@ -187,6 +188,13 @@ fn with_structure(
 /// the candidate is discarded (same rule as `structure`).
 fn with_paragraph(result: Value, reports: &[hae_edit::ParagraphReport], dry_run: bool) -> Value {
     with_node_reports(result, "paragraph", reports, dry_run, |r| &r.created)
+}
+
+/// Attach per-step `objects` reports (`table.insert`/`table.delete`/
+/// `image.insert`/`equation.insert`); `dryRun` drops the new nodeIds because
+/// the candidate is discarded (same rule as `paragraph`/`structure`).
+fn with_objects(result: Value, reports: &[hae_edit::ObjectReport], dry_run: bool) -> Value {
+    with_node_reports(result, "objects", reports, dry_run, |r| &r.created)
 }
 
 /// Shared dryRun handling for node-creating reports (`structure`, `paragraph`).
@@ -467,6 +475,25 @@ fn add_op_bytes(seen: &mut HashSet<(usize, usize)>, total: &mut u64, op: &Verify
             if let Some(text) = text {
                 add_slice_bytes(seen, total, text.as_bytes());
             }
+        }
+        VerifyOperation::TableDelete { entry, .. } => {
+            add_slice_bytes(seen, total, entry.as_bytes())
+        }
+        VerifyOperation::TableInsert { entry, cells, .. } => {
+            add_slice_bytes(seen, total, entry.as_bytes());
+            for row in cells {
+                for cell in row {
+                    add_slice_bytes(seen, total, cell.as_bytes());
+                }
+            }
+        }
+        VerifyOperation::EquationInsert { entry, script, .. } => {
+            add_slice_bytes(seen, total, entry.as_bytes());
+            add_slice_bytes(seen, total, script.as_bytes());
+        }
+        VerifyOperation::ImageInsert { entry, bytes, .. } => {
+            add_slice_bytes(seen, total, entry.as_bytes());
+            add_slice_bytes(seen, total, bytes);
         }
         VerifyOperation::CellSetFormat { entry, format, .. } => {
             add_slice_bytes(seen, total, entry.as_bytes());
@@ -1689,6 +1716,34 @@ impl SessionExecutor {
                     params: serde_json::to_value(p).unwrap(),
                 }],
             ),
+            ParsedCommand::TableInsert(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "table.insert".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
+            ParsedCommand::TableDelete(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "table.delete".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
+            ParsedCommand::EquationInsert(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "equation.insert".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
+            ParsedCommand::ImageInsert(p) => self.handle_edit_steps(
+                req,
+                &[BatchStepParam {
+                    command: "image.insert".into(),
+                    params: serde_json::to_value(p).unwrap(),
+                }],
+            ),
             ParsedCommand::DocumentDiff(p) => self.handle_diff(req, &p),
             ParsedCommand::DocumentPreview(p) => self.handle_preview(req, &p),
             ParsedCommand::ProjectSave(p) => self.handle_project_save(req, &p),
@@ -2311,6 +2366,125 @@ impl SessionExecutor {
                         count: p.count,
                     },
                     VerifyOperation::ParagraphDelete { entry, path, count },
+                ))
+            }
+            "table.insert" => {
+                let p: TableInsertParams =
+                    serde_json::from_value(step.params.clone()).map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            e.to_string(),
+                        ))
+                    })?;
+                let (entry, path) = doc
+                    .node(&p.target)
+                    .map(|n| (n.entry.clone(), doc.doc_of(n).path(n.el)))
+                    .unwrap_or_default();
+                let cells = p.cells.unwrap_or_default();
+                Ok((
+                    EditOp::TableInsert {
+                        target: p.target,
+                        position: p.position.clone(),
+                        rows: p.rows,
+                        columns: p.columns,
+                        width: p.width,
+                        row_height: p.row_height,
+                        cells: cells.clone(),
+                    },
+                    VerifyOperation::TableInsert {
+                        entry,
+                        path,
+                        position: p.position,
+                        rows: p.rows,
+                        columns: p.columns,
+                        width: p.width,
+                        row_height: p.row_height,
+                        cells,
+                    },
+                ))
+            }
+            "table.delete" => {
+                let p: TableDeleteParams =
+                    serde_json::from_value(step.params.clone()).map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            e.to_string(),
+                        ))
+                    })?;
+                let (entry, path) = doc
+                    .node(&p.target)
+                    .map(|n| (n.entry.clone(), doc.doc_of(n).path(n.el)))
+                    .unwrap_or_default();
+                Ok((
+                    EditOp::TableDelete { target: p.target },
+                    VerifyOperation::TableDelete { entry, path },
+                ))
+            }
+            "equation.insert" => {
+                let p: EquationInsertParams =
+                    serde_json::from_value(step.params.clone()).map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            e.to_string(),
+                        ))
+                    })?;
+                let (entry, path) = doc
+                    .node(&p.target)
+                    .map(|n| (n.entry.clone(), doc.doc_of(n).path(n.el)))
+                    .unwrap_or_default();
+                Ok((
+                    EditOp::EquationInsert {
+                        target: p.target,
+                        position: p.position.clone(),
+                        script: p.script.clone(),
+                        width: p.width,
+                        height: p.height,
+                    },
+                    VerifyOperation::EquationInsert {
+                        entry,
+                        path,
+                        position: p.position,
+                        script: p.script,
+                        width: p.width,
+                        height: p.height,
+                    },
+                ))
+            }
+            "image.insert" => {
+                let p: ImageInsertParams =
+                    serde_json::from_value(step.params.clone()).map_err(|e| {
+                        wrap_err(EngineError::new(
+                            Code::InvalidRequest,
+                            Stage::Request,
+                            e.to_string(),
+                        ))
+                    })?;
+                let input = roots.read_input(&p.path).map_err(&wrap_err)?;
+                let image = ImageBytes::from_bytes(input.bytes.clone(), &doc.limits)
+                    .map_err(|e| wrap_err(e.with_target(&p.target)))?;
+                let (entry, path) = doc
+                    .node(&p.target)
+                    .map(|n| (n.entry.clone(), doc.doc_of(n).path(n.el)))
+                    .unwrap_or_default();
+                Ok((
+                    EditOp::ImageInsert {
+                        target: p.target,
+                        position: p.position.clone(),
+                        image,
+                        width: p.width,
+                        height: p.height,
+                    },
+                    VerifyOperation::ImageInsert {
+                        entry,
+                        path,
+                        position: p.position,
+                        bytes: input.bytes,
+                        width: p.width,
+                        height: p.height,
+                    },
                 ))
             }
             "cell.setSize" => {
@@ -3009,31 +3183,35 @@ impl SessionExecutor {
         if req.dry_run {
             let outcome = if is_noop { "noop" } else { "applied" };
             return Ok((
-                with_paragraph(
-                    with_structure(
-                        with_form_fill(
-                            with_replace_all(
-                                json!({
-                                        "outcome": outcome,
-                                        "dryRun": true,
-                                    "beforeVersion": before_version,
-                                    "afterVersion": before_version,
-                                    "predictedAfterVersion": if is_noop { before_version } else { before_version + 1 },
-                                    "changedIds": applied.changed_ids,
-                                    "resourceChanges": applied.resource_changes,
-                                    "intents": applied.intents,
-                                    "stale": applied.stale,
-                                    "cacheRemovals": applied.cache_removals,
-                                    "historyEvicted": false,
-                                }),
-                                &applied.replace_all,
+                with_objects(
+                    with_paragraph(
+                        with_structure(
+                            with_form_fill(
+                                with_replace_all(
+                                    json!({
+                                            "outcome": outcome,
+                                            "dryRun": true,
+                                        "beforeVersion": before_version,
+                                        "afterVersion": before_version,
+                                        "predictedAfterVersion": if is_noop { before_version } else { before_version + 1 },
+                                        "changedIds": applied.changed_ids,
+                                        "resourceChanges": applied.resource_changes,
+                                        "intents": applied.intents,
+                                        "stale": applied.stale,
+                                        "cacheRemovals": applied.cache_removals,
+                                        "historyEvicted": false,
+                                    }),
+                                    &applied.replace_all,
+                                ),
+                                &applied.form_fill,
                             ),
-                            &applied.form_fill,
+                            &applied.structure,
+                            true,
                         ),
-                        &applied.structure,
+                        &applied.paragraph,
                         true,
                     ),
-                    &applied.paragraph,
+                    &applied.objects,
                     true,
                 ),
                 diags,
@@ -3094,29 +3272,33 @@ impl SessionExecutor {
         s.revision += 1;
 
         Ok((
-            with_paragraph(
-                with_structure(
-                    with_form_fill(
-                        with_replace_all(
-                            json!({
-                                "outcome": "applied",
-                                "beforeVersion": before_version,
-                                "afterVersion": s.revision,
-                                "changedIds": applied.changed_ids,
-                                "resourceChanges": applied.resource_changes,
-                                "intents": applied.intents,
-                                "stale": applied.stale,
-                                "cacheRemovals": applied.cache_removals,
-                                "historyEvicted": history_evicted,
-                            }),
-                            &applied.replace_all,
+            with_objects(
+                with_paragraph(
+                    with_structure(
+                        with_form_fill(
+                            with_replace_all(
+                                json!({
+                                    "outcome": "applied",
+                                    "beforeVersion": before_version,
+                                    "afterVersion": s.revision,
+                                    "changedIds": applied.changed_ids,
+                                    "resourceChanges": applied.resource_changes,
+                                    "intents": applied.intents,
+                                    "stale": applied.stale,
+                                    "cacheRemovals": applied.cache_removals,
+                                    "historyEvicted": history_evicted,
+                                }),
+                                &applied.replace_all,
+                            ),
+                            &applied.form_fill,
                         ),
-                        &applied.form_fill,
+                        &applied.structure,
+                        false,
                     ),
-                    &applied.structure,
+                    &applied.paragraph,
                     false,
                 ),
-                &applied.paragraph,
+                &applied.objects,
                 false,
             ),
             diags,
