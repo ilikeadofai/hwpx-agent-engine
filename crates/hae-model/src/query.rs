@@ -1128,6 +1128,16 @@ impl Document {
     }
 
     pub fn query(&self, q: &Query) -> Result<QueryResult> {
+        if q.text_contains.is_some()
+            && q.kind
+                .is_some_and(|k| !matches!(k, Kind::Paragraph | Kind::Cell))
+        {
+            return Err(EngineError::new(
+                Code::InvalidRequest,
+                Stage::Request,
+                "textContains matches paragraphs and cells only",
+            ));
+        }
         if let Some(a) = &q.ancestor {
             self.require(a, None)?;
         }
@@ -1186,13 +1196,25 @@ impl Document {
                 }
             }
             if let Some(needle) = &q.text_contains {
-                if n.kind != Kind::Paragraph {
-                    continue;
+                // A cell is only searched when asked for by kind, so a
+                // kind-less query keeps returning paragraphs alone. The cell
+                // matches when one of its paragraphs contains the text.
+                let paras: Vec<&Node> = match n.kind {
+                    Kind::Paragraph => vec![n],
+                    Kind::Cell if q.kind == Some(Kind::Cell) => self
+                        .nodes
+                        .iter()
+                        .filter(|m| m.kind == Kind::Paragraph && self.is_descendant(m, &n.id))
+                        .collect(),
+                    _ => continue,
+                };
+                let mut hit = false;
+                for p in paras {
+                    let (found, un) = self.para_text(p)?.find_all(needle);
+                    unaligned += un;
+                    hit |= !found.is_empty();
                 }
-                let pt = self.para_text(n)?;
-                let (found, un) = pt.find_all(needle);
-                unaligned += un;
-                if found.is_empty() {
+                if !hit {
                     continue;
                 }
             }

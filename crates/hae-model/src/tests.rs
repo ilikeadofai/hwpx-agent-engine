@@ -165,6 +165,54 @@ fn paragraph_text_and_query() {
 }
 
 #[test]
+fn text_query_matches_cells_by_their_paragraph_text() {
+    let d = open("bodojaryo-reference.hwpx");
+    let (cell, needle) = d
+        .nodes
+        .iter()
+        .filter(|n| n.kind == Kind::Cell)
+        .find_map(|c| {
+            let first = d
+                .node_text(c)
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            (first.chars().count() >= 2 && !first.contains('\u{FFFC}'))
+                .then(|| (c, first.chars().take(4).collect::<String>()))
+        })
+        .unwrap();
+    let r = d
+        .query(&Query {
+            kind: Some(Kind::Cell),
+            text_contains: Some(needle.clone()),
+            ..Default::default()
+        })
+        .unwrap();
+    assert!(r.matches.iter().any(|m| m.node_id == cell.id), "{needle}");
+    assert!(r.matches.iter().all(|m| m.kind == Kind::Cell));
+    // A kind-less text query keeps returning paragraphs only.
+    let r = d
+        .query(&Query {
+            text_contains: Some(needle),
+            ..Default::default()
+        })
+        .unwrap();
+    assert!(!r.matches.is_empty());
+    assert!(r.matches.iter().all(|m| m.kind == Kind::Paragraph));
+    // Kinds without own text are refused instead of silently matching nothing.
+    let e = d
+        .query(&Query {
+            kind: Some(Kind::Table),
+            text_contains: Some("보도".into()),
+            ..Default::default()
+        })
+        .unwrap_err();
+    assert_eq!(e.code(), Code::InvalidRequest);
+}
+
+#[test]
 fn grapheme_ranges_and_unaligned_search() {
     let x = "<hs:sec xmlns:hs=\"http://www.hancom.co.kr/hwpml/2011/section\" xmlns:hp=\"http://www.hancom.co.kr/hwpml/2011/paragraph\"><hp:p><hp:run><hp:t>e\u{301}x👨\u{200d}👩</hp:t><hp:t>a<hp:tab/>b</hp:t></hp:run></hp:p></hs:sec>";
     let doc = hae_xml::XmlDoc::parse(x.as_bytes().to_vec()).unwrap();
