@@ -272,6 +272,15 @@ impl Document {
                     let Some(k) = ResourceKind::reference(&a.local) else {
                         continue;
                     };
+                    // Hancom writes `charPrIDRef="4294967295"` on numbering
+                    // heads to mean "no own character shape" (inherit).
+                    if e.ns.as_deref() == Some(NS_HH)
+                        && e.local == "paraHead"
+                        && a.local == "charPrIDRef"
+                        && a.value == "4294967295"
+                    {
+                        continue;
+                    }
                     if let Some(count) = counts.get_mut(&(k, a.value.clone())) {
                         if body {
                             count.0 += 1;

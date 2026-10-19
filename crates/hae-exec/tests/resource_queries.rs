@@ -225,6 +225,19 @@ fn style_list_unresolved_totals_and_examples_are_filter_independent_and_bounded(
     assert_eq!(v["unresolvedExamples"][0]["id"], "999");
 }
 #[test]
+fn style_list_does_not_count_the_numbering_head_inherit_sentinel() {
+    // Hancom writes `charPrIDRef="4294967295"` on `hh:paraHead` to mean
+    // "inherit"; it is not a dangling reference. A real dangling id still counts.
+    let numbering = r#"<hh:numberings itemCnt="1"><hh:numbering id="1"><hh:paraHead level="1" charPrIDRef="4294967295"/><hh:paraHead level="2" charPrIDRef="77"/></hh:numbering></hh:numberings></hh:refList>"#;
+    let header = HEADER.replace("</hh:refList>", numbering);
+    let mut h = Harness::with_header(&p("<hp:t>x</hp:t>"), &header, Limits::default());
+    let v = h.query("style.list", json!({}));
+    assert_eq!(v["unresolvedReferenceCount"], 1);
+    assert_eq!(v["unresolvedBodyReferenceCount"], 0);
+    assert_eq!(v["unresolvedExamples"][0]["element"], "paraHead");
+    assert_eq!(v["unresolvedExamples"][0]["id"], "77");
+}
+#[test]
 fn style_list_body_defect_examples_are_not_hidden_by_header_defects() {
     let definitions = (1..=30)
         .map(|i| format!("<hh:style id=\"{i}\" charPrIDRef=\"88\"/>"))
