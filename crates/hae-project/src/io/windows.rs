@@ -585,9 +585,12 @@ fn sync_parent(parent: &AnchoredParent, stage: Stage, inject_failure: bool) -> R
         return Err(io_err(stage, "injected parent directory sync failure"));
     }
     validate_parent(parent, stage)?;
+    // FlushFileBuffers (File::sync_all) requires GENERIC_WRITE on the handle;
+    // a read-only directory handle fails with ERROR_ACCESS_DENIED.
     let mut options = OpenOptions::new();
     options
         .read(true)
+        .write(true)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
     let directory = options.open(&parent.parent_path).map_err(|error| {
         io_err(

@@ -152,6 +152,18 @@ fn export_cannot_overwrite_source_or_existing_or_follow_links() {
 }
 
 #[test]
+fn published_export_syncs_parent_directory_without_durability_error() {
+    // Regression: the Windows parent-directory handle lacked GENERIC_WRITE, so
+    // FlushFileBuffers failed and every published export reported
+    // SAVE_DURABILITY_UNCERTAIN although the file was complete.
+    let t = Temp::new();
+    let roots = IoRoots::new(&t.0, &t.0, Limits::default()).unwrap();
+    let dest = t.0.join("fresh.hwpx");
+    roots.export_hwpx(&dest, &document(), |_| Ok(())).unwrap();
+    assert_eq!(fs::read(&dest).unwrap(), document().to_hwpx().unwrap());
+}
+
+#[test]
 fn parent_component_path_escape_is_rejected() {
     let t = Temp::new();
     let roots = IoRoots::new(&t.0, &t.0, Limits::default()).unwrap();
