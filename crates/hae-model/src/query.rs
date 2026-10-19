@@ -359,6 +359,37 @@ impl Document {
         }
     }
 
+    /// Text of a footnote/endnote paragraph without the placeholder of the
+    /// `hp:ctrl` that only holds the note's own `hp:autoNum` number.
+    fn note_paragraph_text(&self, n: &Node) -> String {
+        let Ok(pt) = self.para_text(n) else {
+            return String::new();
+        };
+        let doc = self.doc_of(n);
+        let numbers: Vec<usize> = pt
+            .pieces
+            .iter()
+            .filter_map(|p| match &p.kind {
+                PieceKind::Control { el, name } if name == "ctrl" => {
+                    let children = &doc.el(*el).children;
+                    (!children.is_empty()
+                        && children.iter().all(|&c| {
+                            let e = doc.el(c);
+                            is_hp(e.ns.as_deref()) && e.local == "autoNum"
+                        }))
+                    .then_some(p.cp_start)
+                }
+                _ => None,
+            })
+            .collect();
+        pt.text
+            .chars()
+            .enumerate()
+            .filter(|(i, _)| !numbers.contains(i))
+            .map(|(_, c)| c)
+            .collect()
+    }
+
     pub fn is_descendant(&self, n: &Node, ancestor: &str) -> bool {
         let mut cur = n.parent.clone();
         while let Some(p) = cur {
@@ -1609,7 +1640,7 @@ impl Document {
                 let text = if !note_paras.is_empty() {
                     note_paras
                         .iter()
-                        .map(|pn| self.node_text(pn))
+                        .map(|pn| self.note_paragraph_text(pn))
                         .collect::<Vec<_>>()
                         .join("\n")
                 } else {
