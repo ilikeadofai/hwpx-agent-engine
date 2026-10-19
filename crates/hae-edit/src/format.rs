@@ -11,6 +11,7 @@ use hae_model::Kind;
 use hae_package::NS_HH;
 use hae_xml::{escape_attr, XmlDoc};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::ops::Range;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,6 +55,10 @@ pub enum LineSpacingKind {
 fn hh(doc: &XmlDoc, i: usize, local: &str) -> bool {
     let e = doc.el(i);
     e.local == local && e.ns.as_deref() == Some(NS_HH)
+}
+
+fn unsupported(msg: impl Into<String>) -> EngineError {
+    EngineError::new(Code::Unsupported, Stage::Validate, msg).with_reason("paraPr_shape")
 }
 
 /// Splices (relative to `pp_start`) that turn paraPr `pp` into the target.
@@ -184,18 +189,15 @@ pub(crate) fn paragraph_format(
         )
         .with_reason("no_paraPr")
     })?;
-    let props = hdoc
+    let containers: Vec<usize> = hdoc
         .iter()
         .map(|(i, _)| i)
-        .find(|&i| hh(&hdoc, i, "paraProperties"))
-        .ok_or_else(|| {
-            EngineError::new(
-                Code::Unsupported,
-                Stage::Validate,
-                "header has no paraProperties",
-            )
-            .with_reason("no_paraPr")
-        })?;
+        .filter(|&i| hh(&hdoc, i, "paraProperties"))
+        .collect();
+    if containers.len() != 1 {
+        return Err(unsupported("ambiguous paraProperties"));
+    }
+    let props = containers[0];
     let pps: Vec<usize> = hdoc
         .el(props)
         .children
@@ -203,6 +205,23 @@ pub(crate) fn paragraph_format(
         .copied()
         .filter(|&c| hh(&hdoc, c, "paraPr"))
         .collect();
+    // Validate every definition id (present, numeric, unique) up front, matching
+    // the save gate: an id we cannot trust must not drive allocation.
+    let mut seen = BTreeSet::new();
+    let mut max_id: Option<u64> = None;
+    for &p in &pps {
+        let id = hdoc
+            .el(p)
+            .attr_value("id")
+            .ok_or_else(|| unsupported("paraPr without id"))?;
+        let n: u64 = id
+            .parse()
+            .map_err(|_| unsupported("non-numeric paraPr id"))?;
+        if !seen.insert(n) {
+            return Err(unsupported("duplicate paraPr id"));
+        }
+        max_id = Some(max_id.map_or(n, |m| m.max(n)));
+    }
     let cur = *pps
         .iter()
         .find(|&&p| hdoc.el(p).attr_value("id") == Some(pref.value.as_str()))
@@ -213,18 +232,9 @@ pub(crate) fn paragraph_format(
                 format!("paraPr {} not found", pref.value),
             )
         })?;
-    let max_id = pps
-        .iter()
-        .filter_map(|&p| {
-            hdoc.el(p)
-                .attr_value("id")
-                .and_then(|v| v.parse::<u64>().ok())
-        })
-        .max()
-        .unwrap_or(0);
-    let new_id = (max_id + 1).to_string();
-    let candidate = rewrite(&hdoc, cur, &new_id, align, ls)?;
-    // Rewriting with an empty id yields the id-blanked canonical form.
+    // Canonical requested definition: the current bytes with the requested
+    // changes and a blank id. Reusing an equivalent definition (or the current
+    // one, when it already matches) must never allocate a new id.
     let cand_canon = rewrite(&hdoc, cur, "", align, ls)?;
     let reuse = pps
         .iter()
@@ -236,18 +246,33 @@ pub(crate) fn paragraph_format(
             false,
         ),
         None => {
-            // Append before </hh:paraProperties> and bump itemCnt.
+            let new_id = max_id
+                .and_then(|m| m.checked_add(1))
+                .ok_or_else(|| unsupported("paragraph property ID exhausted"))?
+                .to_string();
+            let candidate = rewrite(&hdoc, cur, &new_id, align, ls)?;
+            // Append before </hh:paraProperties> and bump itemCnt. A count we
+            // cannot trust is rejected instead of being silently repaired.
             let end = hdoc.el(props).end.clone().ok_or_else(|| {
                 EngineError::new(Code::Unsupported, Stage::Validate, "empty paraProperties")
                     .with_reason("paraPr_shape")
             })?;
             let mut edits = vec![(end.start..end.start, candidate)];
             if let Some(c) = hdoc.el(props).attr("itemCnt") {
-                let n: u64 = c.value.parse().unwrap_or(pps.len() as u64);
-                edits.push((c.value_span.clone(), (n + 1).to_string().into_bytes()));
+                let n: u64 = c
+                    .value
+                    .parse()
+                    .map_err(|_| unsupported("invalid paraProperties itemCnt"))?;
+                if n != pps.len() as u64 {
+                    return Err(unsupported("inconsistent paraProperties itemCnt"));
+                }
+                let next = n
+                    .checked_add(1)
+                    .ok_or_else(|| unsupported("paraProperties itemCnt overflow"))?;
+                edits.push((c.value_span.clone(), next.to_string().into_bytes()));
             }
             d.splice_entry(&header_name, edits)?;
-            (new_id.clone(), true)
+            (new_id, true)
         }
     };
     if use_id == pref.value {
