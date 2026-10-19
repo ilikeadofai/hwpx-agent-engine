@@ -57,6 +57,12 @@ cargo build --release
 - `target/release/hae`: 명령 스크립트 파일을 한 번에 실행하는 **CLI 도구**
 - `target/release/hae-raster`: PNG 변환을 격리된 별도 프로세스에서 실행하는 작업 파일. 사용자용 실행 파일과 같은 폴더에 두거나 `HAE_RASTER`로 지정합니다.
 
+### Windows에서 빌드할 때
+
+- `x86_64-pc-windows-gnu` 툴체인은 rustup 설치만으로는 빌드되지 않습니다. 의존성 `windows-sys`·`getrandom`이 import library를 만들 때 MinGW-w64 binutils의 `dlltool.exe`와 이것이 부르는 어셈블러 `as.exe`가 필요합니다. rustup 툴체인에 들어 있는 `self-contained\dlltool.exe`만 PATH에 넣으면 `as`가 없어 `dlltool.exe: CreateProcess`로 실패합니다. MinGW-w64 binutils의 `bin` 폴더를 빌드하는 셸의 PATH에 넣으면 빌드됩니다. 만든 실행 파일은 실행할 때 MinGW가 필요 없습니다.
+- `x86_64-pc-windows-msvc` 툴체인은 Visual Studio Build Tools(MSVC 링커와 Windows SDK)가 필요하며, 이 조합의 빌드는 아직 확인하지 않았습니다.
+- 경로 인자와 `--input-root`·`--output-root`는 역슬래시를 쓰는 드라이브 경로(예: `C:\data`)만 받습니다. `C:/data`나 `\\?\C:\data`는 거절합니다. 두 루트를 생략하면 기본값 `/tmp`가 쓰이는데 Windows에서는 올바른 경로가 아니므로, 파일이 필요 없는 명령도 두 루트를 지정해야 합니다.
+
 ---
 
 ## 3. 실행 환경 설정 (MCP 클라이언트 및 CLI)
@@ -276,6 +282,7 @@ AI 에이전트에게 *"보고서 제목을 바꾸고 가운데 정렬한 다음
   "textContains": "탐구 보고서"
 }
 ```
+- **글자 검색 범위**: `textContains`는 `kind`를 생략하거나 `"paragraph"`로 주면 문단을, `"cell"`로 주면 셀 안 문단의 글자로 셀을 찾습니다. 문단·셀이 아닌 `kind`와 함께 주면 `INVALID_REQUEST`로 거절합니다.
 - **응답**: 조건에 맞는 요소의 고유 ID(`nodeId`), 텍스트 미리보기와 명령별 `edits`가 반환됩니다. **노드의 `editable`은 `edits` 중 하나라도 `available: true`라는 뜻**입니다. 텍스트 교체가 된다는 뜻으로 사용하지 마세요. 예를 들어 객체만 있는 문단도 `paragraph.format`이 가능하면 `editable: true`입니다.
 - 문단의 `edits["text.replace"].available`을 확인한 뒤, 기본 `controls: "reject"` 교체는 `textSpans` 한 구간 안의 범위를 고릅니다. 삽입은 `modes`에 `insert`가 있을 때 같은 구간의 내부·경계에 길이 0 범위를 줍니다. `preserve`의 개체 포함 범위 규칙은 아래 0.2 설명을 따릅니다. `textSpans`는 객체·제어 문자·해석 불가 텍스트 속성을 건드리지 않는 최대 구간이며, 기존 `range`와 같은 **extended grapheme cluster의 반열린 `[start,end)` 오프셋**을 사용합니다. 여러 run·문자 참조에 걸친 안전한 텍스트는 한 구간이 될 수 있습니다. CDATA 내용과 리터럴 탭·줄바꿈은 제외하며, 주석·PI·빈 CDATA 경계에서는 구간을 나눕니다. 인접한 두 구간의 end/start가 같아도 합쳐서는 안 됩니다.
 - 문단당 앞의 64개 구간까지 제공합니다. `textSpansTruncated: true`이면 뒤쪽 구간이 생략된 것이므로 목록 밖 전체를 편집 불가로 단정하지 마세요. 기본 인자에 맞는 구간이 없으면 `no_text_span`이며, 빈 문단은 `{start:0,end:0}` 삽입을 광고합니다(실행할 run이 없으면 `no_run`). `no_text_span` 문단도 일부 범위의 `controls:"preserve"` 교체가 가능할 수 있습니다. 광고는 기본 인자 기준이고 preserve 전용 범위를 전부 나열하지 않습니다. 문서 권한·노드 잠금이 막으면 명령이 모두 비활성화되고 `textSpans`는 빈 목록입니다.

@@ -559,3 +559,15 @@ fn every_corpus_document_exports_deterministically_and_stays_unmodified() {
         );
     }
 }
+
+#[test]
+fn note_list_text_leaves_out_the_auto_number_placeholder() {
+    // Hancom writes the note's own number as `hp:ctrl > hp:autoNum` at the
+    // start of the note paragraph; it is not part of the note text.
+    let body = r#"<hp:p paraPrIDRef="0"><hp:run charPrIDRef="0"><hp:t>본문</hp:t><hp:ctrl><hp:footNote number="1"><hp:subList><hp:p paraPrIDRef="0"><hp:run charPrIDRef="0"><hp:ctrl><hp:autoNum num="1" numType="FOOTNOTE"><hp:autoNumFormat type="DIGIT" suffixChar=")"/></hp:autoNum></hp:ctrl><hp:t> 각주</hp:t><hp:ctrl><hp:bookmark name="b"/></hp:ctrl><hp:t>내용</hp:t></hp:run></hp:p></hp:subList></hp:footNote></hp:ctrl></hp:run></hp:p>"#;
+    let d = synthetic(body);
+    let notes = d.note_list(0, None, None, None).unwrap().notes;
+    assert_eq!(notes.len(), 1);
+    // Only the auto-number placeholder goes; other controls keep theirs.
+    assert_eq!(notes[0].text, " 각주\u{FFFC}내용");
+}

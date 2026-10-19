@@ -271,7 +271,19 @@ fn canonical_segments(path: &Path, stage: Stage) -> Result<Vec<String>> {
     let text =
         String::from_utf16(&wide).map_err(|_| path_err(stage, "path must contain valid UTF-16"))?;
     let bytes = text.as_bytes();
-    if bytes.len() < 3 || !bytes[0].is_ascii_alphabetic() || bytes[1] != b':' || bytes[2] != b'\\' {
+    // Name the rejected form so `C:/data` or a `std::fs::canonicalize` result
+    // (`\\?\C:\data`) is not reported as a non-drive path.
+    if text.starts_with("\\\\?\\") || text.starts_with("\\\\.\\") {
+        return Err(path_err(
+            stage,
+            "verbatim (\\\\?\\) and device (\\\\.\\) paths are rejected; use a plain drive-letter path (for example C:\\data)",
+        ));
+    }
+    if bytes.len() < 3
+        || !bytes[0].is_ascii_alphabetic()
+        || bytes[1] != b':'
+        || !matches!(bytes[2], b'\\' | b'/')
+    {
         return Err(path_err(
             stage,
             "only absolute drive-letter paths (for example C:\\data) are accepted",
@@ -280,7 +292,7 @@ fn canonical_segments(path: &Path, stage: Stage) -> Result<Vec<String>> {
     if text.contains('/') {
         return Err(path_err(
             stage,
-            "forward-slash path separators are rejected",
+            "forward-slash path separators are rejected; use backslashes (for example C:\\data)",
         ));
     }
 
@@ -585,9 +597,12 @@ fn sync_parent(parent: &AnchoredParent, stage: Stage, inject_failure: bool) -> R
         return Err(io_err(stage, "injected parent directory sync failure"));
     }
     validate_parent(parent, stage)?;
+    // FlushFileBuffers (File::sync_all) requires GENERIC_WRITE on the handle;
+    // a read-only directory handle fails with ERROR_ACCESS_DENIED.
     let mut options = OpenOptions::new();
     options
         .read(true)
+        .write(true)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
     let directory = options.open(&parent.parent_path).map_err(|error| {
         io_err(

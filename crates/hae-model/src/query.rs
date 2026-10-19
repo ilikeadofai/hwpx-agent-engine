@@ -359,6 +359,37 @@ impl Document {
         }
     }
 
+    /// Text of a footnote/endnote paragraph without the placeholder of the
+    /// `hp:ctrl` that only holds the note's own `hp:autoNum` number.
+    fn note_paragraph_text(&self, n: &Node) -> String {
+        let Ok(pt) = self.para_text(n) else {
+            return String::new();
+        };
+        let doc = self.doc_of(n);
+        let numbers: Vec<usize> = pt
+            .pieces
+            .iter()
+            .filter_map(|p| match &p.kind {
+                PieceKind::Control { el, name } if name == "ctrl" => {
+                    let children = &doc.el(*el).children;
+                    (!children.is_empty()
+                        && children.iter().all(|&c| {
+                            let e = doc.el(c);
+                            is_hp(e.ns.as_deref()) && e.local == "autoNum"
+                        }))
+                    .then_some(p.cp_start)
+                }
+                _ => None,
+            })
+            .collect();
+        pt.text
+            .chars()
+            .enumerate()
+            .filter(|(i, _)| !numbers.contains(i))
+            .map(|(_, c)| c)
+            .collect()
+    }
+
     pub fn is_descendant(&self, n: &Node, ancestor: &str) -> bool {
         let mut cur = n.parent.clone();
         while let Some(p) = cur {
@@ -1128,6 +1159,16 @@ impl Document {
     }
 
     pub fn query(&self, q: &Query) -> Result<QueryResult> {
+        if q.text_contains.is_some()
+            && q.kind
+                .is_some_and(|k| !matches!(k, Kind::Paragraph | Kind::Cell))
+        {
+            return Err(EngineError::new(
+                Code::InvalidRequest,
+                Stage::Request,
+                "textContains matches paragraphs and cells only",
+            ));
+        }
         if let Some(a) = &q.ancestor {
             self.require(a, None)?;
         }
@@ -1186,13 +1227,25 @@ impl Document {
                 }
             }
             if let Some(needle) = &q.text_contains {
-                if n.kind != Kind::Paragraph {
-                    continue;
+                // A cell is only searched when asked for by kind, so a
+                // kind-less query keeps returning paragraphs alone. The cell
+                // matches when one of its paragraphs contains the text.
+                let paras: Vec<&Node> = match n.kind {
+                    Kind::Paragraph => vec![n],
+                    Kind::Cell if q.kind == Some(Kind::Cell) => self
+                        .nodes
+                        .iter()
+                        .filter(|m| m.kind == Kind::Paragraph && self.is_descendant(m, &n.id))
+                        .collect(),
+                    _ => continue,
+                };
+                let mut hit = false;
+                for p in paras {
+                    let (found, un) = self.para_text(p)?.find_all(needle);
+                    unaligned += un;
+                    hit |= !found.is_empty();
                 }
-                let pt = self.para_text(n)?;
-                let (found, un) = pt.find_all(needle);
-                unaligned += un;
-                if found.is_empty() {
+                if !hit {
                     continue;
                 }
             }
@@ -1587,7 +1640,7 @@ impl Document {
                 let text = if !note_paras.is_empty() {
                     note_paras
                         .iter()
-                        .map(|pn| self.node_text(pn))
+                        .map(|pn| self.note_paragraph_text(pn))
                         .collect::<Vec<_>>()
                         .join("\n")
                 } else {
