@@ -163,6 +163,22 @@ fn published_export_syncs_parent_directory_without_durability_error() {
     assert_eq!(fs::read(&dest).unwrap(), document().to_hwpx().unwrap());
 }
 
+#[cfg(windows)]
+#[test]
+fn windows_path_rejections_name_the_rejected_form() {
+    let t = Temp::new();
+    let base = t.0.to_str().unwrap().to_string();
+    let message =
+        |root: String| match IoRoots::new(std::path::Path::new(&root), &t.0, Limits::default()) {
+            Ok(_) => panic!("accepted {root}"),
+            Err(error) => error.to_string(),
+        };
+    assert!(message(base.replace('\\', "/")).contains("forward-slash"));
+    assert!(message(format!(r"\\?\{base}")).contains("verbatim"));
+    assert!(message("relative".into()).contains("drive-letter"));
+    assert!(message("/tmp".into()).contains("drive-letter"));
+}
+
 #[test]
 fn parent_component_path_escape_is_rejected() {
     let t = Temp::new();

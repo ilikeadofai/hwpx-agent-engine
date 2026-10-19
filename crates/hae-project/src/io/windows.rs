@@ -271,7 +271,19 @@ fn canonical_segments(path: &Path, stage: Stage) -> Result<Vec<String>> {
     let text =
         String::from_utf16(&wide).map_err(|_| path_err(stage, "path must contain valid UTF-16"))?;
     let bytes = text.as_bytes();
-    if bytes.len() < 3 || !bytes[0].is_ascii_alphabetic() || bytes[1] != b':' || bytes[2] != b'\\' {
+    // Name the rejected form so `C:/data` or a `std::fs::canonicalize` result
+    // (`\\?\C:\data`) is not reported as a non-drive path.
+    if text.starts_with("\\\\?\\") || text.starts_with("\\\\.\\") {
+        return Err(path_err(
+            stage,
+            "verbatim (\\\\?\\) and device (\\\\.\\) paths are rejected; use a plain drive-letter path (for example C:\\data)",
+        ));
+    }
+    if bytes.len() < 3
+        || !bytes[0].is_ascii_alphabetic()
+        || bytes[1] != b':'
+        || !matches!(bytes[2], b'\\' | b'/')
+    {
         return Err(path_err(
             stage,
             "only absolute drive-letter paths (for example C:\\data) are accepted",
@@ -280,7 +292,7 @@ fn canonical_segments(path: &Path, stage: Stage) -> Result<Vec<String>> {
     if text.contains('/') {
         return Err(path_err(
             stage,
-            "forward-slash path separators are rejected",
+            "forward-slash path separators are rejected; use backslashes (for example C:\\data)",
         ));
     }
 
