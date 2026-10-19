@@ -11,7 +11,7 @@
 - `/home/mattc/.local/bin/hae-mcp`: stdio MCP 서버
 - `/home/mattc/.local/bin/hae-raster`: PNG 작업자
 
-이 호스트의 설치본은 같은 소스에서 빌드한 개발용 실행 파일을 버전별 폴더에 복사하고 위 경로로 연결한다. 실행 파일 옆 `fonts/`에는 로컬에서 사용 중인 나눔고딕 Regular·Bold와 Noto Serif CJK Regular를 복사한다(3개, 35,745,424바이트). 배포용 글꼴 번들은 아니며 Git에 넣지 않는다. 설치 폴더의 `manifest.json`에 소스 커밋과 실제 실행 파일·폰트 SHA-256을 기록한다.
+이 호스트의 설치본은 같은 소스에서 빌드한 릴리스 실행 파일을 버전별 폴더에 복사하고 위 경로로 연결한다. 실행 파일 옆 `fonts/`에는 로컬에서 사용 중인 나눔고딕 Regular·Bold와 Noto Serif CJK Regular를 복사한다(3개, 35,745,424바이트). 배포용 글꼴 번들은 아니며 Git에 넣지 않는다. 설치 폴더의 `manifest.json`에 소스 커밋과 실제 실행 파일·폰트 SHA-256을 기록한다.
 
 MCP 클라이언트 연결 설정이 아직 없다면 CLI로도 같은 엔진을 사용할 수 있다. `.hwp`는 읽기 전용 조회만 가능하므로 편집에는 `.hwpx`가 필요하다.
 
@@ -81,3 +81,13 @@ document.inspect / element.query / element.get으로 구조와 현재 내용을 
 최종 설치본을 `/tmp`에서 모든 `HAE_*` 변수 없이 실행해 같은 생성·편집·프로젝트 재열기 16단계를 통과했다. 앱 옆 폰트 3개가 자동 선택됐고 PNG도 생성됐다. 설치 manifest의 실행 파일·폰트 8개 해시를 실제 파일과 대조했다(`installed-e2e/summary.json`, `installed.json`).
 
 추가 전체 관문 `CARGO_BUILD_JOBS=3 bash scripts/check.sh`도 종료 코드 0으로 완료했다. fmt·Clippy(`-D warnings`)·PNG 작업자 빌드 및 Python 시험 33개가 통과했다. Rust workspace는 **882 passed, 0 failed, 13 ignored**였으며, 그 13개 실제 렌더러 시험을 후속 명령으로 명시 실행해 **13 passed, 0 failed**를 확인했다. 전체 명령 합계는 895 passed다. 완료 로그는 `workspace-check.log`, 전체 로그에서 다시 집계한 요약은 `workspace-final-summary.json`이다. Windows 한컴 조판 대조를 수행했다는 뜻은 아니다.
+
+## 새 객체 생성 설치 갱신 (2026-10-19)
+
+현재 설치 소스는 `6c332ea6895747038e89a84273f4afa8976ee177`이며 릴리스 빌드다. 명령은 65개다. 다른 세션에서 이미 서버를 실행 중이면 작업을 먼저 내보내거나 프로젝트로 저장한 다음 `/home/mattc/.local/bin/hae-mcp`로 다시 연결해야 네 새 도구가 노출된다.
+
+새 표·그림·수식 생성 및 표 삭제의 전체 관문은 Rust 935 + 명시 실행한 렌더러 13 = 948 passed, Python 33 passed다. 설치본의 실제 MCP 시나리오 155개 검증, 환경변수 없이 실행한 CLI 20단계, doctor 및 strict 도구 65개 검사를 통과했다. Undo/Redo와 프로젝트 재열기 뒤 ID 집합·대상 메타데이터도 비교했다.
+
+수식 상자 크기는 자동 계산하지 않는다. 짧은 분수에 폭이 지나치게 크면 rhwp 프리뷰에서 가로로 늘어났고, 해당 분수의 상자 폭을 줄인 별도 20단계 실행에서 비율이 개선됐다. 수식에 맞는 크기를 정하고 한컴에서 확인한다. 그림과 캡션의 같은 쪽 유지는 별도 기능이 없다. 지도교사 이름은 입력받아야 한다.
+
+최종 실행 경로·해시·정확한 검증 범위·Windows 인계 묶음은 [객체 생성 완료 기록](decisions/report-object-creation-results-2026-10-19.md)에 있다. 새 출력의 Linux/Windows 한컴 열기·저장·재열기는 미확인이며 `nativeComparison=not_checked`다.
